@@ -2,6 +2,7 @@
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+    .plugin(tauri_plugin_dialog::init())
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -17,12 +18,25 @@ pub fn run() {
       prompt_action,
       position_quick_actions,
       tts_selection,
+      tts_start,
+      tts_stop,
+      tts_list_voices,
+      tts_synthesize_wav,
+      tts_openai_synthesize_wav,
       stt_transcribe,
+      chat_complete,
       open_prompt_with_text,
       run_quick_prompt,
       generate_default_quick_prompts,
       get_quick_prompts,
       save_quick_prompts,
+      get_settings,
+      save_settings,
+      list_openai_models,
+      load_conversation_state,
+      save_conversation_state,
+      clear_conversations,
+      copy_file_to_path,
       capture_region
     ])
     .run(tauri::generate_context!())
@@ -35,9 +49,223 @@ use std::path::PathBuf;
 use tauri::Manager; // bring get_webview_window into scope
 use tauri::Emitter; // bring emit into scope
 use tauri::PhysicalPosition; // for window positioning
+use serde::Deserialize;
+use std::io::{Write, Cursor};
+use std::process::{Command, Stdio};
+use once_cell::sync::Lazy;
+use std::sync::Mutex;
 
 use arboard::Clipboard;
 use enigo::{Enigo, Key, KeyboardControllable};
+
+// ---------------------------
+// Settings helpers and commands
+// ---------------------------
+
+fn settings_config_path() -> Option<PathBuf> {
+  #[cfg(target_os = "windows")]
+  {
+    if let Ok(appdata) = std::env::var("APPDATA") {
+      let mut p = PathBuf::from(appdata);
+      p.push("AiDesktopCompanion");
+      p.push("settings.json");
+      return Some(p);
+    }
+    None
+  }
+  #[cfg(not(target_os = "windows"))]
+  {
+    if let Ok(home) = std::env::var("HOME") {
+      let mut p = PathBuf::from(home);
+      p.push(".config");
+      p.push("AiDesktopCompanion");
+      p.push("settings.json");
+      return Some(p);
+    }
+    None
+  }
+}
+
+// Path for persisted conversation state (single-thread for now)
+fn conversation_state_path() -> Option<PathBuf> {
+  #[cfg(target_os = "windows")]
+  {
+    if let Ok(appdata) = std::env::var("APPDATA") {
+      let mut p = PathBuf::from(appdata);
+      p.push("AiDesktopCompanion");
+      p.push("conversations.json");
+      return Some(p);
+    }
+    None
+  }
+  #[cfg(not(target_os = "windows"))]
+  {
+    if let Ok(home) = std::env::var("HOME") {
+      let mut p = PathBuf::from(home);
+      p.push(".config");
+      p.push("AiDesktopCompanion");
+      p.push("conversations.json");
+      return Some(p);
+    }
+    None
+  }
+}
+
+fn persist_conversations_enabled() -> bool {
+  let v = load_settings_json();
+  v.get("persist_conversations").and_then(|x| x.as_bool()).unwrap_or(false)
+}
+
+// ---------------------------
+// Conversation persistence commands
+// ---------------------------
+#[tauri::command]
+fn load_conversation_state() -> Result<serde_json::Value, String> {
+  if !persist_conversations_enabled() {
+    // Respect privacy: do not read/write when disabled
+    return Ok(serde_json::json!({}));
+  }
+  if let Some(path) = conversation_state_path() {
+    match fs::read_to_string(&path) {
+      Ok(text) => {
+        match serde_json::from_str::<serde_json::Value>(&text) {
+          Ok(v) => Ok(v),
+          Err(e) => Err(format!("Invalid JSON in conversations.json: {e}")),
+        }
+      }
+      Err(_) => Ok(serde_json::json!({})), // not found -> empty
+    }
+  } else {
+    Err("Unsupported platform for config path".into())
+  }
+}
+
+#[tauri::command]
+fn save_conversation_state(state: serde_json::Value) -> Result<String, String> {
+  if !persist_conversations_enabled() {
+    // If disabled, proactively delete any existing file
+    if let Some(path) = conversation_state_path() {
+      let _ = fs::remove_file(path);
+    }
+    return Ok("persistence disabled".into());
+  }
+  let path = conversation_state_path().ok_or_else(|| "Unsupported platform for config path".to_string())?;
+  if let Some(dir) = path.parent() {
+    fs::create_dir_all(dir).map_err(|e| format!("Failed to create config directory: {e}"))?;
+  }
+  let pretty = serde_json::to_string_pretty(&state).map_err(|e| format!("Serialize conversation failed: {e}"))?;
+  fs::write(&path, pretty).map_err(|e| format!("Write conversations failed: {e}"))?;
+  Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn clear_conversations() -> Result<String, String> {
+  if let Some(path) = conversation_state_path() {
+    if path.exists() {
+      fs::remove_file(&path).map_err(|e| format!("Remove conversations failed: {e}"))?;
+    }
+    Ok(path.to_string_lossy().to_string())
+  } else {
+    Err("Unsupported platform for config path".into())
+  }
+}
+
+fn load_settings_json() -> serde_json::Value {
+  if let Some(path) = settings_config_path() {
+    if let Ok(text) = fs::read_to_string(&path) {
+      if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+        if v.is_object() { return v; }
+      }
+    }
+  }
+  serde_json::json!({})
+}
+
+fn get_api_key_from_settings_or_env() -> Result<String, String> {
+  let v = load_settings_json();
+  if let Some(s) = v.get("openai_api_key").and_then(|x| x.as_str()) {
+    if !s.trim().is_empty() { return Ok(s.to_string()); }
+  }
+  std::env::var("OPENAI_API_KEY").map_err(|_| "OPENAI_API_KEY not set".to_string())
+}
+
+fn get_model_from_settings_or_env() -> String {
+  let v = load_settings_json();
+  if let Some(s) = v.get("openai_chat_model").and_then(|x| x.as_str()) {
+    let t = s.trim();
+    if !t.is_empty() { return t.to_string(); }
+  }
+  std::env::var("OPENAI_CHAT_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string())
+}
+
+fn get_temperature_from_settings_or_env() -> Option<f32> {
+  let v = load_settings_json();
+  v.get("temperature").and_then(|x| x.as_f64()).map(|f| f as f32)
+}
+
+#[tauri::command]
+fn get_settings() -> Result<serde_json::Value, String> {
+  let v = load_settings_json();
+  Ok(v)
+}
+
+#[tauri::command]
+fn save_settings(map: serde_json::Value) -> Result<String, String> {
+  let path = settings_config_path().ok_or_else(|| "Unsupported platform for config path".to_string())?;
+  if let Some(dir) = path.parent() {
+    fs::create_dir_all(dir).map_err(|e| format!("Failed to create config directory: {e}"))?;
+  }
+  // Merge with existing settings. Only update known keys present in `map`.
+  let mut current = load_settings_json();
+  let mut obj = current.as_object().cloned().unwrap_or_default();
+
+  // Existing keys
+  if let Some(k) = map.get("openai_api_key").and_then(|x| x.as_str()) { obj.insert("openai_api_key".to_string(), serde_json::Value::String(k.to_string())); }
+  if let Some(m) = map.get("openai_chat_model").and_then(|x| x.as_str()) { obj.insert("openai_chat_model".to_string(), serde_json::Value::String(m.to_string())); }
+  if let Some(t) = map.get("temperature").and_then(|x| x.as_f64()) { obj.insert("temperature".to_string(), serde_json::Value::Number(serde_json::Number::from_f64(t).unwrap_or_else(|| serde_json::Number::from_f64(1.0).unwrap()))); }
+  if let Some(p) = map.get("persist_conversations").and_then(|x| x.as_bool()) { obj.insert("persist_conversations".to_string(), serde_json::Value::Bool(p)); }
+
+  // New TTS preference keys
+  if let Some(e) = map.get("tts_engine").and_then(|x| x.as_str()) { obj.insert("tts_engine".to_string(), serde_json::Value::String(e.to_string())); }
+  if let Some(r) = map.get("tts_rate").and_then(|x| x.as_i64()) { obj.insert("tts_rate".to_string(), serde_json::Value::Number((r as i64).into())); }
+  if let Some(v) = map.get("tts_volume").and_then(|x| x.as_i64()) { obj.insert("tts_volume".to_string(), serde_json::Value::Number((v as i64).into())); }
+  if let Some(vl) = map.get("tts_voice_local").and_then(|x| x.as_str()) { obj.insert("tts_voice_local".to_string(), serde_json::Value::String(vl.to_string())); }
+  if let Some(ov) = map.get("tts_openai_voice").and_then(|x| x.as_str()) { obj.insert("tts_openai_voice".to_string(), serde_json::Value::String(ov.to_string())); }
+  if let Some(om) = map.get("tts_openai_model").and_then(|x| x.as_str()) { obj.insert("tts_openai_model".to_string(), serde_json::Value::String(om.to_string())); }
+
+  let pretty = serde_json::to_string_pretty(&serde_json::Value::Object(obj)).map_err(|e| format!("Serialize settings failed: {e}"))?;
+  fs::write(&path, pretty).map_err(|e| format!("Write settings failed: {e}"))?;
+  Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn list_openai_models() -> Result<Vec<String>, String> {
+  let key = get_api_key_from_settings_or_env()?;
+  let client = reqwest::Client::new();
+  let resp = client
+    .get("https://api.openai.com/v1/models")
+    .bearer_auth(key)
+    .send()
+    .await
+    .map_err(|e| format!("request failed: {e}"))?;
+
+  if !resp.status().is_success() {
+    let status = resp.status();
+    let body_text = resp.text().await.unwrap_or_default();
+    return Err(format!("OpenAI error: {status} {body_text}"));
+  }
+  let v: serde_json::Value = resp.json().await.map_err(|e| format!("json error: {e}"))?;
+  let mut ids: Vec<String> = v.get("data")
+    .and_then(|d| d.as_array())
+    .map(|arr| arr.iter()
+      .filter_map(|m| m.get("id").and_then(|x| x.as_str()).map(|s| s.to_string()))
+      .filter(|id| id.starts_with("gpt-") || id.contains("gpt-4") || id.contains("gpt-4o"))
+      .collect())
+    .unwrap_or_else(|| Vec::new());
+  ids.sort();
+  ids.dedup();
+  Ok(ids)
+}
 
 #[tauri::command]
 fn generate_default_quick_prompts() -> Result<String, String> {
@@ -205,7 +433,7 @@ fn payload_length(s: &str) -> usize {
 }
 
 #[tauri::command]
-fn tts_selection(_app: tauri::AppHandle, safe_mode: Option<bool>) -> Result<String, String> {
+async fn tts_selection(_app: tauri::AppHandle, safe_mode: Option<bool>) -> Result<String, String> {
   let safe = safe_mode.unwrap_or(false);
 
   // Capture selection text similar to prompt_action
@@ -232,8 +460,92 @@ fn tts_selection(_app: tauri::AppHandle, safe_mode: Option<bool>) -> Result<Stri
     return Err("No text selected".into());
   }
 
-  speak_windows(&selection)?;
-  Ok("ok".into())
+  // Read user TTS settings
+  let settings = load_settings_json();
+  let engine = settings
+    .get("tts_engine").and_then(|x| x.as_str()).unwrap_or("local");
+  let rate = settings
+    .get("tts_rate").and_then(|x| x.as_i64()).unwrap_or(-2).clamp(-10, 10) as i32;
+  let vol = settings
+    .get("tts_volume").and_then(|x| x.as_i64()).unwrap_or(100).clamp(0, 100) as u8;
+
+  if engine == "openai" {
+    // Use OpenAI TTS per settings, then play the WAV
+    let voice = settings
+      .get("tts_openai_voice").and_then(|x| x.as_str()).unwrap_or("alloy").to_string();
+    let model = settings
+      .get("tts_openai_model").and_then(|x| x.as_str()).unwrap_or("gpt-4o-mini-tts").to_string();
+
+    let wav = tts_openai_synthesize_wav(selection.clone(), Some(voice), Some(model), Some(rate), Some(vol)).await?;
+
+    // Play WAV synchronously via PowerShell SoundPlayer
+    #[cfg(target_os = "windows")]
+    {
+      use std::process::Command;
+      // Use single-quoted PS string and escape any single quotes in the path
+      let wav_escaped = ps_escape_single_quoted(&wav);
+      let ps = format!(
+        r#"$p = New-Object System.Media.SoundPlayer '{path}'; $p.PlaySync();"#,
+        path = wav_escaped
+      );
+      let out = Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &ps])
+        .output()
+        .map_err(|e| format!("launch powershell failed: {e}"))?;
+      if !out.status.success() { return Err(format!("audio play failed: {}", out.status)); }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+      let _ = (selection);
+      return Err("OpenAI TTS playback not implemented on this platform".into());
+    }
+    Ok("ok".into())
+  } else {
+    // Local Windows TTS with configured voice/rate/volume
+    #[cfg(target_os = "windows")]
+    {
+      use std::io::Write;
+      use std::process::{Command, Stdio};
+      let voice = settings
+        .get("tts_voice_local").and_then(|x| x.as_str()).unwrap_or("").to_string();
+      let v_escaped = ps_escape_single_quoted(&voice);
+      let ps = format!(
+        r#"
+Add-Type -AssemblyName System.Speech;
+$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;
+try {{
+  $s.Volume = {vol};
+  $s.Rate = {rate};
+  if ('{voice}' -ne '') {{ try {{ $s.SelectVoice('{voice}'); }} catch {{}} }}
+  [void]$s.Speak([Console]::In.ReadToEnd());
+}} finally {{ $s.Dispose(); }}
+"#,
+        vol = vol,
+        rate = rate,
+        voice = v_escaped,
+      );
+
+      let mut child = Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &ps])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("launch powershell failed: {e}"))?;
+
+      if let Some(stdin) = child.stdin.as_mut() {
+        stdin.write_all(selection.as_bytes()).map_err(|e| format!("stdin write failed: {e}"))?;
+      }
+      let status = child.wait().map_err(|e| format!("powershell wait failed: {e}"))?;
+      if !status.success() { return Err(format!("powershell exited with status: {status}")); }
+      Ok("ok".into())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+      let _ = (selection);
+      Err("TTS not implemented on this platform".into())
+    }
+  }
 }
 
 #[cfg(target_os = "windows")]
@@ -276,11 +588,290 @@ fn speak_windows(_text: &str) -> Result<(), String> {
   Err("TTS not implemented on this platform".into())
 }
 
+// ---------------------------
+// TTS controls (Windows-first): start/stop/list voices/synthesize to WAV
+// ---------------------------
+
+#[cfg(target_os = "windows")]
+static TTS_CHILD: Lazy<Mutex<Option<std::process::Child>>> = Lazy::new(|| Mutex::new(None));
+
+#[cfg(target_os = "windows")]
+fn ps_escape_single_quoted(s: &str) -> String {
+  // In PowerShell single-quoted strings, escape ' by doubling it
+  s.replace('\'', "''")
+}
+
+#[tauri::command]
+fn tts_start(text: String, voice: Option<String>, rate: Option<i32>, volume: Option<u8>) -> Result<(), String> {
+  #[cfg(target_os = "windows")]
+  {
+    // Stop any existing TTS first
+    if let Ok(mut guard) = TTS_CHILD.lock() {
+      if let Some(mut c) = guard.take() { let _ = c.kill(); let _ = c.wait(); }
+    }
+
+    let v = voice.unwrap_or_default();
+    let v_escaped = ps_escape_single_quoted(&v);
+    let r = rate.unwrap_or(-2).clamp(-10, 10);
+    let vol = volume.unwrap_or(100).min(100);
+
+    let ps = format!(
+      r#"
+Add-Type -AssemblyName System.Speech;
+$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;
+try {{
+  $s.Volume = {vol};
+  $s.Rate = {r};
+  if ('{voice}' -ne '') {{ try {{ $s.SelectVoice('{voice}'); }} catch {{}} }}
+  [void]$s.Speak([Console]::In.ReadToEnd());
+}} finally {{ $s.Dispose(); }}
+"#,
+      vol = vol,
+      r = r,
+      voice = v_escaped,
+    );
+
+    let mut child = Command::new("powershell.exe")
+      .args(["-NoProfile", "-NonInteractive", "-Command", &ps])
+      .stdin(Stdio::piped())
+      .stdout(Stdio::null())
+      .stderr(Stdio::null())
+      .spawn()
+      .map_err(|e| format!("launch powershell failed: {e}"))?;
+
+    if let Some(stdin) = child.stdin.as_mut() {
+      stdin.write_all(text.as_bytes()).map_err(|e| format!("stdin write failed: {e}"))?;
+    }
+    // Close stdin to signal completion
+    drop(child.stdin.take());
+
+    if let Ok(mut guard) = TTS_CHILD.lock() { *guard = Some(child); }
+    return Ok(());
+  }
+  #[cfg(not(target_os = "windows"))]
+  {
+    let _ = (text, voice, rate, volume);
+    Err("TTS not implemented on this platform".into())
+  }
+}
+
+#[tauri::command]
+fn tts_stop() -> Result<(), String> {
+  #[cfg(target_os = "windows")]
+  {
+    if let Ok(mut guard) = TTS_CHILD.lock() {
+      if let Some(mut c) = guard.take() {
+        let _ = c.kill();
+        let _ = c.wait();
+      }
+    }
+    Ok(())
+  }
+  #[cfg(not(target_os = "windows"))]
+  {
+    Err("TTS not implemented on this platform".into())
+  }
+}
+
+#[tauri::command]
+fn tts_list_voices() -> Result<Vec<String>, String> {
+  #[cfg(target_os = "windows")]
+  {
+    let ps = r#"
+Add-Type -AssemblyName System.Speech;
+$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;
+$names = $s.GetInstalledVoices() | ForEach-Object { $_.VoiceInfo.Name };
+$s.Dispose();
+$names | ForEach-Object { $_ }
+"#;
+    let out = Command::new("powershell.exe")
+      .args(["-NoProfile", "-NonInteractive", "-Command", ps])
+      .output()
+      .map_err(|e| format!("launch powershell failed: {e}"))?;
+    if !out.status.success() {
+      return Err(format!("powershell exited with status: {}", out.status));
+    }
+    let s = String::from_utf8_lossy(&out.stdout);
+    let mut names: Vec<String> = s.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).map(|l| l.to_string()).collect();
+    names.dedup();
+    Ok(names)
+  }
+  #[cfg(not(target_os = "windows"))]
+  {
+    Ok(vec![])
+  }
+}
+
+#[tauri::command]
+fn tts_synthesize_wav(text: String, voice: Option<String>, rate: Option<i32>, volume: Option<u8>) -> Result<String, String> {
+  #[cfg(target_os = "windows")]
+  {
+    let v = voice.unwrap_or_default();
+    let v_escaped = ps_escape_single_quoted(&v);
+    let r = rate.unwrap_or(-2).clamp(-10, 10);
+    let vol = volume.unwrap_or(100).min(100);
+    let file_name = format!("aidc_tts_{}.wav", chrono::Local::now().format("%Y%m%d_%H%M%S"));
+    let mut path = std::env::temp_dir();
+    path.push(file_name);
+    let target = path.to_string_lossy().to_string();
+
+    let ps = format!(
+      r#"
+Add-Type -AssemblyName System.Speech;
+$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;
+try {{
+  $s.Volume = {vol};
+  $s.Rate = {r};
+  if ('{voice}' -ne '') {{ try {{ $s.SelectVoice('{voice}'); }} catch {{}} }}
+  $s.SetOutputToWaveFile('{target}');
+  [void]$s.Speak([Console]::In.ReadToEnd());
+  $s.SetOutputToDefaultAudioDevice();
+}} finally {{ $s.Dispose(); }}
+"#,
+      vol = vol,
+      r = r,
+      voice = v_escaped,
+      target = target.replace('\\', "\\\\"),
+    );
+
+    let mut child = Command::new("powershell.exe")
+      .args(["-NoProfile", "-NonInteractive", "-Command", &ps])
+      .stdin(Stdio::piped())
+      .stdout(Stdio::null())
+      .stderr(Stdio::null())
+      .spawn()
+      .map_err(|e| format!("launch powershell failed: {e}"))?;
+    if let Some(stdin) = child.stdin.as_mut() {
+      stdin.write_all(text.as_bytes()).map_err(|e| format!("stdin write failed: {e}"))?;
+    }
+    drop(child.stdin.take());
+    let status = child.wait().map_err(|e| format!("powershell wait failed: {e}"))?;
+    if !status.success() { return Err(format!("powershell exited with status: {status}")); }
+    Ok(target)
+  }
+  #[cfg(not(target_os = "windows"))]
+  {
+    let _ = (text, voice, rate, volume);
+    Err("TTS not implemented on this platform".into())
+  }
+}
+
+#[tauri::command]
+async fn tts_openai_synthesize_wav(text: String, voice: Option<String>, model: Option<String>, rate: Option<i32>, volume: Option<u8>) -> Result<String, String> {
+  // Uses OpenAI's TTS endpoint to synthesize speech as WAV and returns the file path
+  let key = get_api_key_from_settings_or_env()?;
+  let m = model.unwrap_or_else(|| "gpt-4o-mini-tts".to_string());
+  let v = voice.unwrap_or_else(|| "alloy".to_string());
+
+  let file_name = format!("aidc_tts_{}_openai.wav", chrono::Local::now().format("%Y%m%d_%H%M%S"));
+  let mut path = std::env::temp_dir();
+  path.push(file_name);
+  let target = path.to_string_lossy().to_string();
+
+  let body = serde_json::json!({
+    "model": m,
+    "input": text,
+    "voice": v,
+    "format": "wav"
+  });
+
+  let client = reqwest::Client::new();
+  let resp = client
+    .post("https://api.openai.com/v1/audio/speech")
+    .bearer_auth(key)
+    .json(&body)
+    .send()
+    .await
+    .map_err(|e| format!("request failed: {e}"))?;
+
+  if !resp.status().is_success() {
+    let status = resp.status();
+    let body_text = resp.text().await.unwrap_or_default();
+    return Err(format!("OpenAI error: {status} {body_text}"));
+  }
+
+  let bytes = resp.bytes().await.map_err(|e| format!("bytes error: {e}"))?;
+  let r = rate.unwrap_or(0).clamp(-10, 10);
+  let vol = volume.unwrap_or(100).min(100);
+
+  if r != 0 || vol != 100 {
+    match apply_wav_gain_and_rate(&bytes, &target, r, vol) {
+      Ok(()) => {}
+      Err(_e) => {
+        // Fallback to writing original bytes if processing fails
+        fs::write(&target, &bytes).map_err(|e| format!("write wav failed: {e}"))?;
+      }
+    }
+  } else {
+    fs::write(&target, &bytes).map_err(|e| format!("write wav failed: {e}"))?;
+  }
+  Ok(target)
+}
+
+// Apply simple gain (volume) and playback rate (by adjusting the sample rate header) to a WAV buffer.
+// Note: rate adjustment will change pitch (no time-stretch). If processing fails, the caller should fall back.
+fn apply_wav_gain_and_rate(bytes: &[u8], target_path: &str, rate: i32, volume: u8) -> Result<(), String> {
+  let mut reader = hound::WavReader::new(Cursor::new(bytes))
+    .map_err(|e| format!("wav decode failed: {e}"))?;
+  let mut spec = reader.spec();
+
+  let gain: f32 = (volume as f32 / 100.0).max(0.0);
+  let r = rate.clamp(-10, 10);
+  if r != 0 {
+    let factor = (2f32).powf(r as f32 / 10.0);
+    let new_rate = ((spec.sample_rate as f32) * factor).round() as u32;
+    // Clamp to a sane range to avoid extreme sample rates
+    let new_rate = new_rate.clamp(8000, 192000);
+    spec.sample_rate = new_rate;
+  }
+
+  let mut writer = hound::WavWriter::create(target_path, spec.clone())
+    .map_err(|e| format!("wav writer create failed: {e}"))?;
+
+  match spec.sample_format {
+    hound::SampleFormat::Float => {
+      // 32-bit float common
+      let mut it = reader.samples::<f32>();
+      while let Some(s) = it.next() {
+        let v = s.map_err(|e| format!("wav read sample failed: {e}"))?;
+        let out = (v * gain).clamp(-1.0, 1.0);
+        writer.write_sample(out).map_err(|e| format!("wav write sample failed: {e}"))?;
+      }
+    }
+    hound::SampleFormat::Int => {
+      if spec.bits_per_sample <= 16 {
+        let mut it = reader.samples::<i16>();
+        while let Some(s) = it.next() {
+          let v = s.map_err(|e| format!("wav read sample failed: {e}"))?;
+          let out = ((v as f32) * gain).clamp(i16::MIN as f32, i16::MAX as f32) as i16;
+          writer.write_sample(out).map_err(|e| format!("wav write sample failed: {e}"))?;
+        }
+      } else if spec.bits_per_sample <= 32 {
+        let mut it = reader.samples::<i32>();
+        // Compute clamp range from bits_per_sample
+        let max_val: i64 = (1i64 << (spec.bits_per_sample - 1)) - 1;
+        let min_val: i64 = -1i64 << (spec.bits_per_sample - 1);
+        while let Some(s) = it.next() {
+          let v = s.map_err(|e| format!("wav read sample failed: {e}"))? as i64;
+          let out = ((v as f32) * gain).round() as i64;
+          let clamped = out.clamp(min_val, max_val) as i32;
+          writer.write_sample(clamped).map_err(|e| format!("wav write sample failed: {e}"))?;
+        }
+      } else {
+        return Err("unsupported bit depth".into());
+      }
+    }
+  }
+
+  writer.finalize().map_err(|e| format!("wav finalize failed: {e}"))?;
+  Ok(())
+}
+
 // Transcribe audio bytes using OpenAI Whisper API (expects WEBM/Opus by default).
 // Returns the transcribed text on success.
 #[tauri::command]
 async fn stt_transcribe(audio: Vec<u8>, mime: String) -> Result<String, String> {
-  let key = std::env::var("OPENAI_API_KEY").map_err(|_| "OPENAI_API_KEY not set".to_string())?;
+  let key = get_api_key_from_settings_or_env()?;
 
   // Build multipart form: model + file
   let file_name = if mime.contains("webm") { "audio.webm" } else { "audio.bin" };
@@ -310,6 +901,82 @@ async fn stt_transcribe(audio: Vec<u8>, mime: String) -> Result<String, String> 
 
   let v: serde_json::Value = resp.json().await.map_err(|e| format!("json error: {e}"))?;
   let text = v.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
+  Ok(text)
+}
+
+// ---------------------------
+// Utility: Copy a file to destination (used by Save As flow)
+// ---------------------------
+#[tauri::command]
+fn copy_file_to_path(src: String, dest: String, overwrite: Option<bool>) -> Result<String, String> {
+  let overwrite = overwrite.unwrap_or(true);
+  let dest_path = PathBuf::from(&dest);
+  if let Some(dir) = dest_path.parent() {
+    fs::create_dir_all(dir).map_err(|e| format!("Failed to create destination dir: {e}"))?;
+  }
+  if dest_path.exists() && !overwrite {
+    return Err("Destination file already exists".into());
+  }
+  fs::copy(&src, &dest_path).map_err(|e| format!("Copy failed: {e}"))?;
+  Ok(dest_path.to_string_lossy().to_string())
+}
+
+// Simple chat completion endpoint that takes prior conversation messages and returns a single assistant reply.
+// The frontend builds the message list; we simply forward to OpenAI.
+#[derive(Debug, Deserialize)]
+struct ChatMessage {
+  role: String,
+  content: String,
+}
+
+#[tauri::command]
+async fn chat_complete(messages: Vec<ChatMessage>) -> Result<String, String> {
+  let key = get_api_key_from_settings_or_env()?;
+  let model = get_model_from_settings_or_env();
+  let temp = get_temperature_from_settings_or_env();
+
+  // Normalize roles to allowed set; default to user
+  let norm_msgs: Vec<serde_json::Value> = messages
+    .into_iter()
+    .map(|m| {
+      let r = match m.role.to_ascii_lowercase().as_str() {
+        "system" | "assistant" | "user" => m.role.to_ascii_lowercase(),
+        _ => "user".to_string(),
+      };
+      serde_json::json!({ "role": r, "content": m.content })
+    })
+    .collect();
+
+  let mut body = serde_json::json!({
+    "model": model,
+    "messages": norm_msgs,
+  });
+  if let Some(t) = temp { if let serde_json::Value::Object(ref mut m) = body { m.insert("temperature".to_string(), serde_json::json!(t)); } }
+
+  let client = reqwest::Client::new();
+  let resp = client
+    .post("https://api.openai.com/v1/chat/completions")
+    .bearer_auth(key)
+    .json(&body)
+    .send()
+    .await
+    .map_err(|e| format!("request failed: {e}"))?;
+
+  if !resp.status().is_success() {
+    let status = resp.status();
+    let body_text = resp.text().await.unwrap_or_default();
+    return Err(format!("OpenAI error: {status} {body_text}"));
+  }
+
+  let v: serde_json::Value = resp.json().await.map_err(|e| format!("json error: {e}"))?;
+  let text = v.get("choices")
+    .and_then(|c| c.get(0))
+    .and_then(|c| c.get("message"))
+    .and_then(|m| m.get("content"))
+    .and_then(|t| t.as_str())
+    .unwrap_or("")
+    .to_string();
+
   Ok(text)
 }
 
@@ -367,17 +1034,19 @@ async fn run_quick_prompt(app: tauri::AppHandle, index: u8, safe_mode: Option<bo
   let system_content = format!("Reply only with the result and nothing else. {template}");
   let user_content = selection.clone();
 
-  // Call OpenAI Chat Completions
-  let key = std::env::var("OPENAI_API_KEY").map_err(|_| "OPENAI_API_KEY not set".to_string())?;
-  let model = std::env::var("OPENAI_CHAT_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
+  // Call OpenAI Chat Completions (respect settings overrides)
+  let key = get_api_key_from_settings_or_env()?;
+  let model = get_model_from_settings_or_env();
+  let temp = get_temperature_from_settings_or_env();
 
-  let body = serde_json::json!({
+  let mut body = serde_json::json!({
     "model": model,
     "messages": [
       { "role": "system", "content": system_content },
       { "role": "user", "content": user_content }
     ]
   });
+  if let Some(t) = temp { if let serde_json::Value::Object(ref mut m) = body { m.insert("temperature".to_string(), serde_json::json!(t)); } }
 
   let client = reqwest::Client::new();
   let resp = client
@@ -545,6 +1214,7 @@ fn capture_region(app: tauri::AppHandle, x: i32, y: i32, width: i32, height: i32
 }
 
 // Backwards-compatible wrapper without UI notifications
+#[allow(dead_code)]
 fn load_quick_prompt_template(index: u8) -> String {
   load_quick_prompt_template_with_notify(None, index)
 }

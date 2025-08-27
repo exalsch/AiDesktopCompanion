@@ -1,6 +1,6 @@
 # Implementation Plan and Status
 
-Last updated: 2025-08-24
+Last updated: 2025-08-26
 
 ## Objectives
 - Deliver a Windows-first AI Desktop Companion with a Quick Actions popup (P/T/S/I) and main prompt panel.
@@ -13,8 +13,9 @@ Last updated: 2025-08-24
   - STT recorder: `app/src/stt.ts` (MediaRecorder, WEBM/Opus).
   - Window management: `app/src/popup.ts`.
 - Backend: Tauri v2 (Rust) in `app/src-tauri/`.
-  - Commands: `prompt_action`, `position_quick_actions`, `tts_selection`, `stt_transcribe`, `open_prompt_with_text`, `run_quick_prompt`.
+  - Commands: `prompt_action`, `position_quick_actions`, `tts_selection`, `stt_transcribe`, `open_prompt_with_text`, `run_quick_prompt`, `chat_complete`, `get_settings`, `save_settings`, `list_openai_models`, `load_conversation_state`, `save_conversation_state`, `clear_conversations`, `get_quick_prompts`, `save_quick_prompts`, `generate_default_quick_prompts`.
   - Whisper integration: `reqwest` multipart to `https://api.openai.com/v1/audio/transcriptions` with model `whisper-1`.
+  - Persistence paths: Settings at `%APPDATA%/AiDesktopCompanion/settings.json`; Conversations at `%APPDATA%/AiDesktopCompanion/conversations.json` when `persist_conversations` is enabled.
 
 ## Scope Alignment with Overview
 
@@ -34,18 +35,21 @@ Last updated: 2025-08-24
   - [x] Quick Prompts 1–9 mapped; run and insert AI result; close popup
 
 - [__Main Window Components__]
-  - [ ] Prompt section: Conversation with AI. Start new conversation button. Select tools (mcp) to be used.
+  - [x] Prompt section: Conversation with AI — `ConversationHistory.vue` above `ConversationView.vue`; `PromptComposer.vue` integrated; multi-conversation + New Conversation.
+  - [ ] MCP tools selection UI in conversation header (‼️ TODO placeholder present in `ConversationView.vue`).
+  - [ ] Vision support for image messages in prompts (‼️ TODO placeholder present in `PromptComposer.vue`).
   - [ ] TTS section: play/stop/download, speed/voice selector, download/save as option.
   - [ ] STT section: transcript view, copy/use-as-prompt
-  - [ ] Settings section (‼️ TODO)
+  - [x] Settings section (Prompt settings, Quick Prompts editor). Persistence toggle wired and QAed.
 
 - [__Settings Configuration__]
+  - [x] Prompt settings: OpenAI API Key, Model selection (via available models query), Temperature, Conversation persistence toggle, "Clean all conversations" button.
   - [ ] Provider URL/API key; STT engine & Whisper model selection
   - [ ] Global hotkey config + direct STT hotkey
   - [ ] Aggressive copy Safe Mode toggle; selection preview toggle
   - [ ] Autostart (Windows); macOS if possible
   - [ ] Additional settings: system prompts and exclude AI thoughts
-  - [ ] Set Quick Prompts 1–9
+  - [x] Set Quick Prompts 1–9 (via Quick Prompts Editor in Settings)
 
 - [__MCP Tools Integration__]
   - [ ] Server mgmt (name, command, args, cwd, env) via stdio, sse and http
@@ -53,13 +57,13 @@ Last updated: 2025-08-24
   - [ ] Persist last-used tool set optionally (History) (‼️ TODO)
 
 - [__Conversation Model__]
-  - [ ] Conversation thread with context; New conversation action
+  - [x] Conversation thread with context; New conversation action
   - [ ] Popup Prompt behavior: append vs always-new (setting)
-  - [ ] Optional History: messages, images, transcripts, tool usage
+  - [~] Optional History: On-disk persistence toggle implemented for conversations (messages + images). Transcripts/tool usage TBD.
 
 - [__Cross-cutting__]
   - [ ] i18n readiness; Themes: Light/Dark/High Contrast
-  - [ ] Privacy defaults (no persistence); History toggle OFF by default
+  - [x] Privacy defaults (no persistence); History toggle OFF by default
   - [ ] Telemetry disabled
   - [ ] UAC/admin overlay blocked ➜ toast
   - [ ] Windows 10/11 target; macOS planned
@@ -90,17 +94,46 @@ Last updated: 2025-08-24
     - Consider `Timing-Allow-Origin` for selected domains
   - Evaluate `freezePrototype: true` under `app.security` (compatibility testing required)
 
+## QA Results (2025-08-26)
+- __Persistence ON__: History saved on message send and restored on restart (debounced auto-save). Current conversation tracked by `currentId`.
+- __Clear All while ON__: Resets UI to a fresh thread and updates `conversations.json` accordingly.
+- __Persistence OFF__: Deletes `conversations.json`; no further writes occur; app restarts with a fresh thread.
+- __Regression__: Prompt flow, model selection, and temperature respected by completions.
+- __Files__: `%APPDATA%/AiDesktopCompanion/conversations.json`, `%APPDATA%/AiDesktopCompanion/settings.json`.
+
 ## Next Steps
- - Image region capture overlay and main window integration (Windows-first). (‼️ TODO)
- - Quick Prompts customization: define/edit templates 1–9 in Settings. (‼️ TODO)
- - Settings UI: hotkeys (global + direct STT), STT mode (push-to-talk vs toggle), Safe Mode, selection preview, provider/keys, autostart. (‼️ TODO)
  - MCP Tools: server config screen; Tools Panel skeleton; connect/disconnect; per-prompt enable. (‼️ TODO)
- - Conversation threading: New conversation action; popup P append/new setting; History scaffolding (OFF by default). (‼️ TODO)
- - Attach captured images to the conversation once the Conversation UI supports image messages. (‼️ TODO)
- - Accessibility/themes/i18n scaffolding; theme switcher. (‼️ TODO)
+ - Image region capture overlay and main window integration (Windows-first). (‼️ TODO)
+ - Vision support in `PromptComposer.vue` + `ConversationView.vue` for image messages. (‼️ TODO)
+ - Conversation setting: popup Prompt behavior (append vs always-new). (‼️ TODO)
+ - Settings UI: hotkeys (global + direct STT), STT mode (push-to-talk vs toggle), Safe Mode, selection preview, provider/keys, autostart. (‼️ TODO)
+ - TTS section UI (play/stop/voice/speed/download). (‼️ TODO)
+ - STT section UI (transcript view, copy/use-as-prompt). (‼️ TODO)
  - macOS parity: global hotkey registration + popup positioning. (‼️ TODO)
  - Offline STT toggle placeholder and download flow. (‼️ TODO)
  - UAC overlay detection + toast. (‼️ TODO)
+ - Packaging/installer and smoke tests. (‼️ TODO)
+
+## Milestones (proposed)
+- __M1: MCP Tools Skeleton__ (target: short cycle)
+  - [ ] Tools Panel UI placeholder under `ConversationView` (‼️)
+  - [ ] Server config UI (name, transport, command/URL, args/env) (‼️)
+  - [ ] Connect/disconnect lifecycle with basic status/errors (‼️)
+  - [ ] Per-prompt enable/disable selectors (‼️)
+- __M2: Image Capture Overlay__
+  - [ ] Region capture overlay (Windows) and file save (‼️)
+  - [ ] Post-capture: open Prompt tab and append image message (‼️)
+- __M3: TTS/STT Sections__
+  - [ ] TTS playback UI; voice/speed; download (‼️)
+  - [ ] STT transcript view; copy/use-as-prompt (‼️)
+- __M4: Packaging__
+  - [ ] Windows installer + smoke tests (‼️)
+
+## Acceptance Criteria (M1: MCP Tools Skeleton)
+- [ ] Add/remove tool server entries in Settings; persisted to disk
+- [ ] Connect/disconnect shows status and error toasts
+- [ ] Selected tools visible in Prompt tab; persisted optional
+- [ ] No regressions in prompt flow, persistence, or Quick Prompts
 
 ## Environment / Keys
 - Set `OPENAI_API_KEY` before running the app. Example (PowerShell):
@@ -118,3 +151,8 @@ Last updated: 2025-08-24
 - Popup remains open during recording; opens prompt on success, failure, or no speech.
 - Added `reqwest` (rustls) for backend.
 - Implemented Quick Prompts 1–9: aggressive copy-restore selection, OpenAI Chat Completions, paste result into active app.
+ - Integrated `PromptComposer.vue` and added backend `chat_complete` command; fixed scope and registration.
+ - Implemented conversation persistence with Tauri commands (`load_conversation_state`, `save_conversation_state`, `clear_conversations`); debounced auto-save; respects `persist_conversations`.
+ - Added `ConversationHistory.vue` with sorting by `updatedAt`, tooltips, and double-click switching; wired into `App.vue` above `ConversationView`.
+ - Completed Prompt Settings UI: API key, model dropdown (fetched), temperature slider, persistence toggle, Clear All conversations; Quick Prompts Editor.
+ - End-to-end QA passed for persistence ON/OFF, Clear All behavior, and regression of prompt flow and model/temperature usage.

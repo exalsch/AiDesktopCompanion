@@ -31,7 +31,6 @@ export async function stopRecording(): Promise<{ blob: Blob, mime: string } | nu
   if (!recording || !recorder) return null
   const mime = recorder.mimeType
   const r = recorder
-  const s = mediaStream
   return await new Promise((resolve) => {
     r.onstop = async () => {
       try {

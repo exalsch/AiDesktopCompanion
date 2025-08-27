@@ -124,7 +124,6 @@ function onKey(e: KeyboardEvent) {
 let prevHtmlBg = ''
 let prevBodyBg = ''
 let unlistenImage: (() => void) | null = null
-let unlistenAnyCapture: (() => void) | null = null
 
 onMounted(() => {
   window.addEventListener('mousedown', onMouseDown)

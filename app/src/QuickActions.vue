@@ -40,7 +40,7 @@ async function handleAction(action: 'prompt' | 'tts' | 'stt' | 'image'): Promise
       const label = 'capture-overlay'
       const base = `${window.location.origin}${window.location.pathname}`
       const url = `${base}?window=capture-overlay`
-      let win = WebviewWindow.getByLabel(label)
+      let win: WebviewWindow | null = await WebviewWindow.getByLabel(label)
 
       const createOverlay = () => {
         console.info('[quick-actions] creating capture overlay', url)
@@ -66,13 +66,13 @@ async function handleAction(action: 'prompt' | 'tts' | 'stt' | 'image'): Promise
 
       // If focusing/showing fails (stale handle), recreate
       let ready = false
-      try { await win.show(); ready = true } catch { ready = false }
+      try { if (win) { await win.show(); ready = true } else { ready = false } } catch { ready = false }
       if (!ready) {
         try { win = createOverlay(); await win.show(); ready = true } catch { ready = false }
       }
-      try { await win.setAlwaysOnTop(true) } catch {}
-      try { await win.maximize() } catch {}
-      try { await win.setFocus() } catch {}
+      try { if (win) await win.setAlwaysOnTop(true) } catch {}
+      try { if (win) await win.maximize() } catch {}
+      try { if (win) await win.setFocus() } catch {}
 
       // Now hide the popup
       await hidePopup()
