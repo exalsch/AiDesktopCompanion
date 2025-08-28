@@ -27,9 +27,11 @@ async function handleAction(action: 'prompt' | 'tts' | 'stt' | 'image'): Promise
       await invoke<string>('prompt_action', { safe_mode: false })
       return
     } else if (action === 'tts') {
-      // Windows-first TTS: copy current selection and speak it via PowerShell
+      // Simplified flow: capture selection, open main window TTS panel, insert and autoplay
       await hidePopup()
-      await invoke<string>('tts_selection', { safe_mode: false })
+      // Give focus a moment to return to the previous app so Ctrl+C captures correctly
+      await new Promise((r) => setTimeout(r, 100))
+      await invoke('tts_open_with_selection', { safe_mode: false, autoplay: true })
       return
     } else if (action === 'stt') {
       // Push-to-talk: start recording on demand; do not close popup yet
@@ -158,7 +160,7 @@ async function stopSTTAndTranscribe(): Promise<void> {
     sttRecording.value = false
     if (!res) {
       await hidePopup()
-      await invoke('open_prompt_with_text', { text: 'Transcription canceled.' })
+      await invoke('insert_prompt_text', { text: 'Transcription canceled.' })
       return
     }
     const { blob, mime } = res
@@ -171,13 +173,13 @@ async function stopSTTAndTranscribe(): Promise<void> {
     } catch (err) {
       console.error('[stt] transcribe failed', err)
       const msg = typeof err === 'string' ? err : (err && (err as any).message) ? (err as any).message : 'Unknown STT error'
-      await invoke('open_prompt_with_text', { text: `Transcription failed: ${msg}` })
+      await invoke('insert_prompt_text', { text: `Transcription failed: ${msg}` })
       return
     }
     if (text && text.trim().length > 0) {
-      await invoke('open_prompt_with_text', { text })
+      await invoke('insert_prompt_text', { text })
     } else {
-      await invoke('open_prompt_with_text', { text: 'No speech detected.' })
+      await invoke('insert_prompt_text', { text: 'No speech detected.' })
     }
   } finally {
     sttRecording.value = false

@@ -18,6 +18,8 @@ pub fn run() {
       prompt_action,
       position_quick_actions,
       tts_selection,
+      tts_open_with_selection,
+      open_tts_with_text,
       tts_start,
       tts_stop,
       tts_list_voices,
@@ -25,6 +27,7 @@ pub fn run() {
       tts_openai_synthesize_wav,
       stt_transcribe,
       chat_complete,
+      insert_prompt_text,
       open_prompt_with_text,
       run_quick_prompt,
       generate_default_quick_prompts,
@@ -37,6 +40,8 @@ pub fn run() {
       save_conversation_state,
       clear_conversations,
       copy_file_to_path,
+      tts_delete_temp_wav,
+      cleanup_stale_tts_wavs,
       capture_region
     ])
     .run(tauri::generate_context!())
@@ -45,6 +50,7 @@ pub fn run() {
 
 use std::{thread, time::Duration};
 use std::fs;
+use std::time::SystemTime;
 use std::path::PathBuf;
 use tauri::Manager; // bring get_webview_window into scope
 use tauri::Emitter; // bring emit into scope
@@ -54,9 +60,129 @@ use std::io::{Write, Cursor};
 use std::process::{Command, Stdio};
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
+use base64::Engine; // for .encode on base64 engines
+// Audio decoding (fallback for non-WAV responses)
+use symphonia::core::audio::{AudioBufferRef, SampleBuffer};
+use symphonia::core::codecs::DecoderOptions;
+use symphonia::core::formats::FormatOptions;
+use symphonia::core::io::MediaSourceStream;
+use symphonia::core::meta::MetadataOptions;
+use symphonia::core::probe::Hint;
 
 use arboard::Clipboard;
 use enigo::{Enigo, Key, KeyboardControllable};
+
+// Decode arbitrary audio bytes (e.g., WAV/MP3/AAC) and write a 16-bit PCM WAV.
+// If the buffer is already WAV, we try hound first; otherwise, we fall back to Symphonia.
+fn write_pcm16_wav_from_any(bytes: &[u8], target_path: &str, rate: i32, volume: u8) -> Result<(), String> {
+  // Try WAV path first
+  if apply_wav_gain_and_rate(bytes, target_path, rate, volume).is_ok() {
+    return Ok(());
+  }
+
+  // Fallback: generic decode using Symphonia
+  // Own the data so the media source can be 'static.
+  let mss = MediaSourceStream::new(Box::new(Cursor::new(bytes.to_vec())), Default::default());
+  let hint = Hint::new();
+  let probed = symphonia::default::get_probe()
+    .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+    .map_err(|e| format!("audio probe failed: {e}"))?;
+
+  let mut format = probed.format;
+  let track = format.default_track().ok_or_else(|| "no default track".to_string())?;
+  // Copy required info to avoid holding an immutable borrow of `format` during the loop.
+  let track_id = track.id;
+  let codec_params = track.codec_params.clone();
+  let mut decoder = symphonia::default::get_codecs()
+    .make(&codec_params, &DecoderOptions::default())
+    .map_err(|e| format!("decoder init failed: {e}"))?;
+
+  let mut out_rate: u32 = codec_params.sample_rate.unwrap_or(44100);
+  let mut out_channels: u16 = codec_params
+    .channels
+    .map(|c| c.count() as u16)
+    .unwrap_or(1);
+
+  let mut pcm: Vec<f32> = Vec::new();
+
+  loop {
+    let packet = match format.next_packet() {
+      Ok(p) => p,
+      Err(_) => break,
+    };
+    if packet.track_id() != track_id { continue; }
+    match decoder.decode(&packet) {
+      Ok(buf) => {
+        match buf {
+          AudioBufferRef::F32(b) => {
+            let spec = *b.spec();
+            out_rate = spec.rate;
+            out_channels = spec.channels.count() as u16;
+            let mut sbuf = SampleBuffer::<f32>::new(b.capacity() as u64, spec);
+            sbuf.copy_interleaved_ref(AudioBufferRef::F32(b));
+            pcm.extend_from_slice(sbuf.samples());
+          }
+          AudioBufferRef::S16(b) => {
+            let spec = *b.spec();
+            out_rate = spec.rate;
+            out_channels = spec.channels.count() as u16;
+            let mut sbuf = SampleBuffer::<i16>::new(b.capacity() as u64, spec);
+            sbuf.copy_interleaved_ref(AudioBufferRef::S16(b));
+            pcm.extend(sbuf.samples().iter().map(|v| *v as f32 / 32768.0));
+          }
+          AudioBufferRef::S32(b) => {
+            let spec = *b.spec();
+            out_rate = spec.rate;
+            out_channels = spec.channels.count() as u16;
+            let mut sbuf = SampleBuffer::<i32>::new(b.capacity() as u64, spec);
+            sbuf.copy_interleaved_ref(AudioBufferRef::S32(b));
+            let max = i32::MAX as f32;
+            pcm.extend(sbuf.samples().iter().map(|v| *v as f32 / max));
+          }
+          AudioBufferRef::U8(b) => {
+            let spec = *b.spec();
+            out_rate = spec.rate;
+            out_channels = spec.channels.count() as u16;
+            let mut sbuf = SampleBuffer::<u8>::new(b.capacity() as u64, spec);
+            sbuf.copy_interleaved_ref(AudioBufferRef::U8(b));
+            pcm.extend(sbuf.samples().iter().map(|v| (*v as f32 - 128.0) / 128.0));
+          }
+          _ => {
+            // Other formats not explicitly handled are ignored.
+          }
+        }
+      }
+      Err(_e) => { /* skip bad packet */ }
+    }
+  }
+
+  if pcm.is_empty() {
+    return Err("decode produced no samples".into());
+  }
+
+  // Apply rate and volume, then write WAV
+  let r = rate.clamp(-10, 10);
+  if r != 0 {
+    let factor = (2f32).powf(r as f32 / 10.0);
+    let new_rate = ((out_rate as f32) * factor).round() as u32;
+    out_rate = new_rate.clamp(8000, 192000);
+  }
+  let gain: f32 = (volume as f32 / 100.0).max(0.0);
+  let mut writer = hound::WavWriter::create(target_path, hound::WavSpec {
+    channels: out_channels,
+    sample_rate: out_rate,
+    bits_per_sample: 16,
+    sample_format: hound::SampleFormat::Int,
+  }).map_err(|e| format!("wav writer create failed: {e}"))?;
+
+  for v in pcm.into_iter() {
+    let s = (v * gain).clamp(-1.0, 1.0);
+    let i = (s * 32767.0).round() as i16;
+    writer.write_sample(i).map_err(|e| format!("wav write sample failed: {e}"))?;
+  }
+  writer.finalize().map_err(|e| format!("wav finalize failed: {e}"))?;
+  Ok(())
+}
 
 // ---------------------------
 // Settings helpers and commands
@@ -216,7 +342,7 @@ fn save_settings(map: serde_json::Value) -> Result<String, String> {
     fs::create_dir_all(dir).map_err(|e| format!("Failed to create config directory: {e}"))?;
   }
   // Merge with existing settings. Only update known keys present in `map`.
-  let mut current = load_settings_json();
+  let current = load_settings_json();
   let mut obj = current.as_object().cloned().unwrap_or_default();
 
   // Existing keys
@@ -432,8 +558,54 @@ fn payload_length(s: &str) -> usize {
   s.chars().count()
 }
 
+// Open the main window TTS panel with provided text and optional autoplay.
 #[tauri::command]
-async fn tts_selection(_app: tauri::AppHandle, safe_mode: Option<bool>) -> Result<String, String> {
+fn open_tts_with_text(app: tauri::AppHandle, text: String, autoplay: Option<bool>) -> Result<(), String> {
+  if let Some(win) = app.get_webview_window("main") {
+    let _ = win.show();
+    let _ = win.set_focus();
+  }
+  let payload = serde_json::json!({
+    "text": text,
+    "autoplay": autoplay.unwrap_or(false),
+  });
+  let _ = app.emit("tts:open", payload);
+  Ok(())
+}
+
+// Capture current selection text and open the TTS panel, optionally starting playback.
+#[tauri::command]
+fn tts_open_with_selection(app: tauri::AppHandle, safe_mode: Option<bool>, autoplay: Option<bool>) -> Result<(), String> {
+  let safe = safe_mode.unwrap_or(false);
+
+  // Capture selection text (copy-restore pattern like prompt_action)
+  let mut clipboard = Clipboard::new().map_err(|e| format!("clipboard init failed: {e}"))?;
+  let previous_text = if !safe { clipboard.get_text().ok() } else { None };
+
+  if !safe {
+    let mut enigo = Enigo::new();
+    enigo.key_down(Key::Control);
+    enigo.key_click(Key::Layout('c'));
+    enigo.key_up(Key::Control);
+    thread::sleep(Duration::from_millis(120));
+  }
+
+  let selection = clipboard.get_text().unwrap_or_default();
+
+  if !safe {
+    if let Some(prev) = previous_text { let _ = clipboard.set_text(prev); }
+  }
+
+  if selection.trim().is_empty() {
+    let _ = app.emit("tts:error", serde_json::json!({ "message": "No text selected" }));
+    return Err("No text selected".into());
+  }
+
+  open_tts_with_text(app, selection, autoplay)
+}
+
+#[tauri::command]
+async fn tts_selection(app: tauri::AppHandle, safe_mode: Option<bool>) -> Result<String, String> {
   let safe = safe_mode.unwrap_or(false);
 
   // Capture selection text similar to prompt_action
@@ -457,6 +629,9 @@ async fn tts_selection(_app: tauri::AppHandle, safe_mode: Option<bool>) -> Resul
   }
 
   if selection.trim().is_empty() {
+    let _ = app.emit("tts:error", serde_json::json!({
+      "message": "No text selected"
+    }));
     return Err("No text selected".into());
   }
 
@@ -482,6 +657,21 @@ async fn tts_selection(_app: tauri::AppHandle, safe_mode: Option<bool>) -> Resul
     #[cfg(target_os = "windows")]
     {
       use std::process::Command;
+      // Best-effort sanity check before playback
+      match fs::metadata(&wav) {
+        Ok(meta) => {
+          if meta.len() < 44 { // smaller than typical WAV header
+            let msg = format!("synthesized WAV too small: {} bytes at {}", meta.len(), &wav);
+            let _ = app.emit("tts:error", serde_json::json!({ "message": msg }));
+            return Err(msg);
+          }
+        }
+        Err(e) => {
+          let msg = format!("synthesized WAV not found: {} ({})", &wav, e);
+          let _ = app.emit("tts:error", serde_json::json!({ "message": msg }));
+          return Err(msg);
+        }
+      }
       // Use single-quoted PS string and escape any single quotes in the path
       let wav_escaped = ps_escape_single_quoted(&wav);
       let ps = format!(
@@ -492,12 +682,23 @@ async fn tts_selection(_app: tauri::AppHandle, safe_mode: Option<bool>) -> Resul
         .args(["-NoProfile", "-NonInteractive", "-Command", &ps])
         .output()
         .map_err(|e| format!("launch powershell failed: {e}"))?;
-      if !out.status.success() { return Err(format!("audio play failed: {}", out.status)); }
+      if !out.status.success() {
+        let stderr_s = String::from_utf8_lossy(&out.stderr);
+        let msg = if stderr_s.trim().is_empty() {
+          format!("audio play failed: {}", out.status)
+        } else {
+          format!("audio play failed: {}\n{}", out.status, stderr_s)
+        };
+        let _ = app.emit("tts:error", serde_json::json!({ "message": msg }));
+        return Err(msg);
+      }
     }
     #[cfg(not(target_os = "windows"))]
     {
       let _ = (selection);
-      return Err("OpenAI TTS playback not implemented on this platform".into());
+      let msg = "OpenAI TTS playback not implemented on this platform".to_string();
+      let _ = app.emit("tts:error", serde_json::json!({ "message": msg }));
+      return Err(msg);
     }
     Ok("ok".into())
   } else {
@@ -537,13 +738,19 @@ try {{
         stdin.write_all(selection.as_bytes()).map_err(|e| format!("stdin write failed: {e}"))?;
       }
       let status = child.wait().map_err(|e| format!("powershell wait failed: {e}"))?;
-      if !status.success() { return Err(format!("powershell exited with status: {status}")); }
+      if !status.success() {
+        let msg = format!("powershell exited with status: {status}");
+        let _ = app.emit("tts:error", serde_json::json!({ "message": msg }));
+        return Err(msg);
+      }
       Ok("ok".into())
     }
     #[cfg(not(target_os = "windows"))]
     {
       let _ = (selection);
-      Err("TTS not implemented on this platform".into())
+      let msg = "TTS not implemented on this platform".to_string();
+      let _ = app.emit("tts:error", serde_json::json!({ "message": msg }));
+      Err(msg)
     }
   }
 }
@@ -779,6 +986,7 @@ async fn tts_openai_synthesize_wav(text: String, voice: Option<String>, model: O
   let resp = client
     .post("https://api.openai.com/v1/audio/speech")
     .bearer_auth(key)
+    .header("Accept", "audio/wav")
     .json(&body)
     .send()
     .await
@@ -794,17 +1002,8 @@ async fn tts_openai_synthesize_wav(text: String, voice: Option<String>, model: O
   let r = rate.unwrap_or(0).clamp(-10, 10);
   let vol = volume.unwrap_or(100).min(100);
 
-  if r != 0 || vol != 100 {
-    match apply_wav_gain_and_rate(&bytes, &target, r, vol) {
-      Ok(()) => {}
-      Err(_e) => {
-        // Fallback to writing original bytes if processing fails
-        fs::write(&target, &bytes).map_err(|e| format!("write wav failed: {e}"))?;
-      }
-    }
-  } else {
-    fs::write(&target, &bytes).map_err(|e| format!("write wav failed: {e}"))?;
-  }
+  // Robustly decode regardless of actual container/encoding, then write PCM16 WAV
+  write_pcm16_wav_from_any(&bytes, &target, r, vol)?;
   Ok(target)
 }
 
@@ -813,49 +1012,53 @@ async fn tts_openai_synthesize_wav(text: String, voice: Option<String>, model: O
 fn apply_wav_gain_and_rate(bytes: &[u8], target_path: &str, rate: i32, volume: u8) -> Result<(), String> {
   let mut reader = hound::WavReader::new(Cursor::new(bytes))
     .map_err(|e| format!("wav decode failed: {e}"))?;
-  let mut spec = reader.spec();
+  let in_spec = reader.spec();
 
+  // Target: always 16-bit PCM for System.Media.SoundPlayer compatibility
   let gain: f32 = (volume as f32 / 100.0).max(0.0);
   let r = rate.clamp(-10, 10);
+  let mut out_rate = in_spec.sample_rate;
   if r != 0 {
     let factor = (2f32).powf(r as f32 / 10.0);
-    let new_rate = ((spec.sample_rate as f32) * factor).round() as u32;
-    // Clamp to a sane range to avoid extreme sample rates
-    let new_rate = new_rate.clamp(8000, 192000);
-    spec.sample_rate = new_rate;
+    out_rate = ((out_rate as f32) * factor).round() as u32;
+    out_rate = out_rate.clamp(8000, 192000);
   }
+  let out_spec = hound::WavSpec {
+    channels: in_spec.channels,
+    sample_rate: out_rate,
+    bits_per_sample: 16,
+    sample_format: hound::SampleFormat::Int,
+  };
 
-  let mut writer = hound::WavWriter::create(target_path, spec.clone())
+  let mut writer = hound::WavWriter::create(target_path, out_spec)
     .map_err(|e| format!("wav writer create failed: {e}"))?;
 
-  match spec.sample_format {
+  match in_spec.sample_format {
     hound::SampleFormat::Float => {
-      // 32-bit float common
       let mut it = reader.samples::<f32>();
       while let Some(s) = it.next() {
         let v = s.map_err(|e| format!("wav read sample failed: {e}"))?;
         let out = (v * gain).clamp(-1.0, 1.0);
-        writer.write_sample(out).map_err(|e| format!("wav write sample failed: {e}"))?;
+        let i = (out * 32767.0).round() as i16;
+        writer.write_sample(i).map_err(|e| format!("wav write sample failed: {e}"))?;
       }
     }
     hound::SampleFormat::Int => {
-      if spec.bits_per_sample <= 16 {
+      if in_spec.bits_per_sample <= 16 {
         let mut it = reader.samples::<i16>();
         while let Some(s) = it.next() {
-          let v = s.map_err(|e| format!("wav read sample failed: {e}"))?;
+          let v = s.map_err(|e| format!("wav read sample failed: {e}"))? as i32;
           let out = ((v as f32) * gain).clamp(i16::MIN as f32, i16::MAX as f32) as i16;
           writer.write_sample(out).map_err(|e| format!("wav write sample failed: {e}"))?;
         }
-      } else if spec.bits_per_sample <= 32 {
+      } else if in_spec.bits_per_sample <= 32 {
         let mut it = reader.samples::<i32>();
-        // Compute clamp range from bits_per_sample
-        let max_val: i64 = (1i64 << (spec.bits_per_sample - 1)) - 1;
-        let min_val: i64 = -1i64 << (spec.bits_per_sample - 1);
+        let max_val: f32 = ((1i64 << (in_spec.bits_per_sample - 1)) - 1) as f32;
         while let Some(s) = it.next() {
-          let v = s.map_err(|e| format!("wav read sample failed: {e}"))? as i64;
-          let out = ((v as f32) * gain).round() as i64;
-          let clamped = out.clamp(min_val, max_val) as i32;
-          writer.write_sample(clamped).map_err(|e| format!("wav write sample failed: {e}"))?;
+          let v = s.map_err(|e| format!("wav read sample failed: {e}"))? as f32;
+          let norm = (v / max_val) * gain;
+          let i = (norm.clamp(-1.0, 1.0) * 32767.0).round() as i16;
+          writer.write_sample(i).map_err(|e| format!("wav write sample failed: {e}"))?;
         }
       } else {
         return Err("unsupported bit depth".into());
@@ -905,6 +1108,66 @@ async fn stt_transcribe(audio: Vec<u8>, mime: String) -> Result<String, String> 
 }
 
 // ---------------------------
+// Temp WAV cleanup (OpenAI TTS)
+// ---------------------------
+#[tauri::command]
+fn tts_delete_temp_wav(path: String) -> Result<bool, String> {
+  let file_path = PathBuf::from(&path);
+  // Ensure file exists early; if not, return Ok(false)
+  if !file_path.exists() { return Ok(false); }
+
+  // Only allow deletion inside the system temp directory and matching our prefix/suffix
+  let temp_dir = std::env::temp_dir();
+  let temp_canon = std::fs::canonicalize(&temp_dir).unwrap_or(temp_dir.clone());
+  let file_canon = std::fs::canonicalize(&file_path).map_err(|e| format!("canonicalize failed: {e}"))?;
+
+  if !file_canon.starts_with(&temp_canon) {
+    return Err("Refusing to delete non-temp file".into());
+  }
+
+  let fname = file_canon.file_name().and_then(|s| s.to_str()).ok_or_else(|| "Invalid file name".to_string())?;
+  if !(fname.starts_with("aidc_tts_") && fname.ends_with(".wav")) {
+    return Err("Refusing to delete unexpected file".into());
+  }
+
+  match fs::remove_file(&file_canon) {
+    Ok(_) => Ok(true),
+    Err(e) => {
+      if e.kind() == std::io::ErrorKind::NotFound { Ok(false) } else { Err(format!("remove failed: {e}")) }
+    }
+  }
+}
+
+#[tauri::command]
+fn cleanup_stale_tts_wavs(max_age_minutes: Option<u64>) -> Result<u32, String> {
+  let age_min = max_age_minutes.unwrap_or(240);
+  let cutoff = SystemTime::now()
+    .checked_sub(Duration::from_secs(age_min.saturating_mul(60)))
+    .ok_or_else(|| "Invalid cutoff time".to_string())?;
+
+  let temp_dir = std::env::temp_dir();
+  let mut removed: u32 = 0;
+  let it = match fs::read_dir(&temp_dir) { Ok(i) => i, Err(_) => return Ok(0) };
+  for ent in it {
+    if let Ok(de) = ent {
+      let p = de.path();
+      if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
+        if name.starts_with("aidc_tts_") && name.to_ascii_lowercase().ends_with(".wav") {
+          if let Ok(md) = de.metadata() {
+            if let Ok(modified) = md.modified() {
+              if modified < cutoff {
+                let _ = fs::remove_file(&p).map(|_| { removed = removed.saturating_add(1); });
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  Ok(removed)
+}
+
+// ---------------------------
 // Utility: Copy a file to destination (used by Save As flow)
 // ---------------------------
 #[tauri::command]
@@ -922,11 +1185,36 @@ fn copy_file_to_path(src: String, dest: String, overwrite: Option<bool>) -> Resu
 }
 
 // Simple chat completion endpoint that takes prior conversation messages and returns a single assistant reply.
-// The frontend builds the message list; we simply forward to OpenAI.
+// Supports either plain string content or structured content parts for multimodal (Vision) prompts.
 #[derive(Debug, Deserialize)]
 struct ChatMessage {
   role: String,
-  content: String,
+  content: ChatContent,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum ChatContent {
+  Text(String),
+  Parts(Vec<FrontendPart>),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum FrontendPart {
+  InputText { text: String },
+  InputImage { path: String, mime: Option<String> },
+}
+
+fn guess_mime_from_path_rs(path: &str) -> Option<&'static str> {
+  let p = path.to_ascii_lowercase();
+  if p.ends_with(".png") { return Some("image/png"); }
+  if p.ends_with(".jpg") || p.ends_with(".jpeg") { return Some("image/jpeg"); }
+  if p.ends_with(".webp") { return Some("image/webp"); }
+  if p.ends_with(".gif") { return Some("image/gif"); }
+  if p.ends_with(".bmp") { return Some("image/bmp"); }
+  if p.ends_with(".tif") || p.ends_with(".tiff") { return Some("image/tiff"); }
+  None
 }
 
 #[tauri::command]
@@ -936,16 +1224,39 @@ async fn chat_complete(messages: Vec<ChatMessage>) -> Result<String, String> {
   let temp = get_temperature_from_settings_or_env();
 
   // Normalize roles to allowed set; default to user
-  let norm_msgs: Vec<serde_json::Value> = messages
-    .into_iter()
-    .map(|m| {
-      let r = match m.role.to_ascii_lowercase().as_str() {
-        "system" | "assistant" | "user" => m.role.to_ascii_lowercase(),
-        _ => "user".to_string(),
-      };
-      serde_json::json!({ "role": r, "content": m.content })
-    })
-    .collect();
+  let mut norm_msgs: Vec<serde_json::Value> = Vec::new();
+  for m in messages.into_iter() {
+    let r = match m.role.to_ascii_lowercase().as_str() {
+      "system" | "assistant" | "user" => m.role.to_ascii_lowercase(),
+      _ => "user".to_string(),
+    };
+
+    let content_value = match m.content {
+      ChatContent::Text(s) => serde_json::Value::String(s),
+      ChatContent::Parts(parts) => {
+        let mut out_parts: Vec<serde_json::Value> = Vec::new();
+        for p in parts {
+          match p {
+            FrontendPart::InputText { text } => {
+              out_parts.push(serde_json::json!({ "type": "text", "text": text }));
+            }
+            FrontendPart::InputImage { path, mime } => {
+              let mime_final = mime.or_else(|| guess_mime_from_path_rs(&path).map(|s| s.to_string())).ok_or_else(|| format!("Missing/unknown image MIME for: {}", path))?;
+              let bytes = std::fs::read(&path).map_err(|e| format!("Failed to read image '{}': {}", path, e))?;
+              let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+              let url = format!("data:{};base64,{}", mime_final, b64);
+              out_parts.push(serde_json::json!({
+                "type": "image_url",
+                "image_url": { "url": url }
+              }));
+            }
+          }
+        }
+        serde_json::Value::Array(out_parts)
+      }
+    };
+    norm_msgs.push(serde_json::json!({ "role": r, "content": content_value }));
+  }
 
   let mut body = serde_json::json!({
     "model": model,
@@ -994,6 +1305,18 @@ fn open_prompt_with_text(app: tauri::AppHandle, text: String) -> Result<(), Stri
     "length": payload_length(&preview),
   });
   let _ = app.emit("prompt:open", payload);
+  Ok(())
+}
+
+// Insert provided text directly into the prompt composer input (used by Quick Actions STT flow).
+#[tauri::command]
+fn insert_prompt_text(app: tauri::AppHandle, text: String) -> Result<(), String> {
+  if let Some(win) = app.get_webview_window("main") {
+    let _ = win.show();
+    let _ = win.set_focus();
+  }
+  let payload = serde_json::json!({ "text": text });
+  let _ = app.emit("prompt:insert", payload);
   Ok(())
 }
 

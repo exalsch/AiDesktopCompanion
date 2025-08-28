@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import conversation, { appendMessage } from '../state/conversation'
 
 const props = defineProps<{ modelValue: string }>()
-const emit = defineEmits<{ (e: 'update:modelValue', v: string): void }>()
+const emit = defineEmits<{ (e: 'update:modelValue', v: string): void; (e: 'busy', v: boolean): void }>()
 
 const input = computed({
   get: () => props.modelValue,
@@ -12,18 +12,36 @@ const input = computed({
 })
 const sending = ref(false)
 
-function buildChatMessages(): Array<{ role: string; content: string }> {
-  const msgs: Array<{ role: string; content: string }> = []
+type ContentPart =
+  | { type: 'input_text'; text: string }
+  | { type: 'input_image'; path: string; mime?: string }
+
+function guessMimeFromPath(path: string): string | undefined {
+  const p = path.toLowerCase()
+  if (p.endsWith('.png')) return 'image/png'
+  if (p.endsWith('.jpg') || p.endsWith('.jpeg')) return 'image/jpeg'
+  if (p.endsWith('.webp')) return 'image/webp'
+  if (p.endsWith('.gif')) return 'image/gif'
+  if (p.endsWith('.bmp')) return 'image/bmp'
+  if (p.endsWith('.tif') || p.endsWith('.tiff')) return 'image/tiff'
+  return undefined
+}
+
+function buildChatMessages(): Array<{ role: string; content: string | ContentPart[] }> {
+  const msgs: Array<{ role: string; content: string | ContentPart[] }> = []
   // Optional system primer for clarity
-  msgs.push({ role: 'system', content: 'You are a helpful assistant. Be concise and clear.' })
+  msgs.push({ role: 'system', content: [{ type: 'input_text', text: 'You are a helpful assistant. Be concise and clear.' }] })
 
   for (const m of conversation.currentConversation.messages) {
     if (m.type === 'text') {
-      msgs.push({ role: m.role, content: m.text || '' })
+      msgs.push({ role: m.role, content: [{ type: 'input_text', text: m.text || '' }] })
     } else if (m.type === 'image') {
-      // ‼️ TODO: Vision support. For now, include a placeholder note so the model knows an image was referenced.
-      const names = (m.images || []).map((i) => i.path.split(/[\/\\]/).pop()).join(', ')
-      msgs.push({ role: m.role, content: names ? `[Image attached: ${names}]` : `[Image attached]` })
+      const parts: ContentPart[] = []
+      for (const img of (m.images || [])) {
+        const mime = guessMimeFromPath(img.path)
+        parts.push({ type: 'input_image', path: img.path, mime })
+      }
+      if (parts.length) msgs.push({ role: m.role, content: parts })
     }
   }
   return msgs
@@ -39,6 +57,7 @@ async function onSend() {
 
   // call backend
   sending.value = true
+  emit('busy', true)
   try {
     const msgs = buildChatMessages()
     const resp: string = await invoke('chat_complete', { messages: msgs })
@@ -49,6 +68,7 @@ async function onSend() {
     appendMessage({ role: 'assistant', type: 'text', text: `Error: ${msg}` })
   } finally {
     sending.value = false
+    emit('busy', false)
   }
 }
 </script>

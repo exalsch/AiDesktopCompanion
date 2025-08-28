@@ -4,6 +4,7 @@ import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import { save as saveDialog } from '@tauri-apps/plugin-dialog'
 
 const props = defineProps<{ notify?: (msg: string, kind?: 'error' | 'success', ms?: number) => void }>()
+const emit = defineEmits<{ (e: 'busy', v: boolean): void }>()
 
 const form = reactive({
   text: '' as string,
@@ -16,6 +17,7 @@ const form = reactive({
 })
 
 const speaking = ref(false)
+const busy = ref(false) // shows LoadingDots during synthesis (OpenAI play or any synth operation)
 const engine = ref<'local' | 'openai'>('local')
 const wavPath = ref('')
 const wavSrc = ref('')
@@ -23,6 +25,8 @@ const voices = ref<string[]>([])
 const loadingVoices = ref(false)
 const err = ref('')
 const playerRef = ref<HTMLAudioElement | null>(null)
+let cleanupTimer: any = 0
+const lastPlayTempPath = ref('') // temp wav created by onPlay (OpenAI) only; safe to delete after playback/stop
 
 // OpenAI voices (static list; API does not expose a public voices endpoint)
 const openaiVoiceOptions = ref<string[]>([
@@ -61,9 +65,12 @@ async function onPlay() {
       speaking.value = true
     } else {
       // OpenAI: synthesize to WAV then play via HTML audio
+      busy.value = true
       const path = await invoke<string>('tts_openai_synthesize_wav', { text: form.text, voice: form.openaiVoice || 'alloy', model: form.openaiModel || 'gpt-4o-mini-tts', rate: form.rate, volume: form.volume })
+      busy.value = false
       wavPath.value = path
       wavSrc.value = convertFileSrc(path)
+      lastPlayTempPath.value = path
       // Auto-play
       requestAnimationFrame(() => {
         const a = playerRef.value
@@ -71,13 +78,23 @@ async function onPlay() {
           a.currentTime = 0
           a.play().catch(() => {})
           speaking.value = true
-          a.onended = () => { speaking.value = false }
+          a.onended = async () => {
+            speaking.value = false
+            // Cleanup temp WAV only if it was created by Play (OpenAI)
+            const p = lastPlayTempPath.value
+            if (p) {
+              try { await invoke<boolean>('tts_delete_temp_wav', { path: p }) } catch {}
+              if (wavPath.value === p) { wavPath.value = ''; wavSrc.value = '' }
+              lastPlayTempPath.value = ''
+            }
+          }
         }
       })
     }
   } catch (e: any) {
     const msg = e?.message || String(e) || 'TTS start failed'
     props.notify?.(msg, 'error')
+    busy.value = false
   }
 }
 
@@ -88,6 +105,13 @@ async function onStop() {
     } else {
       const a = playerRef.value
       if (a) { a.pause(); a.currentTime = 0 }
+      // Cleanup temp WAV if stopping during OpenAI playback
+      const p = lastPlayTempPath.value
+      if (p) {
+        try { await invoke<boolean>('tts_delete_temp_wav', { path: p }) } catch {}
+        if (wavPath.value === p) { wavPath.value = ''; wavSrc.value = '' }
+        lastPlayTempPath.value = ''
+      }
     }
   } catch {}
   finally {
@@ -101,9 +125,11 @@ async function onSynthesize() {
     return
   }
   try {
+    busy.value = true
     const path = engine.value === 'local'
       ? await invoke<string>('tts_synthesize_wav', { text: form.text, voice: form.voice || null, rate: form.rate, volume: form.volume })
       : await invoke<string>('tts_openai_synthesize_wav', { text: form.text, voice: (form.openaiVoice || 'alloy'), model: (form.openaiModel || 'gpt-4o-mini-tts'), rate: form.rate, volume: form.volume })
+    busy.value = false
     wavPath.value = path
     wavSrc.value = convertFileSrc(path)
 
@@ -129,6 +155,8 @@ async function onSynthesize() {
   } catch (e: any) {
     const msg = e?.message || String(e) || 'Synthesize failed'
     props.notify?.(msg, 'error')
+  } finally {
+    busy.value = false
   }
 }
 
@@ -146,6 +174,23 @@ async function loadTtsSettings() {
       if (typeof v.tts_openai_model === 'string') form.openaiModel = v.tts_openai_model
     }
   } catch {}
+}
+
+// Ensure settings are applied before playback when triggered programmatically
+let ttsSettingsLoaded = false
+let ttsSettingsLoading: Promise<void> | null = null
+async function ensureTtsSettingsLoaded() {
+  if (ttsSettingsLoaded) return
+  if (!ttsSettingsLoading) {
+    ttsSettingsLoading = (async () => {
+      try {
+        await loadTtsSettings()
+      } finally {
+        ttsSettingsLoaded = true
+      }
+    })()
+  }
+  await ttsSettingsLoading
 }
 
 function scheduleSaveTtsSettings() {
@@ -173,10 +218,18 @@ watch(() => form.openaiModel, scheduleSaveTtsSettings)
 
 onMounted(() => {
   loadVoices().catch(() => {})
-  loadTtsSettings().catch(() => {})
+  ensureTtsSettingsLoaded().catch(() => {})
   loadOpenAIModels().catch(() => {})
+  // Kick off stale cleanup now and periodically (every 30 minutes)
+  invoke('cleanup_stale_tts_wavs', { maxAgeMinutes: 240 }).catch(() => {})
+  cleanupTimer = setInterval(() => { invoke('cleanup_stale_tts_wavs', { maxAgeMinutes: 240 }).catch(() => {}) }, 30 * 60 * 1000)
 })
-onBeforeUnmount(() => { if (speaking.value) onStop().catch(() => {}) })
+onBeforeUnmount(() => {
+  if (cleanupTimer) clearInterval(cleanupTimer)
+  if (speaking.value) onStop().catch(() => {})
+})
+
+watch(busy, (v) => emit('busy', !!v))
 
 async function loadOpenAIModels() {
   try {
@@ -191,6 +244,14 @@ async function loadOpenAIModels() {
     }
   } catch {}
 }
+
+// Expose programmatic API for parent (App.vue)
+defineExpose({
+  setText(text: string) { form.text = text || '' },
+  async play() { await ensureTtsSettingsLoaded(); await onPlay() },
+  async stop() { await onStop() },
+  async setTextAndPlay(text: string) { form.text = text || ''; await ensureTtsSettingsLoaded(); await onPlay() },
+})
 
 </script>
 
@@ -250,7 +311,7 @@ async function loadOpenAIModels() {
     </div>
 
     <div class="row inline">
-      <button class="btn" :disabled="speaking" @click="onPlay">Play</button>
+      <button class="btn" :disabled="speaking || busy" @click="onPlay">{{ busy && engine === 'openai' ? 'Synthesizing…' : 'Play' }}</button>
       <button class="btn danger" :disabled="!speaking" @click="onStop">Stop</button>
       <button class="btn" @click="onSynthesize">Save to WAV</button>
     </div>

@@ -37,3 +37,13 @@ image = "0.25"
 chrono = "0.4"
 once_cell = "1.19"
 hound = "3"
+symphonia = { version = "0.5", features = [
+  "mp3",
+  "aac",
+  "flac",
+  "vorbis",
+  "isomp4",
+  "wav",
+  "ogg"
+] }
+base64 = "0.22"

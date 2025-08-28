@@ -43,7 +43,7 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.conversation-root { display: flex; flex-direction: column; gap: 10px; height: calc(100vh - 160px); max-width: 920px; margin: 0 auto; }
+.conversation-root { display: flex; flex-direction: column; gap: 10px; height: calc(30vh); max-width: 920px; margin: 0 auto; }
 .header { display: flex; align-items: center; gap: 10px; }
 .title { font-weight: 700; font-size: 20px; }
 .spacer { flex: 1; }

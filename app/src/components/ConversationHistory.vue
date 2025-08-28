@@ -12,7 +12,7 @@ interface ItemVM {
 
 const items = computed<ItemVM[]>(() => {
   const list = getConversationsSorted()
-  return list.map((c, idx) => {
+  return list.map((c) => {
     const messages = c.messages || []
     const count = messages.length
     const last = messages[messages.length - 1]

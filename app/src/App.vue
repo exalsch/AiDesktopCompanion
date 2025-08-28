@@ -8,7 +8,8 @@ import ConversationHistory from './components/ConversationHistory.vue'
 import PromptComposer from './components/PromptComposer.vue'
 import TTSPanel from './components/TTSPanel.vue'
 import STTPanel from './components/STTPanel.vue'
-import conversation, { appendMessage, newConversation, getPersistState, setPersistState, clearAllConversations } from './state/conversation'
+import LoadingDots from './components/LoadingDots.vue'
+import conversation, { appendMessage, getPersistState, setPersistState, clearAllConversations } from './state/conversation'
 import { onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
@@ -32,8 +33,14 @@ const ui = reactive({
   activeSection: 'Prompt' as 'Prompt' | 'TTS' | 'STT' | 'Settings',
 })
 
+// Aggregate busy state from child sections
+const busy = reactive({ prompt: false, tts: false, stt: false })
+const isBusy = () => busy.prompt || busy.tts || busy.stt || models.loading
+
 // Bindable input value for the PromptComposer so other sections can prefill it
 const composerInput = ref('')
+// Ref to TTS panel for programmatic control
+const ttsRef = ref<InstanceType<typeof TTSPanel> | null>(null)
 
 // Simple toast state
 const toast = reactive({
@@ -125,6 +132,44 @@ onMounted(async () => {
       }
     })
     unsubs.push(u3)
+
+    // Insert text directly into the Prompt composer (from Quick Actions STT)
+    const u4 = await listen<{ text: string }>('prompt:insert', (e) => {
+      const p = e.payload || ({} as any)
+      if (typeof p.text === 'string') {
+        composerInput.value = p.text
+        ui.activeSection = 'Prompt'
+        showToast('Transcript inserted into prompt input. Edit then press Enter to send.', 'success', 1800)
+      }
+    })
+    unsubs.push(u4)
+
+    // TTS errors surfaced from backend (Quick Actions TTS or TTS panel)
+    const u5 = await listen<{ message: string }>('tts:error', (e) => {
+      const p = e.payload || ({} as any)
+      const msg = typeof p.message === 'string' && p.message.trim() ? p.message : 'TTS error'
+      showToast(msg, 'error')
+    })
+    unsubs.push(u5)
+
+    // Open TTS panel with provided text (from Quick Actions) and optionally autoplay
+    const u6 = await listen<{ text: string; autoplay?: boolean }>('tts:open', (e) => {
+      const p = e.payload || ({} as any)
+      const text = typeof p.text === 'string' ? p.text : ''
+      const autoplay = !!p.autoplay
+      ui.activeSection = 'TTS'
+      requestAnimationFrame(() => {
+        const c = ttsRef.value as any
+        if (!c) return
+        if (autoplay) {
+          c.setTextAndPlay(text)
+        } else {
+          c.setText(text)
+          showToast('Text inserted into TTS. Press Play to start.', 'success', 1800)
+        }
+      })
+    })
+    unsubs.push(u6)
   } catch (err) {
     console.error('[app] event listen failed', err)
   }
@@ -250,6 +295,8 @@ function handleUseAsPrompt(text: string) {
         :class="{ active: ui.activeSection === s }"
         @click="ui.activeSection = s"
       >{{ s }}</button>
+      <div class="spacer"></div>
+      <LoadingDots v-if="isBusy()" text="Working" />
     </div>
 
     <!-- Section Content -->
@@ -257,17 +304,17 @@ function handleUseAsPrompt(text: string) {
       <template v-if="ui.activeSection === 'Prompt'">
         <ConversationHistory />
         <ConversationView :messages="conversation.currentConversation.messages" />
-        <PromptComposer v-model="composerInput" />
+        <PromptComposer v-model="composerInput" @busy="busy.prompt = $event" />
       </template>
 
       <div v-else-if="ui.activeSection === 'TTS'" class="section">
         <div class="section-title">TTS</div>
-        <TTSPanel :notify="showToast" />
+        <TTSPanel ref="ttsRef" :notify="showToast" @busy="busy.tts = $event" />
       </div>
 
       <div v-else-if="ui.activeSection === 'STT'" class="section">
         <div class="section-title">STT</div>
-        <STTPanel :notify="showToast" @use-as-prompt="handleUseAsPrompt" />
+        <STTPanel :notify="showToast" @use-as-prompt="handleUseAsPrompt" @busy="busy.stt = $event" />
       </div>
 
       <div v-else-if="ui.activeSection === 'Settings'" class="section">
@@ -341,6 +388,8 @@ function handleUseAsPrompt(text: string) {
 .tab { padding: 8px 12px; border-radius: 8px; border: 1px solid #3a3a44; background: #1f1f26; color: #fff; cursor: pointer; }
 .tab.active { background: #2e5cff; border-color: #2e5cff; }
 .tab:hover { filter: brightness(1.05); }
+
+.spacer { flex: 1; }
 
 .content { padding: 12px 0; }
 .section { margin: 0 auto; max-width: 920px; }

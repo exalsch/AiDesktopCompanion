@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { reactive, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { startRecording, stopRecording, isRecording } from '../stt'
+import { startRecording, stopRecording } from '../stt'
 
 const emit = defineEmits<{
   (e: 'use-as-prompt', text: string): void
+  (e: 'busy', v: boolean): void
 }>()
 
 const props = defineProps<{ notify?: (msg: string, kind?: 'error' | 'success', ms?: number) => void }>()
@@ -72,18 +73,20 @@ function onUseAsPrompt() {
   if (!t) { props.notify?.('Nothing to use', 'error'); return }
   emit('use-as-prompt', t)
 }
+
+watch(() => state.busy, (v) => emit('busy', !!v))
 </script>
 
 <template>
   <div class="stt">
     <div class="row inline">
-      <button class="btn" :class="{ danger: state.recording }" @click="onRecordToggle">
+      <button class="btn" :disabled="state.busy" :class="{ danger: state.recording }" @click="onRecordToggle">
         {{ state.recording ? 'Stop & Transcribe' : 'Record' }}
       </button>
       <div class="hint">Recording format uses MediaRecorder (WEBM/Opus). Requires mic permission.</div>
     </div>
 
-    <div v-if="state.busy" class="hint">Transcribing…</div>
+    <!-- Busy indicator is now shown globally in App.vue -->
     <div v-if="state.error" class="hint error">{{ state.error }}</div>
 
     <div class="row" v-if="state.transcript">
