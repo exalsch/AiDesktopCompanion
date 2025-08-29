@@ -52,8 +52,6 @@ async function handleAction(action: 'prompt' | 'tts' | 'stt' | 'image'): Promise
           decorations: false,
           transparent: true,
           focus: true,
-          maximized: true,
-          fullscreen: true,
           alwaysOnTop: true,
         })
         // Do not await these events; just log if they fire
@@ -73,7 +71,6 @@ async function handleAction(action: 'prompt' | 'tts' | 'stt' | 'image'): Promise
         try { win = createOverlay(); await win.show(); ready = true } catch { ready = false }
       }
       try { if (win) await win.setAlwaysOnTop(true) } catch {}
-      try { if (win) await win.maximize() } catch {}
       try { if (win) await win.setFocus() } catch {}
 
       // Now hide the popup

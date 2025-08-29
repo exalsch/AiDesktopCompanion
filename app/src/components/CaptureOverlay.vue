@@ -101,12 +101,7 @@ async function onMouseUp(_e: MouseEvent) {
     window.removeEventListener('mousemove', onMouseMove)
     window.removeEventListener('mouseup', onMouseUp)
     const w = getCurrentWebviewWindow()
-    // Drop flags that can interfere with immediate close on Windows
-    try { await w.setAlwaysOnTop(false) } catch {}
-    try { await (w as any).setFullscreen?.(false) } catch {}
-    try { await w.unmaximize() } catch {}
-    // Small delay to let the window state settle before closing
-    await new Promise(res => setTimeout(res, 50))
+    // Close quickly; if it fails, hide as a fallback
     try { await w.close() } catch (e) {
       console.error('[capture-overlay] close failed, hiding instead', e)
       try { await w.hide() } catch {}
@@ -141,9 +136,35 @@ onMounted(() => {
 
   // Ensure always on top, focused and maximized
   const w = getCurrentWebviewWindow()
-  w.setAlwaysOnTop(true).catch(() => {})
-  w.maximize().catch(() => {})
-  w.setFocus().catch(() => {})
+  ;(async () => {
+    try {
+      // Prefer backend physical sizing on Windows (handles negative origins + DPI reliably)
+      await invoke('size_overlay_to_virtual_screen')
+      console.info('[capture-overlay] backend sized overlay to virtual screen')
+    } catch {
+      console.warn('[capture-overlay] backend sizing failed; falling back to JS sizing')
+      try {
+        const b = await invoke<{ x: number; y: number; width: number; height: number }>('get_virtual_screen_bounds')
+        console.info('[capture-overlay] virtual bounds', b)
+        try { await (w as any).setFullscreen?.(false) } catch {}
+        try { await w.setAlwaysOnTop(true) } catch {}
+        try { await (w as any).setDecorations?.(false) } catch {}
+        // Ensure window can be resized to the virtual desktop rectangle
+        try { await (w as any).setResizable?.(true) } catch {}
+        try { await w.setSize({ width: (b as any).width, height: (b as any).height } as any) } catch {}
+        try { await w.setPosition({ x: (b as any).x, y: (b as any).y } as any) } catch {}
+        try { await w.show() } catch {}
+        try { await w.setFocus() } catch {}
+        // Lock back to non-resizable to avoid accidental edges drag
+        try { await (w as any).setResizable?.(false) } catch {}
+      } catch {
+        // Last resort: maximize
+        w.setAlwaysOnTop(true).catch(() => {})
+        w.maximize().catch(() => {})
+        w.setFocus().catch(() => {})
+      }
+    }
+  })()
 
   // Backend emits 'image:capture' on success; force-close overlay when received
   listen<{ path: string }>('image:capture', async () => {
