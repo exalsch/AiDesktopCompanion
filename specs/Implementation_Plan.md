@@ -69,6 +69,25 @@ Last updated: 2025-08-26
   - [ ] Windows 10/11 target; macOS planned
   - [ ] Offline STT models option
 
+## UI Styles
+
+- Mechanism: Base styles live in `app/src/style.css`. The main window dynamically loads a style‑specific CSS via a `<link id="theme-style-css">` injected by `applyStyleCss()` in `app/src/App.vue`.
+- Styles directory: `app/src/styles/<styleName>/style.css`.
+- Current styles: `sidebar` (default) and `tabs` (legacy). ‼️ Both ship with placeholder overrides — customize as needed.
+- Switching: `Settings` ➜ `UI Style` updates `settings.ui_style`; a watcher updates the injected CSS at runtime (HMR-friendly).
+- Windows excluded: Quick Actions and Capture Overlay do not load style CSS by default to remain minimal and consistent.
+
+Add a new style:
+1. Create `app/src/styles/<styleName>/style.css`.
+2. In `app/src/App.vue`, import the CSS with `?url` and extend `styleCssMap`:
+   ```ts
+   import myStyleUrl from './styles/myStyle/style.css?url'
+   const styleCssMap = { sidebar: sidebarStyleUrl, tabs: tabsStyleUrl, myStyle: myStyleUrl }
+   ```
+3. (Optional) Add `<option value="myStyle">My Style</option>` in the Settings UI and extend the TypeScript union for `ui_style`.
+
+See also: `specs/UI_Styles.md` for detailed guidance.
+
 ## Security: Content Security Policy (CSP)
 
 - What: Strict CSP enforced via `app/src-tauri/tauri.conf.json` under `app.security.csp` and `app.security.devCsp`.

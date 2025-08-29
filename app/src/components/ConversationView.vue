@@ -43,12 +43,12 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.conversation-root { display: flex; flex-direction: column; gap: 10px; height: calc(30vh); max-width: 920px; margin: 0 auto; }
+.conversation-root { display: flex; flex-direction: column; gap: 10px; height: 100%; max-width: 920px; margin: 0 auto; }
 .header { display: flex; align-items: center; gap: 10px; }
 .title { font-weight: 700; font-size: 20px; }
 .spacer { flex: 1; }
 .btn { padding: 8px 12px; border-radius: 8px; border: 1px solid #3a3a44; background: #2e5cff; color: #fff; cursor: pointer; }
 .btn:hover { filter: brightness(1.05); }
 .mcp-hint { font-size: 12px; color: #9fa0aa; }
-.list { overflow: auto; border: 1px solid #3a3a44; border-radius: 10px; background: #1f1f26; }
+.list { flex: 1; min-height: 0; overflow: auto; border: 1px solid #3a3a44; border-radius: 10px; background: #1f1f26; }
 </style>

@@ -1,0 +1,12 @@
+/* Tabs layout theme CSS
+   Applied when settings.ui_style === 'tabs'
+   ‼️ Placeholder: customize variables and overrides for the tabs theme. */
+
+:root {
+  --adc-accent: #ff8844;
+  --adc-bg: #0f1116;
+}
+
+/* Example overrides */
+.nav { background: #151923; border-bottom-color: #222734; }
+.tab.active { background: var(--adc-accent) !important; border-color: var(--adc-accent) !important; }

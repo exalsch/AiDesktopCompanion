@@ -3,6 +3,15 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_global_shortcut::Builder::new().build())
     .plugin(tauri_plugin_dialog::init())
+    .on_window_event(|window, event| {
+      if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        // Close-to-tray: prevent app exit and hide the main window
+        if window.label() == "main" {
+          api.prevent_close();
+          let _ = window.hide();
+        }
+      }
+    })
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -11,6 +20,50 @@ pub fn run() {
             .build(),
         )?;
       }
+      // System tray: build a minimal menu and icon
+      // Menu items: Show (shows and focuses main window) and Exit (quits app)
+      let show_item = MenuItemBuilder::with_id("show", "Show").build(app)?;
+      let exit_item = MenuItemBuilder::with_id("exit", "Exit").build(app)?;
+      let tray_menu = MenuBuilder::new(app)
+        .items(&[&show_item, &exit_item])
+        .build()?;
+
+      let mut tray_builder = TrayIconBuilder::new()
+        .menu(&tray_menu)
+        .tooltip("AiDesktopCompanion")
+        .on_tray_icon_event(|tray, event| {
+          if let TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+            ..
+          } = event
+          {
+            let app = tray.app_handle();
+            if let Some(window) = app.get_webview_window("main") {
+              let _ = window.unminimize();
+              let _ = window.show();
+              let _ = window.set_focus();
+            }
+          }
+        })
+        .on_menu_event(|app, event| match event.id().as_ref() {
+          "show" => {
+            if let Some(window) = app.get_webview_window("main") {
+              let _ = window.unminimize();
+              let _ = window.show();
+              let _ = window.set_focus();
+            }
+          }
+          "exit" => {
+            app.exit(0);
+          }
+          _ => {}
+        });
+
+      if let Some(icon) = app.default_window_icon() {
+        tray_builder = tray_builder.icon(icon.clone());
+      }
+      let _tray = tray_builder.build(app)?;
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
@@ -56,6 +109,8 @@ use std::path::PathBuf;
 use tauri::Manager; // bring get_webview_window into scope
 use tauri::Emitter; // bring emit into scope
 use tauri::PhysicalPosition; // for window positioning
+use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use serde::Deserialize;
 use std::io::{Write, Cursor};
 use std::process::{Command, Stdio};
