@@ -79,6 +79,7 @@ pub fn run() {
       tts_openai_synthesize_wav,
       stt_transcribe,
       chat_complete,
+      insert_text_into_focused_app,
       insert_prompt_text,
       open_prompt_with_text,
       run_quick_prompt,
@@ -1435,12 +1436,50 @@ fn open_prompt_with_text(app: tauri::AppHandle, text: String) -> Result<(), Stri
 // Insert provided text directly into the prompt composer input (used by Quick Actions STT flow).
 #[tauri::command]
 fn insert_prompt_text(app: tauri::AppHandle, text: String) -> Result<(), String> {
-  if let Some(win) = app.get_webview_window("main") {
-    let _ = win.show();
-    let _ = win.set_focus();
-  }
+  // Intentionally do NOT show/focus the main window here.
+  // Quick Actions STT should insert text silently without changing window focus.
   let payload = serde_json::json!({ "text": text });
-  let _ = app.emit("prompt:insert", payload);
+  if let Some(win) = app.get_webview_window("main") {
+    let _ = win.emit("prompt:insert", payload);
+  } else {
+    // Fallback: if main window is not available, emit app-wide (may be picked by another window),
+    // but still avoid focusing anything.
+    let _ = app.emit("prompt:insert", serde_json::json!({ "text": text }));
+  }
+  Ok(())
+}
+
+// Paste provided text into the currently focused application via clipboard + Ctrl+V.
+// Restores the previous clipboard contents when aggressive mode is used (safe_mode=false).
+#[tauri::command]
+fn insert_text_into_focused_app(text: String, safe_mode: Option<bool>) -> Result<(), String> {
+  let safe = safe_mode.unwrap_or(false);
+
+  // Prepare clipboard and save previous contents when not in safe mode.
+  let mut clipboard = Clipboard::new().map_err(|e| format!("clipboard init failed: {e}"))?;
+  let previous_text = if !safe { clipboard.get_text().ok() } else { None };
+
+  // Set clipboard to the text to paste.
+  let _ = clipboard.set_text(text);
+
+  // Simulate Ctrl+V to paste into the active application.
+  {
+    let mut enigo = Enigo::new();
+    enigo.key_down(Key::Control);
+    enigo.key_click(Key::Layout('v'));
+    enigo.key_up(Key::Control);
+  }
+
+  // Give time for the target app to read the clipboard.
+  thread::sleep(Duration::from_millis(120));
+
+  // Restore previous clipboard contents if we modified it.
+  if !safe {
+    if let Some(prev) = previous_text {
+      let _ = clipboard.set_text(prev);
+    }
+  }
+
   Ok(())
 }
 

@@ -145,15 +145,16 @@ onMounted(async () => {
     unsubs.push(u3)
 
     // Insert text directly into the Prompt composer (from Quick Actions STT)
-    const u4 = await listen<{ text: string }>('prompt:insert', (e) => {
-      const p = e.payload || ({} as any)
-      if (typeof p.text === 'string') {
-        composerInput.value = p.text
-        ui.activeSection = 'Prompt'
-        showToast('Transcript inserted into prompt input. Edit then press Enter to send.', 'success', 1800)
-      }
-    })
-    unsubs.push(u4)
+    // Only in MAIN window; keep this strictly silent (no section switch, no toast)
+    if (!isQuickActions && !isCaptureOverlay) {
+      const u4 = await listen<{ text: string }>('prompt:insert', (e) => {
+        const p = e.payload || ({} as any)
+        if (typeof p.text === 'string') {
+          composerInput.value = p.text
+        }
+      })
+      unsubs.push(u4)
+    }
 
     // TTS errors surfaced from backend (Quick Actions TTS or TTS panel)
     const u5 = await listen<{ message: string }>('tts:error', (e) => {

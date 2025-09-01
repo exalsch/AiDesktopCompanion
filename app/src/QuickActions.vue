@@ -159,7 +159,6 @@ async function stopSTTAndTranscribe(): Promise<void> {
     sttRecording.value = false
     if (!res) {
       await hidePopup()
-      await invoke('insert_prompt_text', { text: 'Transcription canceled.' })
       return
     }
     const { blob, mime } = res
@@ -172,13 +171,12 @@ async function stopSTTAndTranscribe(): Promise<void> {
     } catch (err) {
       console.error('[stt] transcribe failed', err)
       const msg = typeof err === 'string' ? err : (err && (err as any).message) ? (err as any).message : 'Unknown STT error'
-      await invoke('insert_prompt_text', { text: `Transcription failed: ${msg}` })
       return
     }
+    // Only paste non-empty transcription into the currently focused application.
     if (text && text.trim().length > 0) {
-      await invoke('insert_prompt_text', { text })
-    } else {
-      await invoke('insert_prompt_text', { text: 'No speech detected.' })
+      // Use aggressive copy-restore (safe_mode=false) so the clipboard is restored after paste.
+      await invoke('insert_text_into_focused_app', { text, safe_mode: false })
     }
   } finally {
     sttRecording.value = false
