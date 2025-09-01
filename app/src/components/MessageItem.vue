@@ -2,6 +2,9 @@
 import type { Message } from '../state/conversation'
 
 const props = defineProps<{ message: Message }>()
+const emit = defineEmits<{
+  (e: 'image-click', payload: { images: { path: string; src: string }[]; index: number }): void
+}>()
 </script>
 
 <template>
@@ -9,11 +12,12 @@ const props = defineProps<{ message: Message }>()
     <div class="bubble" :data-type="props.message.type">
       <div v-if="props.message.type === 'text'" class="text">{{ props.message.text }}</div>
       <div v-else class="images">
-        <img v-for="img in props.message.images || []"
+        <img v-for="(img, i) in props.message.images || []"
              :key="img.path"
              :src="img.src"
              alt="Captured image"
              class="thumb"
+             @click="emit('image-click', { images: (props.message.images || []), index: i })"
         />
       </div>
       <div class="meta-line">
@@ -55,7 +59,8 @@ const props = defineProps<{ message: Message }>()
 
 /* Images inside a bubble */
 .images { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
-.thumb { width: 100%; height: auto; border: 1px solid var(--adc-border); border-radius: 10px; background: var(--adc-bg); object-fit: contain; }
+.thumb { width: 100%; height: auto; border: 1px solid var(--adc-border); border-radius: 10px; background: var(--adc-bg); object-fit: contain; cursor: zoom-in; }
+.thumb:hover { filter: brightness(1.05); }
 
 /* Meta line (time, badges) styled subtly */
 .meta-line { display: flex; align-items: center; gap: 8px; font-size: 11px; opacity: 0.9; }

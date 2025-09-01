@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, onMounted } from 'vue'
+import { ref, watch, nextTick, onMounted, reactive } from 'vue'
 import MessageItem from './MessageItem.vue'
+import ImageViewer from './ImageViewer.vue'
 import type { Message } from '../state/conversation'
 import { newConversation } from '../state/conversation'
 
@@ -9,6 +10,23 @@ const props = defineProps<{
 }>()
 
 const listRef = ref<HTMLElement | null>(null)
+
+// Image viewer state
+const viewer = reactive({
+  open: false,
+  images: [] as { src: string; path?: string }[],
+  index: 0,
+})
+
+function onImageClick(payload: { images: { path: string; src: string }[]; index: number }) {
+  try {
+    viewer.images = (payload.images || []).map(i => ({ src: i.src, path: i.path }))
+    viewer.index = Math.max(0, Math.min(payload.index || 0, viewer.images.length - 1))
+    viewer.open = viewer.images.length > 0
+  } catch {
+    viewer.open = false
+  }
+}
 
 watch(
   () => props.messages.length,
@@ -36,10 +54,11 @@ onMounted(async () => {
 
 
     <div ref="listRef" class="list convo-wrap">
-      <MessageItem v-for="m in messages" :key="m.id" :message="m" />
+      <MessageItem v-for="m in messages" :key="m.id" :message="m" @image-click="onImageClick" />
     </div>
   </div>
   <div class="mcp-hint">‼️ Select tools (MCP) to be used — placeholder UI</div>
+  <ImageViewer :open="viewer.open" :images="viewer.images" :index="viewer.index" @close="viewer.open = false" />
 </template>
 
 <style scoped>
