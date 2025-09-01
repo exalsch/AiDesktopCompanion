@@ -92,7 +92,7 @@ async function onSend() {
 </template>
 
 <style scoped>
-.composer { display: flex; flex-direction: column; gap: 8px; margin: 10px auto; max-width: 920px; }
+.composer { display: flex; flex-direction: column; gap: 8px; margin: 10px; max-width: var(--content-max); }
 .input {
   width: 100%;
   resize: vertical;

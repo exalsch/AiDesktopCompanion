@@ -87,7 +87,7 @@ onMounted(loadPrompts)
 
     <div class="grid">
       <div v-for="i in 9" :key="i" class="cell">
-        <label>Prompt {{ i }}</label>
+        <label>Prompt for key {{ i }}</label>
         <textarea v-model="form[String(i)]" rows="3" class="input"/>
       </div>
     </div>

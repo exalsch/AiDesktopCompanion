@@ -14,6 +14,9 @@
   --adc-danger: #a42828;
   --adc-sidebar-bg: #1b1b22;
 
+  /* Shared layout sizing */
+  --content-max: 920px;
+
   color-scheme: light dark;
   color: var(--adc-fg);
   background-color: var(--adc-bg);
@@ -68,8 +71,7 @@ button:focus-visible {
 
 #app {
   max-width: 1280px;
-  min-width: 400px;
-  padding: 2rem;
+  min-width: 400px;  
   text-align: center;
 }
 

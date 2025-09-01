@@ -34,16 +34,16 @@ onMounted(async () => {
       <button class="btn" @click="newConversation()">New conversation</button>
     </div>
 
-    <div class="mcp-hint">‼️ Select tools (MCP) to be used — placeholder UI</div>
 
     <div ref="listRef" class="list convo-wrap">
       <MessageItem v-for="m in messages" :key="m.id" :message="m" />
     </div>
   </div>
+  <div class="mcp-hint">‼️ Select tools (MCP) to be used — placeholder UI</div>
 </template>
 
 <style scoped>
-.conversation-root { display: flex; flex-direction: column; gap: 10px; height: 100%; max-width: 920px; margin: 0 auto; }
+.conversation-root { display: flex; flex-direction: column; gap: 10px; height: 100%; max-width: var(--content-max); margin: 0 auto; }
 .header { display: flex; align-items: center; gap: 10px; }
 .title { font-weight: 700; font-size: 20px; }
 .spacer { flex: 1; }

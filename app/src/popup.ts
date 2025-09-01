@@ -28,7 +28,7 @@ export async function ensureQuickActionsWindow(): Promise<WebviewWindow> {
     url: '/?window=quick-actions',
     visible: false,
     width: 380,
-    height: 220,
+    height: 95,
     decorations: false,
     alwaysOnTop: true,
     resizable: false,

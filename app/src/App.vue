@@ -353,15 +353,65 @@ watch(() => settings.ui_style, (v) => {
             :class="{ active: ui.activeSection === s }"
             @click="setSection(s)"
             :title="s"
-          >{{ layout.sidebarOpen ? s : s[0] }}</button>
+          >
+            <!-- Icon -->
+            <template v-if="s === 'Prompt'">
+              <!-- Pen Tool -->
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m12 19 7-7 3 3-7 7-3-3z"/>
+                <path d="m18 13-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/>
+                <path d="m2 2 7.586 7.586"/>
+                <circle cx="11" cy="11" r="2"/>
+              </svg>
+            </template>
+            <template v-else-if="s === 'TTS'">
+              <!-- Volume 2 -->
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+                <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+              </svg>
+            </template>
+            <template v-else-if="s === 'STT'">
+              <!-- Mic -->
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                <line x1="12" x2="12" y1="19" y2="22"/>
+              </svg>
+            </template>
+            <template v-else>
+              <!-- Settings (cog) -->
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="3"/>
+                <rect x="11" y="0" width="2" height="4" rx="1"/>
+                <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(60 12 12)"/>
+                <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(120 12 12)"/>
+                <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(180 12 12)"/>
+                <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(240 12 12)"/>
+                <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(300 12 12)"/>
+              </svg>
+            </template>
+            <!-- Label -->
+            <span v-if="layout.sidebarOpen">{{ s }}</span>
+          </button>
           <!-- Sublink under Prompt: History -->
           <button
-            v-if="s === 'Prompt' && layout.sidebarOpen"
+            v-if="s === 'Prompt'"
             class="side-subtab"
             :class="{ active: ui.activeSection === 'Prompt' && ui.promptSubview === 'History' }"
             @click="ui.activeSection = 'Prompt'; ui.promptSubview = 'History'"
             title="Conversation History"
-          >History</button>
+          >
+            <!-- History icon -->
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="8"/>
+              <path d="M12 8v4l3 3"/>
+              <path d="M3 12a9 9 0 1 0 9-9"/>
+              <polyline points="3 12 3 7 8 7"/>
+            </svg>
+            <span v-if="layout.sidebarOpen">History</span>
+          </button>
         </template>
         <div class="side-spacer"></div>
         <div class="side-status"><LoadingDots v-if="isBusy()" text="Working" /></div>
@@ -477,7 +527,55 @@ watch(() => settings.ui_style, (v) => {
           class="tab"
           :class="{ active: ui.activeSection === s }"
           @click="setSection(s)"
-        >{{ s }}</button>
+        >
+          <template v-if="s === 'Prompt'">
+            <!-- Pen Tool -->
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="m12 19 7-7 3 3-7 7-3-3z"/>
+              <path d="m18 13-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/>
+              <path d="m2 2 7.586 7.586"/>
+              <circle cx="11" cy="11" r="2"/>
+            </svg>
+          </template>
+          <template v-else-if="s === 'TTS'">
+            <!-- Volume 2 -->
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+              <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+              <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+            </svg>
+          </template>
+          <template v-else-if="s === 'STT'">
+            <!-- Mic -->
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" x2="12" y1="19" y2="22"/>
+            </svg>
+          </template>
+          <template v-else-if="s === 'History'">
+            <!-- History icon -->
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="8"/>
+              <path d="M12 8v4l3 3"/>
+              <path d="M3 12a9 9 0 1 0 9-9"/>
+              <polyline points="3 12 3 7 8 7"/>
+            </svg>
+          </template>
+          <template v-else>
+            <!-- Settings (cog) -->
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"/>
+              <rect x="11" y="0" width="2" height="4" rx="1"/>
+              <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(60 12 12)"/>
+              <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(120 12 12)"/>
+              <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(180 12 12)"/>
+              <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(240 12 12)"/>
+              <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(300 12 12)"/>
+            </svg>
+          </template>
+          <span>{{ s }}</span>
+        </button>
         <div class="spacer"></div>
         <LoadingDots v-if="isBusy()" text="Working" />
       </div>
@@ -595,7 +693,7 @@ watch(() => settings.ui_style, (v) => {
 <style scoped>
 /* Top navigation */
 .nav { display: flex; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--adc-border); }
-.tab { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); cursor: pointer; }
+.tab { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }
 .tab.active { background: var(--adc-accent); border-color: var(--adc-accent); }
 .tab:hover { filter: brightness(1.05); }
 
@@ -636,9 +734,10 @@ watch(() => settings.ui_style, (v) => {
 .sidebar { width: 220px; background: var(--adc-sidebar-bg); border-right: 1px solid var(--adc-border); padding: 10px 8px; display: flex; flex-direction: column; gap: 6px; transition: width 0.2s ease; }
 .sidebar.collapsed { width: 64px; }
 .burger { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); cursor: pointer; }
-.side-tab { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); cursor: pointer; text-align: left; }
+.side-tab { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); cursor: pointer; text-align: left; display: flex; align-items: center; gap: 8px; }
+.tab svg, .side-tab svg, .side-subtab svg { width: 16px; height: 16px; }
 .side-tab.active { background: var(--adc-accent); border-color: var(--adc-accent); }
-.side-subtab { margin-left: 14px; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); cursor: pointer; text-align: left; font-size: 12px; }
+.side-subtab { margin-left: 14px; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); cursor: pointer; text-align: left; font-size: 12px; display: flex; align-items: center; gap: 8px; }
 .side-subtab.active { background: var(--adc-accent); border-color: var(--adc-accent); color: #fff; }
 .side-spacer { flex: 1; }
 .side-status { padding-top: 8px; }
