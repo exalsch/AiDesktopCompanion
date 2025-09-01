@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, ref } from 'vue'
 import { getCurrentWebviewWindow, WebviewWindow } from '@tauri-apps/api/webviewWindow'
+import { LogicalSize } from '@tauri-apps/api/dpi'
 import { invoke } from '@tauri-apps/api/core'
 import { startRecording as sttStart, stopRecording as sttStop, isRecording as sttIsRecording } from './stt'
 
@@ -16,6 +17,7 @@ async function hidePopup(): Promise<void> {
 
 const sttRecording = ref(false)
 const sttPending = ref(false) // true while requesting mic permission / starting
+const rootRef = ref<HTMLElement | null>(null)
 
 async function handleAction(action: 'prompt' | 'tts' | 'stt' | 'image'): Promise<void> {
   console.info(`[quick-actions] action: ${action}`)
@@ -196,6 +198,27 @@ onMounted(() => {
   window.addEventListener('keyup', onKeyup)
   window.addEventListener('blur', onWindowBlur)
   window.addEventListener('mouseup', onWindowMouseup)
+
+  // Auto-size the popup to fit content (avoid scrollbars)
+  try {
+    const el = rootRef.value
+    if (el) {
+      const w = getCurrentWebviewWindow()
+      const applySize = () => {
+        const rect = el.getBoundingClientRect()
+        const width = Math.ceil(rect.width)
+        const height = Math.ceil(rect.height)
+        try { w.setSize(new LogicalSize(width, height)) } catch {}
+      }
+      // Initial sizing after mount
+      applySize()
+      // Observe for dynamic size changes (e.g., recording hint)
+      const ro = new ResizeObserver(() => applySize())
+      ro.observe(el)
+      // Stop observing on unload
+      window.addEventListener('beforeunload', () => { try { ro.disconnect() } catch {} })
+    }
+  } catch {}
 })
 
 onBeforeUnmount(() => {
@@ -207,7 +230,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="qa-root" role="dialog" aria-label="Quick Actions">
+  <div class="qa-root" ref="rootRef" role="dialog" aria-label="Quick Actions">
     <div class="qa-row">
       <button class="qa-btn" @click="() => handleAction('prompt')" aria-label="Prompt (P)">
         <span class="letter">P</span>
@@ -242,15 +265,18 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .qa-root {
-  width: 100%;
-  height: 100%;
+  width: max-content; /* shrink-wrap */
+  height: max-content; /* shrink-wrap */
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 10px;
-  background: rgba(22, 22, 26, 0.95);
-  color: #fff;
+  padding: 12px;
+  background: var(--adc-surface);
+  color: var(--adc-fg);
+  border: 1px solid var(--adc-border);
+  border-radius: 10px;
   user-select: none;
 }
 
@@ -265,13 +291,13 @@ onBeforeUnmount(() => {
   gap: 8px;
   padding: 10px 14px;
   border-radius: 8px;
-  background: #2a2a31;
-  color: #fff;
-  border: 1px solid #3a3a44;
+  background: var(--adc-surface);
+  color: var(--adc-fg);
+  border: 1px solid var(--adc-border);
   cursor: pointer;
   font-size: 14px;
 }
-.qa-btn:hover { background: #35353f; }
+.qa-btn:hover { background: var(--adc-accent); border-color: var(--adc-accent); color: #fff; }
 
 .letter {
   font-weight: 800;
@@ -280,7 +306,7 @@ onBeforeUnmount(() => {
 
 .qa-hint {
   font-size: 12px;
-  color: #c8c8d0;
+  color: var(--adc-fg-muted);
 }
-.rec { color: #ff6666; font-weight: 600; }
+.rec { color: var(--adc-danger); font-weight: 600; }
 </style>

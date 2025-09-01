@@ -231,8 +231,5 @@ onBeforeUnmount(() => {
 </style>
 
 <style>
-/* Ensure the desktop shows through for the overlay window */
-html, body, #app {
-  background: transparent !important;
-}
+/* Overlay transparency is handled in script on mount to avoid affecting other windows. */
 </style>

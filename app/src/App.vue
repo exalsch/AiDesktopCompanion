@@ -18,6 +18,7 @@ import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 // Add new styles by importing their style.css with ?url and extending styleCssMap below
 import sidebarStyleUrl from './styles/sidebar/style.css?url'
 import tabsStyleUrl from './styles/tabs/style.css?url'
+import lightStyleUrl from './styles/light/style.css?url'
 
 const winParam = new URLSearchParams(window.location.search).get('window')
 const isQuickActions = winParam === 'quick-actions'
@@ -35,6 +36,7 @@ const prompt = reactive({
 const ui = reactive({
   sections: ['Prompt', 'TTS', 'STT', 'Settings'] as const,
   activeSection: 'Prompt' as 'Prompt' | 'TTS' | 'STT' | 'Settings',
+  promptSubview: 'Chat' as 'Chat' | 'History',
 })
 
 // Layout state for sidebar
@@ -104,6 +106,8 @@ watch(() => conversation.conversations.length, () => schedulePersistSave())
 let unsubs: Array<() => void> = []
 
 onMounted(async () => {
+  // For QuickActions popup, strip global app padding/min-width via body class
+  try { if (isQuickActions) document.body.classList.add('qa-window') } catch {}
   try {
     const u1 = await listen<{ selection: string; preview: string; length: number }>('prompt:open', (e) => {
       const p = e.payload || ({} as any)
@@ -182,16 +186,16 @@ onMounted(async () => {
   }
   // Load prompt settings on mount
   try { await loadSettings() } catch {}
-  // Apply style-specific CSS after loading settings (only for main window)
-  if (!isQuickActions && !isCaptureOverlay) {
-    try { applyStyleCss(settings.ui_style) } catch {}
-  }
+  // Apply style-specific CSS after loading settings (all windows)
+  try { applyStyleCss(settings.ui_style) } catch {}
+
   // Load persisted conversation if enabled
   try { await loadPersistedConversation() } catch {}
 })
 
 onBeforeUnmount(() => {
   try { unsubs.forEach(u => u()); } finally { unsubs = [] }
+  try { document.body.classList.remove('qa-window') } catch {}
 })
 
 async function generateDefaults() {
@@ -212,7 +216,7 @@ const settings = reactive({
   openai_chat_model: 'gpt-4o-mini',
   temperature: 1.0 as number,
   persist_conversations: false as boolean,
-  ui_style: 'sidebar' as 'sidebar' | 'tabs',
+  ui_style: 'sidebar' as 'sidebar' | 'tabs' | 'light',
 })
 const models = reactive<{ list: string[]; loading: boolean; error: string | null }>({ list: [], loading: false, error: null })
 const showApiKey = ref(false)
@@ -224,7 +228,7 @@ async function loadSettings() {
     if (typeof v.openai_chat_model === 'string' && v.openai_chat_model.trim()) settings.openai_chat_model = v.openai_chat_model
     if (typeof v.temperature === 'number') settings.temperature = v.temperature
     if (typeof v.persist_conversations === 'boolean') settings.persist_conversations = v.persist_conversations
-    if (v.ui_style === 'tabs' || v.ui_style === 'sidebar') settings.ui_style = v.ui_style
+    if (v.ui_style === 'tabs' || v.ui_style === 'sidebar' || v.ui_style === 'light') settings.ui_style = v.ui_style
   }
 }
 
@@ -286,13 +290,19 @@ function handleUseAsPrompt(text: string) {
   }
 }
 
+function setSection(s: 'Prompt' | 'TTS' | 'STT' | 'Settings') {
+  ui.activeSection = s
+  if (s === 'Prompt') ui.promptSubview = 'Chat'
+}
+
 // ---------------------------
 // Per-style CSS loader
 // ---------------------------
 const themeCssLinkId = 'theme-style-css'
-const styleCssMap: Record<'sidebar' | 'tabs', string> = {
+const styleCssMap: Record<'sidebar' | 'tabs' | 'light', string> = {
   sidebar: sidebarStyleUrl,
   tabs: tabsStyleUrl,
+  light: lightStyleUrl,
 }
 function ensureThemeLinkEl(): HTMLLinkElement {
   let el = document.getElementById(themeCssLinkId) as HTMLLinkElement | null
@@ -307,7 +317,7 @@ function ensureThemeLinkEl(): HTMLLinkElement {
 
 function applyStyleCss(styleName: string) {
   const el = ensureThemeLinkEl()
-  const resolved = styleCssMap[styleName as 'sidebar' | 'tabs']
+  const resolved = styleCssMap[styleName as 'sidebar' | 'tabs' | 'light']
   if (resolved) {
     el.href = resolved
   } else {
@@ -317,9 +327,7 @@ function applyStyleCss(styleName: string) {
 }
 
 watch(() => settings.ui_style, (v) => {
-  if (!isQuickActions && !isCaptureOverlay) {
-    try { applyStyleCss(v) } catch {}
-  }
+  try { applyStyleCss(v) } catch {}
 })
 </script>
 
@@ -339,14 +347,22 @@ watch(() => settings.ui_style, (v) => {
     <div v-if="settings.ui_style === 'sidebar'" class="shell">
       <aside class="sidebar" :class="{ collapsed: !layout.sidebarOpen }">
         <button class="burger" title="Toggle menu" @click="layout.sidebarOpen = !layout.sidebarOpen">☰</button>
-        <button
-          v-for="s in ui.sections"
-          :key="s"
-          class="side-tab"
-          :class="{ active: ui.activeSection === s }"
-          @click="ui.activeSection = s"
-          :title="s"
-        >{{ layout.sidebarOpen ? s : s[0] }}</button>
+        <template v-for="s in ui.sections" :key="s">
+          <button
+            class="side-tab"
+            :class="{ active: ui.activeSection === s }"
+            @click="setSection(s)"
+            :title="s"
+          >{{ layout.sidebarOpen ? s : s[0] }}</button>
+          <!-- Sublink under Prompt: History -->
+          <button
+            v-if="s === 'Prompt' && layout.sidebarOpen"
+            class="side-subtab"
+            :class="{ active: ui.activeSection === 'Prompt' && ui.promptSubview === 'History' }"
+            @click="ui.activeSection = 'Prompt'; ui.promptSubview = 'History'"
+            title="Conversation History"
+          >History</button>
+        </template>
         <div class="side-spacer"></div>
         <div class="side-status"><LoadingDots v-if="isBusy()" text="Working" /></div>
       </aside>
@@ -354,13 +370,20 @@ watch(() => settings.ui_style, (v) => {
       <div class="main">
         <div class="main-content">
           <template v-if="ui.activeSection === 'Prompt'">
-            <div class="prompt-layout">
-              <ConversationHistory />
-              <div class="convo-wrap">
-                <ConversationView :messages="conversation.currentConversation.messages" />
+            <template v-if="ui.promptSubview === 'History'">
+              <div class="section">
+                <div class="section-title">History</div>
+                <ConversationHistory @open="ui.activeSection = 'Prompt'; ui.promptSubview = 'Chat'" />
               </div>
-              <PromptComposer v-model="composerInput" @busy="busy.prompt = $event" />
-            </div>
+            </template>
+            <template v-else>
+              <div class="prompt-layout">
+                <div class="convo-wrap">
+                  <ConversationView :messages="conversation.currentConversation.messages" />
+                </div>
+                <PromptComposer v-model="composerInput" @busy="busy.prompt = $event" />
+              </div>
+            </template>
           </template>
 
           <div v-else-if="ui.activeSection === 'TTS'" class="section">
@@ -415,8 +438,9 @@ watch(() => settings.ui_style, (v) => {
                   <select v-model="settings.ui_style" class="input">
                     <option value="sidebar">Sidebar (default)</option>
                     <option value="tabs">Top Tabs</option>
+                    <option value="light">Light</option>
                   </select>
-                  <div class="settings-hint">Switch between left sidebar and legacy top tabs.</div>
+                  <div class="settings-hint">Switch between left sidebar, top tabs, or light theme.</div>
                 </div>
 
                 <div class="settings-row">
@@ -452,21 +476,34 @@ watch(() => settings.ui_style, (v) => {
           :key="s"
           class="tab"
           :class="{ active: ui.activeSection === s }"
-          @click="ui.activeSection = s"
+          @click="setSection(s)"
         >{{ s }}</button>
         <div class="spacer"></div>
         <LoadingDots v-if="isBusy()" text="Working" />
       </div>
 
+      <!-- Subnav under Prompt -->
+      <div v-if="ui.activeSection === 'Prompt'" class="subnav">
+        <button class="subtab" :class="{ active: ui.promptSubview === 'Chat' }" @click="ui.promptSubview = 'Chat'">Chat</button>
+        <button class="subtab" :class="{ active: ui.promptSubview === 'History' }" @click="ui.promptSubview = 'History'">History</button>
+      </div>
+
       <div class="content">
         <template v-if="ui.activeSection === 'Prompt'">
-          <div class="prompt-layout">
-            <ConversationHistory />
-            <div class="convo-wrap">
-              <ConversationView :messages="conversation.currentConversation.messages" />
+          <template v-if="ui.promptSubview === 'History'">
+            <div class="section">
+              <div class="section-title">History</div>
+              <ConversationHistory @open="ui.activeSection = 'Prompt'; ui.promptSubview = 'Chat'" />
             </div>
-            <PromptComposer v-model="composerInput" @busy="busy.prompt = $event" />
-          </div>
+          </template>
+          <template v-else>
+            <div class="prompt-layout">
+              <div class="convo-wrap">
+                <ConversationView :messages="conversation.currentConversation.messages" />
+              </div>
+              <PromptComposer v-model="composerInput" @busy="busy.prompt = $event" />
+            </div>
+          </template>
         </template>
 
         <div v-else-if="ui.activeSection === 'TTS'" class="section">
@@ -521,8 +558,9 @@ watch(() => settings.ui_style, (v) => {
                 <select v-model="settings.ui_style" class="input">
                   <option value="sidebar">Sidebar (default)</option>
                   <option value="tabs">Top Tabs</option>
+                  <option value="light">Light</option>
                 </select>
-                <div class="settings-hint">Switch between left sidebar and legacy top tabs.</div>
+                <div class="settings-hint">Switch between left sidebar, top tabs, or light theme.</div>
               </div>
 
               <div class="settings-row">
@@ -556,51 +594,67 @@ watch(() => settings.ui_style, (v) => {
 
 <style scoped>
 /* Top navigation */
-.nav { display: flex; gap: 8px; padding: 10px 0; border-bottom: 1px solid #2c2c36; }
-.tab { padding: 8px 12px; border-radius: 8px; border: 1px solid #3a3a44; background: #1f1f26; color: #fff; cursor: pointer; }
-.tab.active { background: #2e5cff; border-color: #2e5cff; }
+.nav { display: flex; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--adc-border); }
+.tab { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); cursor: pointer; }
+.tab.active { background: var(--adc-accent); border-color: var(--adc-accent); }
 .tab:hover { filter: brightness(1.05); }
 
 .spacer { flex: 1; }
 
-.content { padding: 12px 0; }
+.content { padding: 12px 0; overflow: auto; }
 .section { margin: 0 auto; max-width: 920px; }
 .section-title { font-weight: 700; margin-bottom: 8px; font-size: 18px; }
-.section-hint { font-size: 12px; color: #9fa0aa; }
+.section-hint { font-size: 12px; color: var(--adc-fg-muted); }
 
-.settings { margin: 24px auto; max-width: 720px; color: #e0e0ea; }
-.settings-section { border: 1px solid #3a3a44; border-radius: 10px; padding: 14px; background: #1f1f26; }
+/* Subnavigation under Prompt */
+.subnav { display: flex; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--adc-border); }
+.subtab { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); cursor: pointer; font-size: 12px; }
+.subtab.active { background: var(--adc-accent); border-color: var(--adc-accent); }
+.subtab:hover { filter: brightness(1.05); }
+
+.settings { margin: 24px auto; max-width: 720px; color: var(--adc-fg); }
+.settings-section { border: 1px solid var(--adc-border); border-radius: 10px; padding: 14px; background: var(--adc-surface); }
 .settings-title { font-weight: 700; margin-bottom: 8px; }
 .settings-row { display: flex; gap: 10px; align-items: center; margin: 8px 0; }
 .settings-row.col { flex-direction: column; align-items: flex-start; }
-.settings-hint { font-size: 12px; color: #9fa0aa; margin-top: 6px; }
-.btn { padding: 8px 12px; border-radius: 8px; border: 1px solid #3a3a44; background: #2e5cff; color: #fff; cursor: pointer; }
+.settings-hint { font-size: 12px; color: var(--adc-fg-muted); margin-top: 6px; }
+.btn { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-accent); color: #fff; cursor: pointer; }
 .btn:hover { filter: brightness(1.05); }
-.btn.ghost { background: transparent; }
-.btn.danger { background: #a42828; border-color: #7c1f1f; }
+.btn.ghost { background: transparent; color: var(--adc-fg); border-color: var(--adc-border); }
+.btn.danger { background: var(--adc-danger); border-color: var(--adc-border); }
 .row-inline { display: flex; gap: 8px; width: 100%; }
-.label { font-size: 12px; color: #c8c9d3; }
-.input { flex: 1; padding: 8px 10px; border-radius: 8px; border: 1px solid #3a3a44; background: #1f1f26; color: #fff; }
+.label { font-size: 12px; color: var(--adc-fg-muted); }
+.input { flex: 1; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); }
 .checkbox { display: flex; gap: 8px; align-items: center; }
 .settings-hint.error { color: #f2b8b8; }
 
-.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 10px 14px; border-radius: 8px; border: 1px solid #3a3a44; background: #2a2a31; color: #fff; white-space: pre-line; box-shadow: 0 6px 24px rgba(0,0,0,0.3); }
+.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 10px 14px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); white-space: pre-line; box-shadow: 0 6px 24px rgba(0,0,0,0.3); }
 .toast.success { border-color: #285c2a; background: #1e3b21; }
 .toast.error { border-color: #5c2828; background: #3b1e1e; }
 
-/* Sidebar layout */
 .shell { display: flex; gap: 0; height: 100vh; text-align: left; }
-.sidebar { width: 220px; background: #1b1b22; border-right: 1px solid #2c2c36; padding: 10px 8px; display: flex; flex-direction: column; gap: 6px; transition: width 0.2s ease; }
+.sidebar { width: 220px; background: var(--adc-sidebar-bg); border-right: 1px solid var(--adc-border); padding: 10px 8px; display: flex; flex-direction: column; gap: 6px; transition: width 0.2s ease; }
 .sidebar.collapsed { width: 64px; }
-.burger { padding: 8px 10px; border-radius: 8px; border: 1px solid #3a3a44; background: #1f1f26; color: #fff; cursor: pointer; }
-.side-tab { padding: 10px 12px; border-radius: 8px; border: 1px solid #3a3a44; background: #1f1f26; color: #fff; cursor: pointer; text-align: left; }
-.side-tab.active { background: #2e5cff; border-color: #2e5cff; }
+.burger { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); cursor: pointer; }
+.side-tab { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); cursor: pointer; text-align: left; }
+.side-tab.active { background: var(--adc-accent); border-color: var(--adc-accent); }
+.side-subtab { margin-left: 14px; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); cursor: pointer; text-align: left; font-size: 12px; }
+.side-subtab.active { background: var(--adc-accent); border-color: var(--adc-accent); color: #fff; }
 .side-spacer { flex: 1; }
 .side-status { padding-top: 8px; }
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.main-content { flex: 1; min-height: 0; overflow: hidden; padding: 12px 12px; }
+.main-content { flex: 1; min-height: 0; overflow: auto; padding: 12px 12px; }
 
 /* Prompt layout with scrolling conversation */
 .prompt-layout { display: flex; flex-direction: column; gap: 10px; height: 100%; }
 .convo-wrap { flex: 1; min-height: 0; }
+</style>
+
+<!-- Global overrides for QuickActions window only -->
+<style>
+body.qa-window #app {
+  max-width: none;
+  min-width: 0;
+  padding: 0;
+}
 </style>

@@ -88,7 +88,7 @@ onMounted(loadPrompts)
     <div class="grid">
       <div v-for="i in 9" :key="i" class="cell">
         <label>Prompt {{ i }}</label>
-        <textarea v-model="form[String(i)]" rows="3"/>
+        <textarea v-model="form[String(i)]" rows="3" class="input"/>
       </div>
     </div>
   </div>
@@ -99,13 +99,13 @@ onMounted(loadPrompts)
 .qp-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
 .title { font-weight: 700; }
 .actions { display: flex; gap: 8px; }
-.btn { padding: 6px 10px; border-radius: 8px; border: 1px solid #3a3a44; background: #2e5cff; color: #fff; cursor: pointer; }
-.btn.secondary { background: #2a2a31; }
+.btn { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-accent); color: #fff; cursor: pointer; }
+.btn.secondary { background: transparent; color: var(--adc-fg); }
 .btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .hint { color: #9fa0aa; margin-bottom: 8px; }
 .error { color: #ff9b9b; margin-bottom: 8px; white-space: pre-line; }
-.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-.cell { display: flex; flex-direction: column; gap: 6px; }
-label { font-size: 12px; color: #cfd1db; }
-textarea { width: 100%; resize: vertical; min-height: 70px; padding: 8px; border-radius: 8px; border: 1px solid #3a3a44; background: #14141a; color: #e0e0ea; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.cell { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+label { font-size: 12px; color: var(--adc-fg-muted); }
+textarea { width: 100%; resize: vertical; min-height: 70px; padding: 8px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); box-sizing: border-box; }
 </style>

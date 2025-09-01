@@ -96,14 +96,15 @@ async function onSend() {
 .input {
   width: 100%;
   resize: vertical;
-  background: #1f1f26;
-  color: #fff;
-  border: 1px solid #3a3a44;
+  background: var(--adc-surface);
+  color: var(--adc-fg);
+  border: 1px solid var(--adc-border);
   border-radius: 10px;
   padding: 10px;
+  box-sizing: border-box;
 }
 .row { display: flex; align-items: center; gap: 10px; }
-.hint { font-size: 12px; color: #9fa0aa; }
-.send { margin-left: auto; padding: 8px 12px; border-radius: 8px; border: 1px solid #3a3a44; background: #2e5cff; color: #fff; cursor: pointer; }
+.hint { font-size: 12px; color: var(--adc-fg-muted); }
+.send { margin-left: auto; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-accent); color: #fff; cursor: pointer; }
 .send[disabled] { opacity: 0.6; cursor: not-allowed; }
 </style>

@@ -33,9 +33,9 @@ const props = defineProps<{ message: Message }>()
 /* Bubble styles */
 .bubble {
   max-width: 70%;
-  background: #2a2a31;
-  border: 1px solid #3a3a44;
-  color: #e6e6f0;
+  background: var(--adc-surface);
+  border: 1px solid var(--adc-border);
+  color: var(--adc-fg);
   border-radius: 16px;
   padding: 8px 10px;
   display: flex;
@@ -44,8 +44,8 @@ const props = defineProps<{ message: Message }>()
 }
 .assistant .bubble { border-top-left-radius: 6px; }
 .user .bubble {
-  background: #2e5cff;
-  border-color: #2e5cff;
+  background: var(--adc-accent);
+  border-color: var(--adc-accent);
   color: #ffffff;
   border-top-right-radius: 6px;
 }
@@ -55,11 +55,11 @@ const props = defineProps<{ message: Message }>()
 
 /* Images inside a bubble */
 .images { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
-.thumb { width: 100%; height: auto; border: 1px solid #3a3a44; border-radius: 10px; background: #15151a; object-fit: contain; }
+.thumb { width: 100%; height: auto; border: 1px solid var(--adc-border); border-radius: 10px; background: var(--adc-bg); object-fit: contain; }
 
 /* Meta line (time, badges) styled subtly */
-.meta-line { display: flex; align-items: center; gap: 8px; font-size: 11px; opacity: 0.8; }
-.assistant .meta-line { justify-content: flex-start; color: #b7b8c6; }
+.meta-line { display: flex; align-items: center; gap: 8px; font-size: 11px; opacity: 0.9; }
+.assistant .meta-line { justify-content: flex-start; color: var(--adc-fg-muted); }
 .user .meta-line { justify-content: flex-end; color: #e9ebff; }
-.badge { background: #2e5cff; color: #fff; border-radius: 6px; padding: 1px 6px; font-size: 10px; }
+.badge { background: var(--adc-accent); color: #fff; border-radius: 6px; padding: 1px 6px; font-size: 10px; }
 </style>

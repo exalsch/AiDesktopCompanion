@@ -269,7 +269,7 @@ defineExpose({
 
     <div class="row">
       <label class="label">Text</label>
-      <textarea v-model="form.text" rows="4" placeholder="Type something to speak…" />
+      <textarea v-model="form.text" rows="4" class="input" placeholder="Type something to speak…" />
     </div>
 
     <div class="row inline">
@@ -331,13 +331,13 @@ defineExpose({
 .row { display: flex; flex-direction: column; gap: 6px; }
 .row.inline { flex-direction: row; align-items: center; gap: 10px; flex-wrap: wrap; }
 .cell { display: flex; flex-direction: column; gap: 6px; }
-.label { font-size: 12px; color: #c8c9d3; }
-.input { padding: 8px 10px; border-radius: 8px; border: 1px solid #3a3a44; background: #1f1f26; color: #fff; }
-textarea { width: 100%; resize: vertical; min-height: 100px; padding: 8px; border-radius: 8px; border: 1px solid #3a3a44; background: #14141a; color: #e0e0ea; }
-.btn { padding: 8px 12px; border-radius: 8px; border: 1px solid #3a3a44; background: #2e5cff; color: #fff; cursor: pointer; }
-.btn.ghost { background: transparent; }
-.btn.danger { background: #a42828; border-color: #7c1f1f; }
-.hint { font-size: 12px; color: #9fa0aa; white-space: pre-line; }
+.label { font-size: 12px; color: var(--adc-fg-muted); }
+.input { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); }
+textarea { width: 100%; resize: vertical; min-height: 100px; padding: 8px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); box-sizing: border-box; }
+.btn { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-accent); color: #fff; cursor: pointer; }
+.btn.ghost { background: transparent; color: var(--adc-fg); }
+.btn.danger { background: var(--adc-danger); border-color: var(--adc-danger); }
+.hint { font-size: 12px; color: var(--adc-fg-muted); white-space: pre-line; }
 .hint.error { color: #f2b8b8; }
 audio { width: 100%; margin-top: 6px; }
 </style>

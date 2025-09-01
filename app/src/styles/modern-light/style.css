@@ -1,0 +1,14 @@
+/* Modern Light Style */
+:root {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f3f3f3;
+  --bg-tertiary: #e5e5e5;
+  --text-primary: #1e1e1e;
+  --text-secondary: #505050;
+  --text-tertiary: #333333;
+  --text-inverse: #ffffff;
+  --accent-primary: #6a32b1;
+  --border-primary: #dcdcdc;
+  --border-secondary: #dcdcdc;
+  --btn-ghost-text: var(--accent-primary);
+}

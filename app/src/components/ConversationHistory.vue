@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import convoState, { getConversationsSorted, setCurrentConversation } from '../state/conversation'
+const emit = defineEmits<{ (e: 'open', id: string): void }>()
 
 interface ItemVM {
   id: string
@@ -44,6 +45,7 @@ function isActive(id: string) {
 
 function openConversation(id: string) {
   setCurrentConversation(id)
+  emit('open', id)
 }
 </script>
 
@@ -71,13 +73,13 @@ function openConversation(id: string) {
 </template>
 
 <style scoped>
-.history { margin: 0 auto 10px auto; max-width: 920px; padding: 8px; border: 1px solid #3a3a44; border-radius: 10px; background: #1b1b22; }
-.row-title { font-weight: 700; margin-bottom: 6px; color: #d8d8e2; }
+.history { margin: 0 auto 10px auto; max-width: 920px; padding: 8px; border: 1px solid var(--adc-border); border-radius: 10px; background: var(--adc-surface); }
+.row-title { font-weight: 700; margin-bottom: 6px; color: var(--adc-fg); }
 .list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
-.item { border: 1px solid #2e2e36; border-radius: 8px; padding: 8px; background: #1f1f26; cursor: default; }
-.item.active { border-color: #2e5cff; box-shadow: 0 0 0 1px #2e5cff44 inset; }
+.item { border: 1px solid var(--adc-border); border-radius: 8px; padding: 8px; background: var(--adc-surface); cursor: default; }
+.item.active { border-color: var(--adc-accent); box-shadow: 0 0 0 3px var(--adc-focus-ring); }
 .title-line { display: flex; align-items: center; gap: 8px; }
-.title { font-weight: 600; color: #e6e6f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.time { margin-left: auto; font-size: 11px; color: #9fa0aa; }
-.subtitle { margin-top: 4px; font-size: 12px; color: #b7b8c6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.title { font-weight: 600; color: var(--adc-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.time { margin-left: auto; font-size: 11px; color: var(--adc-fg-muted); }
+.subtitle { margin-top: 4px; font-size: 12px; color: var(--adc-fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

@@ -1,0 +1,14 @@
+/* Minimalist Style */
+:root {
+  --bg-primary: #ffffff;
+  --bg-secondary: #fafafa;
+  --bg-tertiary: #f0f0f0;
+  --text-primary: #000000;
+  --text-secondary: #555555;
+  --text-tertiary: #333333;
+  --text-inverse: #ffffff;
+  --accent-primary: #4a4a4a;
+  --border-primary: #e0e0e0;
+  --border-secondary: #d1d1d1;
+  --btn-ghost-text: var(--accent-primary);
+}

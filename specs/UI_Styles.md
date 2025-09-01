@@ -4,6 +4,7 @@ This app supports multiple UI styles (layouts) with their own CSS files. The cur
 
 - sidebar: Sidebar navigation layout (default)
 - tabs: Top tabs layout (legacy)
+- light: Light theme variant (overrides tokens for a light palette)
 
 The active style is stored in `settings.ui_style` and can be switched in the Settings tab of the main window.
 
@@ -28,9 +29,39 @@ app/
         style.css
       tabs/
         style.css
+      light/
+        style.css
 ```
 
 ‼️ The provided style files are placeholders — customize them to your needs.
+
+## Theme tokens and inputs
+
+- Base tokens are defined in `app/src/style.css` under `:root` for the default dark theme.
+- The Light theme overrides tokens in `app/src/styles/light/style.css`:
+  - `--adc-bg`, `--adc-surface`, `--adc-fg`, `--adc-fg-muted`, `--adc-border`, `--adc-accent`, etc.
+
+### Inputs and Textareas
+
+- Use the shared `.input` class on `<input>`, `<select>`, and `<textarea>` elements.
+- Avoid hard‑coded colors in component‑scoped CSS. Instead, use tokens:
+  - Background: `background: var(--adc-surface)`
+  - Foreground: `color: var(--adc-fg)`
+  - Border: `border: 1px solid var(--adc-border)`
+  - Focus: `box-shadow: 0 0 0 3px var(--adc-focus-ring); border-color: var(--adc-accent)`
+- Add `box-sizing: border-box` for textareas to prevent overflow.
+- Example (scoped):
+
+```css
+.label { color: var(--adc-fg-muted); }
+.input { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); }
+textarea { width: 100%; min-height: 100px; resize: vertical; box-sizing: border-box; }
+```
+
+### Responsive grids
+
+- Prefer `grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));` to avoid overflow in editors like Quick Prompts.
+- Ensure children have `min-width: 0` to allow shrinking inside grid cells.
 
 ## Add a new style
 
@@ -58,6 +89,12 @@ const styleCssMap: Record<'sidebar' | 'tabs' | 'myStyle', string> = {
 
 4) Test
 - With the dev server running, switch styles in Settings and verify HMR applies the new CSS without page reload.
+
+## Persistence
+
+- The active style is stored in `settings.ui_style` and loaded on startup in `App.vue` (`loadSettings()`).
+- The CSS for the selected style is applied via `applyStyleCss()` on mount and whenever the setting changes.
+- To persist a change, click “Save Settings”. ‼️ If you prefer auto‑save on style change, consider adding a watcher that invokes `save_settings` for `ui_style` only.
 
 ## Notes & tips
 

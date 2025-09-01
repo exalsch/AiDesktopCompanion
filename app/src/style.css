@@ -3,9 +3,20 @@
   line-height: 1.5;
   font-weight: 400;
 
+  /* Default (dark) theme tokens */
+  --adc-accent: #2e5cff;
+  --adc-fg: #e0e0ea;
+  --adc-fg-muted: #9fa0aa;
+  --adc-bg: #242424;
+  --adc-surface: #1f1f26;
+  --adc-border: #3a3a44;
+  --adc-border-strong: #2c2c36;
+  --adc-danger: #a42828;
+  --adc-sidebar-bg: #1b1b22;
+
   color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+  color: var(--adc-fg);
+  background-color: var(--adc-bg);
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -24,10 +35,7 @@ a:hover {
 
 body {
   margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 850px;
-  min-height: 800px;
+  /* Let app-specific layouts control positioning and scroll */
 }
 
 h1 {
@@ -65,15 +73,4 @@ button:focus-visible {
   text-align: center;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
-}
+/* The app uses explicit themes; the prefers-color-scheme block is not needed. */

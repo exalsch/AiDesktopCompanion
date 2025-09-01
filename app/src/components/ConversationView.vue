@@ -36,7 +36,7 @@ onMounted(async () => {
 
     <div class="mcp-hint">‼️ Select tools (MCP) to be used — placeholder UI</div>
 
-    <div ref="listRef" class="list">
+    <div ref="listRef" class="list convo-wrap">
       <MessageItem v-for="m in messages" :key="m.id" :message="m" />
     </div>
   </div>
@@ -47,8 +47,8 @@ onMounted(async () => {
 .header { display: flex; align-items: center; gap: 10px; }
 .title { font-weight: 700; font-size: 20px; }
 .spacer { flex: 1; }
-.btn { padding: 8px 12px; border-radius: 8px; border: 1px solid #3a3a44; background: #2e5cff; color: #fff; cursor: pointer; }
+.btn { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--adc-accent); background: var(--adc-accent); color: #fff; cursor: pointer; }
 .btn:hover { filter: brightness(1.05); }
-.mcp-hint { font-size: 12px; color: #9fa0aa; }
-.list { flex: 1; min-height: 0; overflow: auto; border: 1px solid #3a3a44; border-radius: 10px; background: #1f1f26; }
+.mcp-hint { font-size: 12px; color: var(--adc-fg-muted); }
+.list { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--adc-border); border-radius: 10px; background: var(--adc-surface); }
 </style>
