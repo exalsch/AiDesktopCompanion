@@ -1623,13 +1623,81 @@ fn guess_mime_from_path_rs(path: &str) -> Option<&'static str> {
   None
 }
 
+// ---------------------------
+// OpenAI tool-calling integration with MCP
+// ---------------------------
+
+fn sanitize_fn_name(s: &str) -> String {
+  let mut out = String::with_capacity(s.len());
+  for ch in s.chars() {
+    match ch {
+      'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => out.push(ch),
+      _ => out.push('_'),
+    }
+  }
+  out
+}
+
+fn parse_mcp_fn_call_name(name: &str) -> Option<(String, String)> {
+  // Expected format: mcp__{serverId}__{toolName}
+  if !name.starts_with("mcp__") { return None; }
+  let rest = &name[5..];
+  if let Some(idx) = rest.find("__") {
+    let server = &rest[..idx];
+    let tool = &rest[idx+2..];
+    if !server.is_empty() && !tool.is_empty() {
+      return Some((server.to_string(), tool.to_string()));
+    }
+  }
+  None
+}
+
+async fn build_openai_tools_from_mcp() -> Vec<serde_json::Value> {
+  let mut out: Vec<serde_json::Value> = Vec::new();
+  let map = MCP_CLIENTS.lock().await;
+  for (server_id, svc) in map.iter() {
+    // Best-effort: list tools; skip server on error
+    if let Ok(res) = svc.list_tools(Default::default()).await {
+      if let Ok(v) = serde_json::to_value(&res) {
+        if let Some(arr) = v.get("tools").and_then(|x| x.as_array()) {
+          for t in arr {
+            let name = t.get("name").and_then(|x| x.as_str()).unwrap_or("");
+            if name.is_empty() { continue; }
+            let desc = t.get("description").and_then(|x| x.as_str()).unwrap_or("");
+            // JSON schema forwarded as-is when available; otherwise fall back to permissive object
+            let mut params = t.get("input_schema").cloned().unwrap_or_else(|| serde_json::json!({
+              "type": "object",
+              "properties": {},
+              "additionalProperties": true
+            }));
+            // Ensure parameters is an object per OpenAI expectations
+            if !params.is_object() {
+              params = serde_json::json!({ "type": "object", "properties": {}, "additionalProperties": true });
+            }
+            let fn_name = sanitize_fn_name(&format!("mcp__{}__{}", server_id, name));
+            out.push(serde_json::json!({
+              "type": "function",
+              "function": {
+                "name": fn_name,
+                "description": if desc.is_empty() { format!("MCP tool '{}' from server '{}'.", name, server_id) } else { format!("{} (server: {})", desc, server_id) },
+                "parameters": params
+              }
+            }));
+          }
+        }
+      }
+    }
+  }
+  out
+}
+
 #[tauri::command]
 async fn chat_complete(messages: Vec<ChatMessage>) -> Result<String, String> {
   let key = get_api_key_from_settings_or_env()?;
   let model = get_model_from_settings_or_env();
   let temp = get_temperature_from_settings_or_env();
 
-  // Normalize roles to allowed set; default to user
+  // Normalize incoming messages to OpenAI format
   let mut norm_msgs: Vec<serde_json::Value> = Vec::new();
   for m in messages.into_iter() {
     let r = match m.role.to_ascii_lowercase().as_str() {
@@ -1651,10 +1719,7 @@ async fn chat_complete(messages: Vec<ChatMessage>) -> Result<String, String> {
               let bytes = std::fs::read(&path).map_err(|e| format!("Failed to read image '{}': {}", path, e))?;
               let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
               let url = format!("data:{};base64,{}", mime_final, b64);
-              out_parts.push(serde_json::json!({
-                "type": "image_url",
-                "image_url": { "url": url }
-              }));
+              out_parts.push(serde_json::json!({ "type": "image_url", "image_url": { "url": url } }));
             }
           }
         }
@@ -1664,37 +1729,112 @@ async fn chat_complete(messages: Vec<ChatMessage>) -> Result<String, String> {
     norm_msgs.push(serde_json::json!({ "role": r, "content": content_value }));
   }
 
-  let mut body = serde_json::json!({
-    "model": model,
-    "messages": norm_msgs,
-  });
-  if let Some(t) = temp { if let serde_json::Value::Object(ref mut m) = body { m.insert("temperature".to_string(), serde_json::json!(t)); } }
+  // Build tool definitions from connected MCP servers
+  let tools = build_openai_tools_from_mcp().await;
 
   let client = reqwest::Client::new();
-  let resp = client
-    .post("https://api.openai.com/v1/chat/completions")
-    .bearer_auth(key)
-    .json(&body)
-    .send()
-    .await
-    .map_err(|e| format!("request failed: {e}"))?;
+  let mut msgs_for_oai = norm_msgs.clone();
+  let mut final_text: Option<String> = None;
 
-  if !resp.status().is_success() {
-    let status = resp.status();
-    let body_text = resp.text().await.unwrap_or_default();
-    return Err(format!("OpenAI error: {status} {body_text}"));
+  // Iterate tool-calls up to a reasonable limit
+  for _ in 0..6u8 {
+    let mut body = serde_json::json!({
+      "model": &model,
+      "messages": msgs_for_oai,
+    });
+    if let Some(t) = temp { if let serde_json::Value::Object(ref mut m) = body { m.insert("temperature".to_string(), serde_json::json!(t)); } }
+    if !tools.is_empty() {
+      if let serde_json::Value::Object(ref mut m) = body {
+        m.insert("tools".to_string(), serde_json::Value::Array(tools.clone()));
+        m.insert("tool_choice".to_string(), serde_json::Value::String("auto".to_string()));
+        // Allow model to use multiple tool calls
+        m.insert("parallel_tool_calls".to_string(), serde_json::Value::Bool(true));
+      }
+    }
+
+    let resp = client
+      .post("https://api.openai.com/v1/chat/completions")
+      .bearer_auth(&key)
+      .json(&body)
+      .send()
+      .await
+      .map_err(|e| format!("request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+      let status = resp.status();
+      let body_text = resp.text().await.unwrap_or_default();
+      return Err(format!("OpenAI error: {status} {body_text}"));
+    }
+
+    let v: serde_json::Value = resp.json().await.map_err(|e| format!("json error: {e}"))?;
+    let choice0 = v.get("choices").and_then(|c| c.get(0)).cloned().unwrap_or(serde_json::Value::Null);
+    let msg = choice0.get("message").cloned().unwrap_or(serde_json::Value::Null);
+    let tool_calls_opt = msg.get("tool_calls").and_then(|x| x.as_array()).cloned();
+    let content_str_opt = msg.get("content").and_then(|t| t.as_str()).map(|s| s.to_string());
+
+    if let Some(tool_calls) = tool_calls_opt {
+      // Append assistant message with tool_calls to history
+      let mut assistant_msg = serde_json::Map::new();
+      assistant_msg.insert("role".to_string(), serde_json::Value::String("assistant".to_string()));
+      if let Some(c) = content_str_opt.as_ref() { assistant_msg.insert("content".to_string(), serde_json::Value::String(c.clone())); }
+      assistant_msg.insert("tool_calls".to_string(), serde_json::Value::Array(tool_calls.clone()));
+      msgs_for_oai.push(serde_json::Value::Object(assistant_msg));
+
+      // Dispatch each tool call sequentially and append tool results
+      for tc in tool_calls.into_iter() {
+        let id = tc.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let fname = tc.get("function").and_then(|f| f.get("name")).and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let fargs_str = tc.get("function").and_then(|f| f.get("arguments")).and_then(|x| x.as_str()).unwrap_or("{}");
+        // Parse args JSON (best-effort)
+        let mut fargs_val: serde_json::Value = serde_json::from_str(fargs_str).unwrap_or_else(|_| serde_json::json!({}));
+        if !fargs_val.is_object() { fargs_val = serde_json::json!({}); }
+
+        let mut tool_result_text = String::new();
+        if let Some((server_id, tool_name)) = parse_mcp_fn_call_name(&fname) {
+          // Call MCP tool directly
+          let svc_opt = {
+            let map2 = MCP_CLIENTS.lock().await;
+            map2.get(&server_id).cloned()
+          };
+          if let Some(svc) = svc_opt {
+            let arg_map_opt = fargs_val.as_object().cloned();
+            match svc.call_tool(CallToolRequestParam { name: tool_name.clone().into(), arguments: arg_map_opt }).await {
+              Ok(res) => {
+                tool_result_text = serde_json::to_string(&serde_json::json!({ "serverId": server_id, "tool": tool_name, "result": res })).unwrap_or_else(|_| "{}".to_string());
+              }
+              Err(e) => {
+                tool_result_text = serde_json::json!({
+                  "serverId": server_id,
+                  "tool": tool_name,
+                  "error": format!("call_tool failed: {}", e)
+                }).to_string();
+              }
+            }
+          } else {
+            tool_result_text = serde_json::json!({ "error": format!("MCP server not connected: {}", server_id) }).to_string();
+          }
+        } else {
+          tool_result_text = serde_json::json!({ "error": format!("Unsupported tool function: {}", fname) }).to_string();
+        }
+
+        // Append tool result message
+        msgs_for_oai.push(serde_json::json!({
+          "role": "tool",
+          "tool_call_id": id,
+          "content": tool_result_text
+        }));
+      }
+
+      // Continue the loop for next assistant turn after tool results
+      continue;
+    }
+
+    // No tool calls; return final assistant content
+    final_text = Some(content_str_opt.unwrap_or_default());
+    break;
   }
 
-  let v: serde_json::Value = resp.json().await.map_err(|e| format!("json error: {e}"))?;
-  let text = v.get("choices")
-    .and_then(|c| c.get(0))
-    .and_then(|c| c.get("message"))
-    .and_then(|m| m.get("content"))
-    .and_then(|t| t.as_str())
-    .unwrap_or("")
-    .to_string();
-
-  Ok(text)
+  Ok(final_text.unwrap_or_else(|| "".to_string()))
 }
 
 // Open the main window prompt panel with provided text (used by STT flow).
