@@ -988,8 +988,15 @@ watch(() => settings.ui_style, (v) => {
                     <input class="input" v-model="s.cwd" placeholder="c:\\path\\to\\server" />
                   </div>
                   <div class="settings-row col" v-if="s.transport === 'stdio'">
-                    <label class="label">Env (JSON object)</label>
-                    <textarea class="input" rows="2" v-model="s.envJson" spellcheck="false" @input="validateEnvJsonInput(s)"></textarea>
+                    <label class="label">Env (JSON object or KEY=VALUE lines)</label>
+                    <textarea
+                      class="input"
+                      rows="2"
+                      v-model="s.envJson"
+                      spellcheck="false"
+                      placeholder='{"LOG_LEVEL":"info"}'
+                      @input="validateEnvJsonInput(s)"
+                    ></textarea>
                     <div v-if="s.envError" class="settings-hint error">{{ s.envError }}</div>
                   </div>
                   <div class="settings-row">
@@ -1263,9 +1270,16 @@ watch(() => settings.ui_style, (v) => {
                   <input class="input" v-model="s.cwd" placeholder="c:\\path\\to\\server" />
                 </div>
                 <div class="settings-row" v-if="s.transport === 'stdio'">
-                  <label class="label" style="width:100px;">Env (JSON object)</label>
-                  <textarea class="input" rows="2" v-model="s.envJson" spellcheck="false"></textarea>
-                  <div v-if="s.toolArgsError" class="settings-hint error">{{ s.toolArgsError }}</div>
+                  <label class="label" style="width:100px;">Env (JSON object or KEY=VALUE lines)</label>
+                  <textarea
+                    class="input"
+                    rows="2"
+                    v-model="s.envJson"
+                    spellcheck="false"
+                    placeholder='{"LOG_LEVEL":"info"}'
+                    @input="validateEnvJsonInput(s)"
+                  ></textarea>
+                  <div v-if="s.envError" class="settings-hint error">{{ s.envError }}</div>
                 </div>
                 <div class="settings-row" style="justify-content: space-between;">
                   <div>
