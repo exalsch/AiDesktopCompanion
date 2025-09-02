@@ -686,6 +686,8 @@ fn save_settings(map: serde_json::Value) -> Result<String, String> {
   if let Some(m) = map.get("openai_chat_model").and_then(|x| x.as_str()) { obj.insert("openai_chat_model".to_string(), serde_json::Value::String(m.to_string())); }
   if let Some(t) = map.get("temperature").and_then(|x| x.as_f64()) { obj.insert("temperature".to_string(), serde_json::Value::Number(serde_json::Number::from_f64(t).unwrap_or_else(|| serde_json::Number::from_f64(1.0).unwrap()))); }
   if let Some(p) = map.get("persist_conversations").and_then(|x| x.as_bool()) { obj.insert("persist_conversations".to_string(), serde_json::Value::Bool(p)); }
+  // New global MCP auto-connect flag
+  if let Some(ac) = map.get("auto_connect").and_then(|x| x.as_bool()) { obj.insert("auto_connect".to_string(), serde_json::Value::Bool(ac)); }
   // Pass-through for MCP servers configuration when provided
   if let Some(ms) = map.get("mcp_servers") { obj.insert("mcp_servers".to_string(), ms.clone()); }
 

@@ -236,6 +236,10 @@ onMounted(async () => {
   } catch (e) {
     console.warn('[mcp] event listen failed', e)
   }
+  // Attempt auto-connect for MCP servers after settings load
+  try {
+    await autoConnectServers()
+  } catch {}
 })
 
 onBeforeUnmount(() => {
@@ -262,6 +266,8 @@ const settings = reactive({
   temperature: 1.0 as number,
   persist_conversations: false as boolean,
   ui_style: 'sidebar' as 'sidebar' | 'tabs' | 'light',
+  // Global MCP auto-connect toggle
+  auto_connect: false as boolean,
   // MCP servers persisted configuration
   // Each item persisted as: { id, transport: 'stdio'|'http'|'sse', command, args: string[], cwd?: string, env?: Record<string,string> }
   mcp_servers: [] as Array<any>,
@@ -277,30 +283,37 @@ async function loadSettings() {
     if (typeof v.temperature === 'number') settings.temperature = v.temperature
     if (typeof v.persist_conversations === 'boolean') settings.persist_conversations = v.persist_conversations
     if (v.ui_style === 'tabs' || v.ui_style === 'sidebar' || v.ui_style === 'light') settings.ui_style = v.ui_style
+    if (typeof (v as any).auto_connect === 'boolean') settings.auto_connect = (v as any).auto_connect
     // Load MCP servers and derive UI fields
     if (Array.isArray(v.mcp_servers)) {
-      settings.mcp_servers = v.mcp_servers.map((s: any) => ({
-        id: String(s.id || ''),
-        transport: (s.transport === 'http' || s.transport === 'sse') ? s.transport : 'stdio',
-        command: String(s.command || ''),
-        args: Array.isArray(s.args) ? s.args.filter((x: any) => typeof x === 'string') : [],
-        argsText: Array.isArray(s.args) ? s.args.join(' ') : (typeof s.args === 'string' ? s.args : ''),
-        cwd: typeof s.cwd === 'string' ? s.cwd : '',
-        env: (s.env && typeof s.env === 'object') ? s.env : {},
-        envJson: JSON.stringify((s.env && typeof s.env === 'object') ? s.env : {}, null, 0),
-        status: 'disconnected',
-        connecting: false,
-        error: null as string | null,
-        // Tools & calls UI state (not persisted)
-        tools: [],
-        toolsOpen: false,
-        selectedTool: '',
-        toolArgsJson: '{}',
-        toolArgsError: null as string | null,
-        toolResults: [] as Array<any>,
-        // Inline validation state
-        envError: null as string | null,
-      }))
+      settings.mcp_servers = v.mcp_servers.map((s: any) => {
+        const envObj = normalizeEnvInput(s?.env)
+        const envJsonStr = Object.keys(envObj).length ? JSON.stringify(envObj, null, 0) : '{ "LOG_LEVEL": "info" }'
+        return {
+          id: String(s.id || ''),
+          transport: (s.transport === 'http' || s.transport === 'sse') ? s.transport : 'stdio',
+          command: String(s.command || ''),
+          args: Array.isArray(s.args) ? s.args.filter((x: any) => typeof x === 'string') : [],
+          argsText: Array.isArray(s.args) ? s.args.join(' ') : (typeof s.args === 'string' ? s.args : ''),
+          cwd: typeof s.cwd === 'string' ? s.cwd : '',
+          env: envObj,
+          envJson: envJsonStr,
+          // Per-server auto connect (persisted)
+          auto_connect: s.auto_connect === true,
+          status: 'disconnected',
+          connecting: false,
+          error: null as string | null,
+          // Tools & calls UI state (not persisted)
+          tools: [],
+          toolsOpen: false,
+          selectedTool: '',
+          toolArgsJson: '{}',
+          toolArgsError: null as string | null,
+          toolResults: [] as Array<any>,
+          // Inline validation state
+          envError: null as string | null,
+        }
+      })
     }
   }
 }
@@ -309,14 +322,15 @@ async function saveSettings() {
   try {
     // Prepare clean MCP servers array for persistence (strip UI-only fields)
     const cleanServers = settings.mcp_servers.map((s: any) => {
-      // ‼️ Args/env parsing is naive; improve robustness later.
-      const args = parseArgs(typeof s.argsText === 'string' ? s.argsText : (Array.isArray(s.args) ? s.args.join(' ') : ''))
-      let env: Record<string,string> = {}
-      if (typeof s.envJson === 'string' && s.envJson.trim()) {
-        try { env = JSON.parse(s.envJson) } catch (e) { throw new Error(`Invalid ENV JSON for server "${s.id}": ${(e as Error).message}`) }
-      } else if (s.env && typeof s.env === 'object') {
-        env = s.env
+      // Robust args/env parsing
+      let args: string[] = []
+      if (typeof s.argsText === 'string' && s.argsText.trim()) {
+        args = parseArgs(s.argsText)
+      } else if (Array.isArray(s.args)) {
+        args = s.args.filter((x: any) => typeof x === 'string')
       }
+
+      const env = normalizeEnvInput(typeof s.envJson === 'string' ? s.envJson : s.env)
       return {
         id: String(s.id || ''),
         transport: (s.transport === 'http' || s.transport === 'sse') ? s.transport : 'stdio',
@@ -324,6 +338,7 @@ async function saveSettings() {
         args,
         cwd: typeof s.cwd === 'string' ? s.cwd : '',
         env,
+        auto_connect: s.auto_connect === true,
       }
     })
 
@@ -409,6 +424,78 @@ function parseJsonObject(text: string): Record<string, string> {
   throw new Error('ENV must be a JSON object of { key: value }')
 }
 
+// Parse simple KEY=VALUE pairs from text. Supports separators: newlines, semicolons, commas
+function parseKeyValuePairs(text: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (!text || !text.trim()) return out
+  // Split on newlines, semicolons, or commas
+  const parts = text
+    .split(/\r?\n|;|,/)
+    .map(s => s.trim())
+    .filter(Boolean)
+  for (const p of parts) {
+    const idx = p.indexOf('=')
+    if (idx === -1) continue
+    const k = p.slice(0, idx).trim()
+    const v = p.slice(idx + 1).trim().replace(/^"|"$/g, '')
+    if (k) out[k] = v
+  }
+  return out
+}
+
+// Normalize various env representations (string JSON, KEY=VALUE lines, arrays, or objects)
+function normalizeEnvInput(input: any): Record<string, string> {
+  try {
+    if (typeof input === 'string') {
+      const t = input.trim()
+      if (!t) return {}
+      // Try JSON first
+      try {
+        const v = JSON.parse(t)
+        if (v && typeof v === 'object' && !Array.isArray(v)) {
+          // ensure string values
+          return Object.fromEntries(Object.entries(v).map(([k, val]) => [k, String(val)]))
+        }
+        if (Array.isArray(v)) {
+          // Accept arrays of pairs or array of "K=V" strings
+          const out: Record<string, string> = {}
+          for (const item of v) {
+            if (Array.isArray(item) && item.length >= 2) {
+              out[String(item[0])] = String(item[1])
+            } else if (typeof item === 'string' && item.includes('=')) {
+              const idx = item.indexOf('=')
+              const k = item.slice(0, idx).trim()
+              const val = item.slice(idx + 1).trim()
+              if (k) out[k] = val
+            }
+          }
+          return out
+        }
+      } catch {}
+      // Fallback to KEY=VALUE parsing
+      return parseKeyValuePairs(t)
+    }
+    if (Array.isArray(input)) {
+      const out: Record<string, string> = {}
+      for (const item of input) {
+        if (Array.isArray(item) && item.length >= 2) {
+          out[String(item[0])] = String(item[1])
+        } else if (typeof item === 'string' && item.includes('=')) {
+          const idx = item.indexOf('=')
+          const k = item.slice(0, idx).trim()
+          const val = item.slice(idx + 1).trim()
+          if (k) out[k] = val
+        }
+      }
+      return out
+    }
+    if (input && typeof input === 'object') {
+      return Object.fromEntries(Object.entries(input).map(([k, val]) => [k, String(val)]))
+    }
+  } catch {}
+  return {}
+}
+
 function findServerById(id: string) {
   return settings.mcp_servers.find((s: any) => s.id === id)
 }
@@ -421,7 +508,7 @@ async function connectServer(s: any) {
       ? parseArgs(typeof s.argsText === 'string' ? s.argsText : (Array.isArray(s.args) ? s.args.join(' ') : ''))
       : []
     const env = s.transport === 'stdio'
-      ? ((typeof s.envJson === 'string' && s.envJson.trim()) ? parseJsonObject(s.envJson) : (s.env || {}))
+      ? normalizeEnvInput(typeof s.envJson === 'string' ? s.envJson : s.env)
       : {}
     await invoke<string>('mcp_connect', {
       serverId: s.id,
@@ -479,8 +566,12 @@ async function listTools(s: any) {
 
 function validateEnvJsonInput(s: any) {
   try {
-    if (typeof s.envJson === 'string' && s.envJson.trim()) parseJsonObject(s.envJson)
-    s.envError = null
+    const env = normalizeEnvInput(typeof s.envJson === 'string' ? s.envJson : s.env)
+    if (typeof s.envJson === 'string' && s.envJson.trim() && Object.keys(env).length === 0) {
+      s.envError = 'Could not parse ENV. Use JSON like {"KEY":"VALUE"} or lines KEY=VALUE'
+    } else {
+      s.envError = null
+    }
   } catch (e) {
     s.envError = (e as Error).message
   }
@@ -546,7 +637,8 @@ function addMcpServer() {
     argsText: '',
     cwd: '',
     env: {},
-    envJson: '{}',
+    envJson: '{ "LOG_LEVEL": "info" }',
+    auto_connect: false,
     status: 'disconnected',
     connecting: false,
     error: null,
@@ -605,6 +697,33 @@ function setSection(s: 'Prompt' | 'TTS' | 'STT' | 'Settings') {
   if (s === 'Prompt') ui.promptSubview = 'Chat'
 }
 
+// Attempt auto-connecting MCP servers based on global/per-server flags
+// Non-blocking: kick off connects concurrently and add a timeout guard per server
+async function autoConnectServers() {
+  try {
+    const wantGlobal = settings.auto_connect === true
+    for (const s of settings.mcp_servers) {
+      const want = wantGlobal || s.auto_connect === true
+      if (!want) continue
+      if (s.connecting || s.status === 'connected') continue
+      if (!s || !s.id || !s.command) continue
+      // Fire-and-forget connect; backend events will update state on success/failure
+      try { connectServer(s) } catch {}
+      // Timeout guard to avoid indefinite "connecting" state
+      const timeoutMs = 10000
+      setTimeout(() => {
+        if (s.connecting) {
+          s.connecting = false
+          s.error = 'Connect timed out'
+          showToast(`Connect timed out: ${s.id}`, 'error')
+        }
+      }, timeoutMs)
+    }
+  } catch (e) {
+    console.warn('[mcp] autoConnectServers failed', e)
+  }
+}
+
 // ---------------------------
 // Per-style CSS loader
 // ---------------------------
@@ -639,12 +758,13 @@ function applyStyleCss(styleName: string) {
 watch(() => settings.ui_style, (v) => {
   try { applyStyleCss(v) } catch {}
 })
+
 </script>
 
 <template>
   <QuickActions v-if="isQuickActions" />
   <CaptureOverlay v-else-if="isCaptureOverlay" />
-  <template v-else>
+  <div v-else>
     <PromptPanel
       v-if="prompt.visible"
       :selection="prompt.selection"
@@ -825,7 +945,10 @@ watch(() => settings.ui_style, (v) => {
 
               <div class="settings-section" style="margin-top: 14px;">
                 <div class="settings-title">MCP Servers</div>
-                <div class="settings-hint">Configure MCP servers. Only stdio transport is supported for now (HTTP ‼️).</div>
+                <div class="settings-hint">Configure MCP servers. Supports stdio, http, and sse transports.</div>
+                <div class="settings-row">
+                  <label class="checkbox"><input type="checkbox" v-model="settings.auto_connect"/> Auto-connect on startup</label>
+                </div>
                 <div class="settings-row">
                   <button class="btn" @click="addMcpServer">Add Server</button>
                   <button class="btn" @click="saveSettings">Save MCP Servers</button>
@@ -868,6 +991,9 @@ watch(() => settings.ui_style, (v) => {
                     <label class="label">Env (JSON object)</label>
                     <textarea class="input" rows="2" v-model="s.envJson" spellcheck="false" @input="validateEnvJsonInput(s)"></textarea>
                     <div v-if="s.envError" class="settings-hint error">{{ s.envError }}</div>
+                  </div>
+                  <div class="settings-row">
+                    <label class="checkbox"><input type="checkbox" v-model="s.auto_connect"/> Auto-connect this server</label>
                   </div>
                   <div class="settings-row" style="justify-content: space-between;">
                     <div>
@@ -939,9 +1065,7 @@ watch(() => settings.ui_style, (v) => {
         </div>
       </div>
     </div>
-
-    <!-- Top-tabs layout (legacy) -->
-    <template v-else>
+    <div v-else>
       <div class="nav">
         <button
           v-for="s in ui.sections"
@@ -1098,6 +1222,9 @@ watch(() => settings.ui_style, (v) => {
               <div class="settings-title">MCP Servers</div>
               <div class="settings-hint">Configure MCP servers. Supports stdio, http, and sse transports.</div>
               <div class="settings-row">
+                <label class="checkbox"><input type="checkbox" v-model="settings.auto_connect"/> Auto-connect on startup</label>
+              </div>
+              <div class="settings-row">
                 <button class="btn" @click="addMcpServer">Add Server</button>
                 <button class="btn" @click="saveSettings">Save MCP Servers</button>
               </div>
@@ -1135,16 +1262,15 @@ watch(() => settings.ui_style, (v) => {
                   <label class="label" style="width:100px;">CWD</label>
                   <input class="input" v-model="s.cwd" placeholder="c:\\path\\to\\server" />
                 </div>
-                <div class="settings-row col" v-if="s.transport === 'stdio'">
-                  <label class="label">Env (JSON object)</label>
-                  <textarea class="input" rows="2" v-model="s.envJson" spellcheck="false" @input="validateEnvJsonInput(s)"></textarea>
-                  <div v-if="s.envError" class="settings-hint error">{{ s.envError }}</div>
+                <div class="settings-row" v-if="s.transport === 'stdio'">
+                  <label class="label" style="width:100px;">Env (JSON object)</label>
+                  <textarea class="input" rows="2" v-model="s.envJson" spellcheck="false"></textarea>
+                  <div v-if="s.toolArgsError" class="settings-hint error">{{ s.toolArgsError }}</div>
                 </div>
                 <div class="settings-row" style="justify-content: space-between;">
                   <div>
                     <span class="label">Status:</span>
                     <span style="margin-left:6px;">{{ s.status }}</span>
-                    <span v-if="s.error" class="settings-hint error" style="margin-left:10px;">{{ s.error }}</span>
                   </div>
                   <div style="display:flex; gap:8px;">
                     <button class="btn" :disabled="s.connecting" @click="connectServer(s)">{{ s.connecting ? 'Connecting…' : 'Connect' }}</button>
@@ -1208,11 +1334,13 @@ watch(() => settings.ui_style, (v) => {
           </div>
         </div>
       </div>
-    </template>
+    </div>
 
     <!-- Toast -->
     <div v-if="toast.visible" class="toast" :class="toast.kind">{{ toast.message }}</div>
-  </template>
+
+  </div>
+
 </template>
 
 <style scoped>
