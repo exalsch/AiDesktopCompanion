@@ -169,8 +169,8 @@ async function stopSTTAndTranscribe(): Promise<void> {
     try {
       text = await invoke<string>('stt_transcribe', { audio: Array.from(buf), mime })
     } catch (err) {
-      console.error('[stt] transcribe failed', err)
       const msg = typeof err === 'string' ? err : (err && (err as any).message) ? (err as any).message : 'Unknown STT error'
+      console.error('[stt] transcribe failed:', msg, err)
       return
     }
     // Only paste non-empty transcription into the currently focused application.

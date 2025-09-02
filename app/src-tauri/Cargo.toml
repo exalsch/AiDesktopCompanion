@@ -47,3 +47,5 @@ symphonia = { version = "0.5", features = [
   "ogg"
 ] }
 base64 = "0.22"
+rmcp = { version = "0.2", features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client", "transport-sse-client"] }
+tokio = { version = "1", features = ["process", "rt-multi-thread", "macros", "sync"] }

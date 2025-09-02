@@ -9,7 +9,7 @@ import PromptComposer from './components/PromptComposer.vue'
 import TTSPanel from './components/TTSPanel.vue'
 import STTPanel from './components/STTPanel.vue'
 import LoadingDots from './components/LoadingDots.vue'
-import conversation, { appendMessage, getPersistState, setPersistState, clearAllConversations } from './state/conversation'
+import conversation, { appendMessage, getPersistState, setPersistState, clearAllConversations, newConversation } from './state/conversation'
 import { onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
@@ -50,6 +50,8 @@ const isBusy = () => busy.prompt || busy.tts || busy.stt || models.loading
 const composerInput = ref('')
 // Ref to TTS panel for programmatic control
 const ttsRef = ref<InstanceType<typeof TTSPanel> | null>(null)
+// Ref to PromptComposer to allow programmatic send
+const composerRef = ref<InstanceType<typeof PromptComposer> | null>(null)
 
 // Simple toast state
 const toast = reactive({
@@ -156,6 +158,27 @@ onMounted(async () => {
       unsubs.push(u4)
     }
 
+    // Direct insert + start a fresh conversation (from Quick Actions Prompt)
+    if (!isQuickActions && !isCaptureOverlay) {
+      const u10 = await listen<{ text: string }>('prompt:new-conversation', (e) => {
+        const p = e.payload || ({} as any)
+        const text = typeof p.text === 'string' ? p.text : ''
+        // Suppress legacy preview panel
+        prompt.visible = false
+        // Start a fresh conversation context
+        newConversation()
+        // Go to Prompt section
+        setSection('Prompt')
+        // Replace composer content
+        composerInput.value = text
+        // Focus input so the user can review/edit before sending
+        requestAnimationFrame(() => {
+          try { (composerRef.value as any)?.focus?.() } catch {}
+        })
+      })
+      unsubs.push(u10)
+    }
+
     // TTS errors surfaced from backend (Quick Actions TTS or TTS panel)
     const u5 = await listen<{ message: string }>('tts:error', (e) => {
       const p = e.payload || ({} as any)
@@ -192,6 +215,27 @@ onMounted(async () => {
 
   // Load persisted conversation if enabled
   try { await loadPersistedConversation() } catch {}
+  // MCP events
+  try {
+    const u7 = await listen<{ serverId: string }>('mcp:connected', (e) => {
+      const id = (e?.payload as any)?.serverId
+      const s = id ? findServerById(id) : null
+      if (s) { s.status = 'connected'; s.error = null; s.connecting = false; showToast(`MCP connected: ${id}`, 'success', 1500) }
+    }); unsubs.push(u7)
+    const u8 = await listen<{ serverId: string; existed?: boolean }>('mcp:disconnected', (e) => {
+      const id = (e?.payload as any)?.serverId
+      const s = id ? findServerById(id) : null
+      if (s) { s.status = 'disconnected'; s.connecting = false; showToast(`MCP disconnected: ${id}`, 'success', 1500) }
+    }); unsubs.push(u8)
+    const u9 = await listen<{ serverId: string; message: string }>('mcp:error', (e) => {
+      const p: any = e?.payload || {}
+      const s = p.serverId ? findServerById(p.serverId) : null
+      if (s) s.error = p.message || 'Unknown error'
+      showToast(`MCP error: ${p.message || 'Unknown error'}`, 'error')
+    }); unsubs.push(u9)
+  } catch (e) {
+    console.warn('[mcp] event listen failed', e)
+  }
 })
 
 onBeforeUnmount(() => {
@@ -218,6 +262,9 @@ const settings = reactive({
   temperature: 1.0 as number,
   persist_conversations: false as boolean,
   ui_style: 'sidebar' as 'sidebar' | 'tabs' | 'light',
+  // MCP servers persisted configuration
+  // Each item persisted as: { id, transport: 'stdio'|'http'|'sse', command, args: string[], cwd?: string, env?: Record<string,string> }
+  mcp_servers: [] as Array<any>,
 })
 const models = reactive<{ list: string[]; loading: boolean; error: string | null }>({ list: [], loading: false, error: null })
 const showApiKey = ref(false)
@@ -230,12 +277,62 @@ async function loadSettings() {
     if (typeof v.temperature === 'number') settings.temperature = v.temperature
     if (typeof v.persist_conversations === 'boolean') settings.persist_conversations = v.persist_conversations
     if (v.ui_style === 'tabs' || v.ui_style === 'sidebar' || v.ui_style === 'light') settings.ui_style = v.ui_style
+    // Load MCP servers and derive UI fields
+    if (Array.isArray(v.mcp_servers)) {
+      settings.mcp_servers = v.mcp_servers.map((s: any) => ({
+        id: String(s.id || ''),
+        transport: (s.transport === 'http' || s.transport === 'sse') ? s.transport : 'stdio',
+        command: String(s.command || ''),
+        args: Array.isArray(s.args) ? s.args.filter((x: any) => typeof x === 'string') : [],
+        argsText: Array.isArray(s.args) ? s.args.join(' ') : (typeof s.args === 'string' ? s.args : ''),
+        cwd: typeof s.cwd === 'string' ? s.cwd : '',
+        env: (s.env && typeof s.env === 'object') ? s.env : {},
+        envJson: JSON.stringify((s.env && typeof s.env === 'object') ? s.env : {}, null, 0),
+        status: 'disconnected',
+        connecting: false,
+        error: null as string | null,
+        // Tools & calls UI state (not persisted)
+        tools: [],
+        toolsOpen: false,
+        selectedTool: '',
+        toolArgsJson: '{}',
+        toolArgsError: null as string | null,
+        toolResults: [] as Array<any>,
+        // Inline validation state
+        envError: null as string | null,
+      }))
+    }
   }
 }
 
 async function saveSettings() {
   try {
-    const path = await invoke<string>('save_settings', { map: { ...settings } })
+    // Prepare clean MCP servers array for persistence (strip UI-only fields)
+    const cleanServers = settings.mcp_servers.map((s: any) => {
+      // ‼️ Args/env parsing is naive; improve robustness later.
+      const args = parseArgs(typeof s.argsText === 'string' ? s.argsText : (Array.isArray(s.args) ? s.args.join(' ') : ''))
+      let env: Record<string,string> = {}
+      if (typeof s.envJson === 'string' && s.envJson.trim()) {
+        try { env = JSON.parse(s.envJson) } catch (e) { throw new Error(`Invalid ENV JSON for server "${s.id}": ${(e as Error).message}`) }
+      } else if (s.env && typeof s.env === 'object') {
+        env = s.env
+      }
+      return {
+        id: String(s.id || ''),
+        transport: (s.transport === 'http' || s.transport === 'sse') ? s.transport : 'stdio',
+        command: String(s.command || ''),
+        args,
+        cwd: typeof s.cwd === 'string' ? s.cwd : '',
+        env,
+      }
+    })
+
+    const mapToSave: any = { ...settings, mcp_servers: cleanServers }
+    // Remove UI-only fields that may be present on root settings
+    delete mapToSave.mcp_servers[0]?.argsText // harmless if undefined
+    delete mapToSave.mcp_servers[0]?.envJson
+
+    const path = await invoke<string>('save_settings', { map: mapToSave })
     showToast(`Settings saved:\n${path}`, 'success')
     // Persist/clear conversations immediately according to toggle for privacy
     try {
@@ -253,6 +350,218 @@ async function saveSettings() {
     const msg = typeof err === 'string' ? err : (err && (err as any).message) ? (err as any).message : 'Unknown error'
     showToast(`Failed to save settings: ${msg}`, 'error')
   }
+}
+
+// ---------------------------
+// MCP helpers and actions
+// ---------------------------
+function parseArgs(text: string): string[] {
+  // Robust, shell-like argument parsing supporting quotes and escapes.
+  if (!text || !text.trim()) return []
+  const out: string[] = []
+  let cur = ''
+  let i = 0
+  let quote: '"' | "'" | null = null
+  while (i < text.length) {
+    const ch = text[i]
+    if (quote) {
+      if (ch === quote) {
+        quote = null
+        i++
+        continue
+      }
+      if (quote === '"' && ch === '\\' && i + 1 < text.length) {
+        // Basic escapes inside double quotes: \\ \" \n \t
+        const n = text[i + 1]
+        if (n === '"') { cur += '"'; i += 2; continue }
+        if (n === '\\') { cur += '\\'; i += 2; continue }
+        if (n === 'n') { cur += '\n'; i += 2; continue }
+        if (n === 't') { cur += '\t'; i += 2; continue }
+      }
+      cur += ch
+      i++
+      continue
+    }
+    // not in quotes
+    if (ch === '"' || ch === '\'') { quote = ch as any; i++; continue }
+    if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
+      if (cur.length) { out.push(cur); cur = '' }
+      i++
+      // collapse consecutive whitespace
+      while (i < text.length && /\s/.test(text[i])) i++
+      continue
+    }
+    if (ch === '\\' && i + 1 < text.length) {
+      const n = text[i + 1]
+      if (n === ' ' || n === '"' || n === '\'' || n === '\\') { cur += n; i += 2; continue }
+    }
+    cur += ch
+    i++
+  }
+  if (cur.length) out.push(cur)
+  return out
+}
+
+function parseJsonObject(text: string): Record<string, string> {
+  if (!text || !text.trim()) return {}
+  const v = JSON.parse(text)
+  if (v && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, string>
+  throw new Error('ENV must be a JSON object of { key: value }')
+}
+
+function findServerById(id: string) {
+  return settings.mcp_servers.find((s: any) => s.id === id)
+}
+
+async function connectServer(s: any) {
+  if (!s || !s.id) { showToast('Server name is required', 'error'); return }
+  try {
+    s.connecting = true; s.error = null
+    const args = s.transport === 'stdio'
+      ? parseArgs(typeof s.argsText === 'string' ? s.argsText : (Array.isArray(s.args) ? s.args.join(' ') : ''))
+      : []
+    const env = s.transport === 'stdio'
+      ? ((typeof s.envJson === 'string' && s.envJson.trim()) ? parseJsonObject(s.envJson) : (s.env || {}))
+      : {}
+    await invoke<string>('mcp_connect', {
+      serverId: s.id,
+      command: s.command,
+      args,
+      cwd: s.transport === 'stdio' ? (s.cwd || null) : null,
+      env,
+      transport: s.transport
+    })
+  } catch (err) {
+    const msg = typeof err === 'string' ? err : (err && (err as any).message) ? (err as any).message : 'Unknown error'
+    s.error = msg
+    showToast(`Connect failed: ${msg}`, 'error')
+  } finally {
+    s.connecting = false
+  }
+}
+
+async function disconnectServer(s: any) {
+  if (!s || !s.id) return
+  try {
+    await invoke<string>('mcp_disconnect', { serverId: s.id })
+  } catch (err) {
+    const msg = typeof err === 'string' ? err : (err && (err as any).message) ? (err as any).message : 'Unknown error'
+    showToast(`Disconnect failed: ${msg}`, 'error')
+  }
+}
+
+async function pingServer(s: any) {
+  if (!s || !s.id) return
+  try {
+    const res = await invoke<string>('mcp_ping', { serverId: s.id })
+    showToast(`Ping: ${res}`, 'success', 1500)
+  } catch (err) {
+    const msg = typeof err === 'string' ? err : (err && (err as any).message) ? (err as any).message : 'Unknown error'
+    showToast(`Ping failed: ${msg}`, 'error')
+  }
+}
+
+async function listTools(s: any) {
+  if (!s || !s.id) return
+  try {
+    const v = await invoke<any>('mcp_list_tools', { serverId: s.id })
+    const tools = Array.isArray(v?.tools) ? v.tools : (Array.isArray(v) ? v : [])
+    s.tools = tools
+    s.toolsOpen = true
+    const count = Array.isArray(tools) ? tools.length : 0
+    showToast(`Tools: ${count} loaded.`, 'success', 1500)
+    console.log('[mcp] list_tools', v)
+  } catch (err) {
+    const msg = typeof err === 'string' ? err : (err && (err as any).message) ? (err as any).message : 'Unknown error'
+    showToast(`list_tools failed: ${msg}`, 'error')
+  }
+}
+
+function validateEnvJsonInput(s: any) {
+  try {
+    if (typeof s.envJson === 'string' && s.envJson.trim()) parseJsonObject(s.envJson)
+    s.envError = null
+  } catch (e) {
+    s.envError = (e as Error).message
+  }
+}
+
+async function callTool(s: any) {
+  if (!s || !s.id) return
+  if (!s.selectedTool) { showToast('Select a tool first', 'error'); return }
+  try {
+    s.toolArgsError = null
+    const args = (typeof s.toolArgsJson === 'string' && s.toolArgsJson.trim()) ? parseJsonObject(s.toolArgsJson) : {}
+    const res = await invoke<any>('mcp_call_tool', { serverId: s.id, name: s.selectedTool, args })
+    const entry = { tool: s.selectedTool, args, result: res, at: new Date().toISOString() }
+    s.toolResults = [entry, ...(Array.isArray(s.toolResults) ? s.toolResults : [])].slice(0, 10)
+    showToast('Tool executed.', 'success', 1200)
+    console.log('[mcp] call_tool', entry)
+  } catch (err) {
+    const msg = typeof err === 'string' ? err : (err && (err as any).message) ? (err as any).message : 'Unknown error'
+    s.toolArgsError = msg
+    showToast(`call_tool failed: ${msg}`, 'error')
+  }
+}
+
+function selectedToolObj(s: any) {
+  try {
+    return (Array.isArray(s.tools) ? s.tools : []).find((t: any) => (t.name || t.id) === s.selectedTool)
+  } catch { return null }
+}
+
+function makeArgsTemplateFromSchema(schema: any): any {
+  try {
+    const props = schema?.properties || schema?.inputSchema?.properties || schema?.input_schema?.properties
+    if (!props || typeof props !== 'object') return {}
+    const obj: any = {}
+    for (const [k, v] of Object.entries<any>(props)) {
+      const typ = (v && v.type) || 'string'
+      obj[k] = typ === 'number' || typ === 'integer' ? 0
+        : typ === 'boolean' ? false
+        : typ === 'array' ? []
+        : typ === 'object' ? {}
+        : ''
+    }
+    return obj
+  } catch { return {} }
+}
+
+function fillArgsTemplate(s: any) {
+  try {
+    const t = selectedToolObj(s)
+    const schema = t?.inputSchema ?? t?.input_schema ?? t?.schema
+    const tmpl = makeArgsTemplateFromSchema(schema || {})
+    s.toolArgsJson = JSON.stringify(tmpl, null, 2)
+  } catch {}
+}
+
+function addMcpServer() {
+  const id = `server-${(settings.mcp_servers.length + 1)}`
+  settings.mcp_servers.push({
+    id,
+    transport: 'stdio',
+    command: '',
+    args: [],
+    argsText: '',
+    cwd: '',
+    env: {},
+    envJson: '{}',
+    status: 'disconnected',
+    connecting: false,
+    error: null,
+    tools: [],
+    toolsOpen: false,
+    selectedTool: '',
+    toolArgsJson: '{}',
+    toolArgsError: null,
+    toolResults: [],
+    envError: null,
+  })
+}
+
+function removeMcpServer(idx: number) {
+  if (idx >= 0 && idx < settings.mcp_servers.length) settings.mcp_servers.splice(idx, 1)
 }
 
 async function refreshModels() {
@@ -432,7 +741,7 @@ watch(() => settings.ui_style, (v) => {
                 <div class="convo-wrap">
                   <ConversationView :messages="conversation.currentConversation.messages" />
                 </div>
-                <PromptComposer v-model="composerInput" @busy="busy.prompt = $event" />
+                <PromptComposer ref="composerRef" v-model="composerInput" @busy="busy.prompt = $event" />
               </div>
             </template>
           </template>
@@ -513,6 +822,118 @@ watch(() => settings.ui_style, (v) => {
                 <div class="settings-hint">Writes defaults to %APPDATA%/AiDesktopCompanion/quick_prompts.json</div>
                 <QuickPromptsEditor :notify="showToast" />
               </div>
+
+              <div class="settings-section" style="margin-top: 14px;">
+                <div class="settings-title">MCP Servers</div>
+                <div class="settings-hint">Configure MCP servers. Only stdio transport is supported for now (HTTP ‼️).</div>
+                <div class="settings-row">
+                  <button class="btn" @click="addMcpServer">Add Server</button>
+                  <button class="btn" @click="saveSettings">Save MCP Servers</button>
+                </div>
+
+                <div v-if="settings.mcp_servers.length === 0" class="settings-hint">No servers configured.</div>
+                <div v-for="(s, i) in settings.mcp_servers" :key="s.id || i" class="settings-section" style="margin-top:8px;">
+                  <div class="settings-row">
+                    <label class="label" style="width:100px;">Name</label>
+                    <input class="input" v-model="s.id" placeholder="my-server" />
+                    <span class="settings-hint">Used as key for events/commands.</span>
+                  </div>
+                  <div class="settings-row">
+                    <label class="label" style="width:100px;">Transport</label>
+                    <select class="input" v-model="s.transport">
+                      <option value="stdio">stdio</option>
+                      <option value="http">http</option>
+                      <option value="sse">sse</option>
+                    </select>
+                  </div>
+                  <!-- URL for HTTP/SSE -->
+                  <div class="settings-row" v-if="s.transport === 'http' || s.transport === 'sse'">
+                    <label class="label" style="width:100px;">URL</label>
+                    <input class="input" v-model="s.command" placeholder="https://server.example.com/mcp" />
+                  </div>
+                  <!-- stdio-only fields -->
+                  <div class="settings-row" v-if="s.transport === 'stdio'">
+                    <label class="label" style="width:100px;">Command</label>
+                    <input class="input" v-model="s.command" placeholder="uv / node / python / server.exe" />
+                  </div>
+                  <div class="settings-row" v-if="s.transport === 'stdio'">
+                    <label class="label" style="width:100px;">Args</label>
+                    <input class="input" v-model="s.argsText" placeholder="--flag value 'quoted arg'" />
+                  </div>
+                  <div class="settings-row" v-if="s.transport === 'stdio'">
+                    <label class="label" style="width:100px;">CWD</label>
+                    <input class="input" v-model="s.cwd" placeholder="c:\\path\\to\\server" />
+                  </div>
+                  <div class="settings-row col" v-if="s.transport === 'stdio'">
+                    <label class="label">Env (JSON object)</label>
+                    <textarea class="input" rows="2" v-model="s.envJson" spellcheck="false" @input="validateEnvJsonInput(s)"></textarea>
+                    <div v-if="s.envError" class="settings-hint error">{{ s.envError }}</div>
+                  </div>
+                  <div class="settings-row" style="justify-content: space-between;">
+                    <div>
+                      <span class="label">Status:</span>
+                      <span style="margin-left:6px;">{{ s.status }}</span>
+                      <span v-if="s.error" class="settings-hint error" style="margin-left:10px;">{{ s.error }}</span>
+                    </div>
+                    <div style="display:flex; gap:8px;">
+                      <button class="btn" :disabled="s.connecting" @click="connectServer(s)">{{ s.connecting ? 'Connecting…' : 'Connect' }}</button>
+                      <button class="btn" @click="disconnectServer(s)">Disconnect</button>
+                      <button class="btn" @click="pingServer(s)">Ping</button>
+                      <button class="btn" @click="listTools(s)">List Tools</button>
+                      <button class="btn danger" @click="removeMcpServer(i)">Remove</button>
+                    </div>
+                  </div>
+                  <!-- Tools panel -->
+                  <div v-if="s.toolsOpen" class="settings-section" style="margin-top:8px;">
+                    <div class="settings-title">Tools</div>
+                    <div class="settings-row">
+                      <label class="label" style="width:100px;">Tool</label>
+                      <select class="input" v-model="s.selectedTool">
+                        <option value="" disabled>Select a tool</option>
+                        <option v-for="t in s.tools" :key="t.name || t.id || t.title" :value="t.name || t.id">{{ t.name || t.id || t.title }}</option>
+                      </select>
+                      <button class="btn" :disabled="!s.selectedTool" @click="callTool(s)">Call Tool</button>
+                    </div>
+                    <div class="settings-hint" v-if="s.selectedTool">
+                      {{ (s.tools.find((t:any) => (t.name||t.id) === s.selectedTool)?.description) || '' }}
+                    </div>
+                    <!-- Dynamic parameter fields from tool schema -->
+                    <div v-if="s.selectedTool" class="settings-row col" style="margin-top:4px;">
+                      <label class="label">Parameters</label>
+                      <div v-if="(selectedToolObj(s)?.inputSchema?.properties) || (selectedToolObj(s)?.input_schema?.properties)" class="settings-hint">
+                        <div v-for="(prop, key) in (selectedToolObj(s)?.inputSchema?.properties || selectedToolObj(s)?.input_schema?.properties)" :key="String(key)" style="margin:2px 0;">
+                          <span class="label" style="min-width:120px; display:inline-block;">{{ key }}</span>
+                          <span class="settings-hint">{{ (prop as any)?.type || '' }}</span>
+                          <span class="settings-hint" v-if="(prop as any)?.description"> — {{ (prop as any).description }}</span>
+                        </div>
+                      </div>
+                      <div v-else class="settings-hint">No parameter schema provided.</div>
+                      <div style="margin-top:4px;">
+                        <button class="btn" @click="fillArgsTemplate(s)">Fill args template</button>
+                      </div>
+                    </div>
+                    <div class="settings-row col" style="margin-top:6px;">
+                      <label class="label">Args (JSON object)</label>
+                      <textarea class="input" rows="3" v-model="s.toolArgsJson" spellcheck="false"></textarea>
+                      <div v-if="s.toolArgsError" class="settings-hint error">{{ s.toolArgsError }}</div>
+                    </div>
+                    <div class="settings-row col" style="margin-top:6px;">
+                      <label class="label">Recent Results</label>
+                      <div v-if="!s.toolResults || s.toolResults.length === 0" class="settings-hint">No results yet.</div>
+                      <div v-for="(r, idx) in s.toolResults" :key="idx" class="settings-section" style="margin-top:6px;">
+                        <div class="settings-row" style="justify-content: space-between;">
+                          <div><span class="label">Tool:</span> {{ r.tool }}</div>
+                          <div class="settings-hint">{{ r.at }}</div>
+                        </div>
+                        <div class="settings-row col">
+                          <label class="label">Output</label>
+                          <pre class="input" style="white-space: pre-wrap; overflow:auto;">{{ JSON.stringify(r.result, null, 2) }}</pre>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -552,15 +973,6 @@ watch(() => settings.ui_style, (v) => {
               <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
               <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
               <line x1="12" x2="12" y1="19" y2="22"/>
-            </svg>
-          </template>
-          <template v-else-if="s === 'History'">
-            <!-- History icon -->
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="8"/>
-              <path d="M12 8v4l3 3"/>
-              <path d="M3 12a9 9 0 1 0 9-9"/>
-              <polyline points="3 12 3 7 8 7"/>
             </svg>
           </template>
           <template v-else>
@@ -680,6 +1092,118 @@ watch(() => settings.ui_style, (v) => {
               </div>
               <div class="settings-hint">Writes defaults to %APPDATA%/AiDesktopCompanion/quick_prompts.json</div>
               <QuickPromptsEditor :notify="showToast" />
+            </div>
+
+            <div class="settings-section">
+              <div class="settings-title">MCP Servers</div>
+              <div class="settings-hint">Configure MCP servers. Supports stdio, http, and sse transports.</div>
+              <div class="settings-row">
+                <button class="btn" @click="addMcpServer">Add Server</button>
+                <button class="btn" @click="saveSettings">Save MCP Servers</button>
+              </div>
+
+              <div v-if="settings.mcp_servers.length === 0" class="settings-hint">No servers configured.</div>
+              <div v-for="(s, i) in settings.mcp_servers" :key="s.id || i" class="settings-section" style="margin-top:8px;">
+                <div class="settings-row">
+                  <label class="label" style="width:100px;">Name</label>
+                  <input class="input" v-model="s.id" placeholder="my-server" />
+                  <span class="settings-hint">Used as key for events/commands.</span>
+                </div>
+                <div class="settings-row">
+                  <label class="label" style="width:100px;">Transport</label>
+                  <select class="input" v-model="s.transport">
+                    <option value="stdio">stdio</option>
+                    <option value="http">http</option>
+                    <option value="sse">sse</option>
+                  </select>
+                </div>
+                <!-- URL for HTTP/SSE -->
+                <div class="settings-row" v-if="s.transport === 'http' || s.transport === 'sse'">
+                  <label class="label" style="width:100px;">URL</label>
+                  <input class="input" v-model="s.command" placeholder="https://server.example.com/mcp" />
+                </div>
+                <!-- stdio-only fields -->
+                <div class="settings-row" v-if="s.transport === 'stdio'">
+                  <label class="label" style="width:100px;">Command</label>
+                  <input class="input" v-model="s.command" placeholder="uv / node / python / server.exe" />
+                </div>
+                <div class="settings-row" v-if="s.transport === 'stdio'">
+                  <label class="label" style="width:100px;">Args</label>
+                  <input class="input" v-model="s.argsText" placeholder="--flag value 'quoted arg'" />
+                </div>
+                <div class="settings-row" v-if="s.transport === 'stdio'">
+                  <label class="label" style="width:100px;">CWD</label>
+                  <input class="input" v-model="s.cwd" placeholder="c:\\path\\to\\server" />
+                </div>
+                <div class="settings-row col" v-if="s.transport === 'stdio'">
+                  <label class="label">Env (JSON object)</label>
+                  <textarea class="input" rows="2" v-model="s.envJson" spellcheck="false" @input="validateEnvJsonInput(s)"></textarea>
+                  <div v-if="s.envError" class="settings-hint error">{{ s.envError }}</div>
+                </div>
+                <div class="settings-row" style="justify-content: space-between;">
+                  <div>
+                    <span class="label">Status:</span>
+                    <span style="margin-left:6px;">{{ s.status }}</span>
+                    <span v-if="s.error" class="settings-hint error" style="margin-left:10px;">{{ s.error }}</span>
+                  </div>
+                  <div style="display:flex; gap:8px;">
+                    <button class="btn" :disabled="s.connecting" @click="connectServer(s)">{{ s.connecting ? 'Connecting…' : 'Connect' }}</button>
+                    <button class="btn" @click="disconnectServer(s)">Disconnect</button>
+                    <button class="btn" @click="pingServer(s)">Ping</button>
+                    <button class="btn" @click="listTools(s)">List Tools</button>
+                    <button class="btn danger" @click="removeMcpServer(i)">Remove</button>
+                  </div>
+                </div>
+                <!-- Tools panel (tabs layout) -->
+                <div v-if="s.toolsOpen" class="settings-section" style="margin-top:8px;">
+                  <div class="settings-title">Tools</div>
+                  <div class="settings-row">
+                    <label class="label" style="width:100px;">Tool</label>
+                    <select class="input" v-model="s.selectedTool">
+                      <option value="" disabled>Select a tool</option>
+                      <option v-for="t in s.tools" :key="t.name || t.id || t.title" :value="t.name || t.id">{{ t.name || t.id || t.title }}</option>
+                    </select>
+                    <button class="btn" :disabled="!s.selectedTool" @click="callTool(s)">Call Tool</button>
+                  </div>
+                  <div class="settings-hint" v-if="s.selectedTool">
+                    {{ (s.tools.find((t:any) => (t.name||t.id) === s.selectedTool)?.description) || '' }}
+                  </div>
+                  <!-- Dynamic parameter fields from tool schema (tabs layout) -->
+                  <div v-if="s.selectedTool" class="settings-row col" style="margin-top:4px;">
+                    <label class="label">Parameters</label>
+                    <div v-if="(selectedToolObj(s)?.inputSchema?.properties) || (selectedToolObj(s)?.input_schema?.properties)" class="settings-hint">
+                      <div v-for="(prop, key) in (selectedToolObj(s)?.inputSchema?.properties || selectedToolObj(s)?.input_schema?.properties)" :key="String(key)" style="margin:2px 0;">
+                        <span class="label" style="min-width:120px; display:inline-block;">{{ key }}</span>
+                        <span class="settings-hint">{{ (prop as any)?.type || '' }}</span>
+                        <span class="settings-hint" v-if="(prop as any)?.description"> — {{ (prop as any).description }}</span>
+                      </div>
+                    </div>
+                    <div v-else class="settings-hint">No parameter schema provided.</div>
+                    <div style="margin-top:4px;">
+                      <button class="btn" @click="fillArgsTemplate(s)">Fill args template</button>
+                    </div>
+                  </div>
+                  <div class="settings-row col" style="margin-top:6px;">
+                    <label class="label">Args (JSON object)</label>
+                    <textarea class="input" rows="3" v-model="s.toolArgsJson" spellcheck="false"></textarea>
+                    <div v-if="s.toolArgsError" class="settings-hint error">{{ s.toolArgsError }}</div>
+                  </div>
+                  <div class="settings-row col" style="margin-top:6px;">
+                    <label class="label">Recent Results</label>
+                    <div v-if="!s.toolResults || s.toolResults.length === 0" class="settings-hint">No results yet.</div>
+                    <div v-for="(r, idx) in s.toolResults" :key="idx" class="settings-section" style="margin-top:6px;">
+                      <div class="settings-row" style="justify-content: space-between;">
+                        <div><span class="label">Tool:</span> {{ r.tool }}</div>
+                        <div class="settings-hint">{{ r.at }}</div>
+                      </div>
+                      <div class="settings-row col">
+                        <label class="label">Output</label>
+                        <pre class="input" style="white-space: pre-wrap; overflow:auto;">{{ JSON.stringify(r.result, null, 2) }}</pre>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>

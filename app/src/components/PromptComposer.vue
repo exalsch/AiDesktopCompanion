@@ -11,6 +11,7 @@ const input = computed({
   set: (v: string) => emit('update:modelValue', v)
 })
 const sending = ref(false)
+const textareaRef = ref<HTMLTextAreaElement | null>(null)
 
 type ContentPart =
   | { type: 'input_text'; text: string }
@@ -71,11 +72,24 @@ async function onSend() {
     emit('busy', false)
   }
 }
+
+// Expose a method so parent components can trigger send programmatically
+defineExpose({
+  send: onSend,
+  focus: () => {
+    const el = textareaRef.value
+    if (el) {
+      el.focus()
+      try { el.selectionStart = el.selectionEnd = el.value.length } catch {}
+    }
+  },
+})
 </script>
 
 <template>
   <div class="composer">
     <textarea
+      ref="textareaRef"
       v-model="input"
       class="input"
       placeholder="Type your prompt…"

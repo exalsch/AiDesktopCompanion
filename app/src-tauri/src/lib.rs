@@ -97,7 +97,16 @@ pub fn run() {
       cleanup_stale_tts_wavs,
       get_virtual_screen_bounds,
       size_overlay_to_virtual_screen,
-      capture_region
+      capture_region,
+      mcp_connect,
+      mcp_disconnect,
+      mcp_list_tools,
+      mcp_call_tool,
+      mcp_list_resources,
+      mcp_read_resource,
+      mcp_list_prompts,
+      mcp_get_prompt,
+      mcp_ping
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
@@ -116,7 +125,15 @@ use serde::Deserialize;
 use std::io::{Write, Cursor};
 use std::process::{Command, Stdio};
 use once_cell::sync::Lazy;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use tokio::process::Command as TokioCommand;
+use tokio::sync::Mutex as AsyncMutex;
+use rmcp::{
+  service::{ServiceExt, RoleClient, DynService, RunningService},
+  transport::{TokioChildProcess, streamable_http_client::StreamableHttpClientTransport},
+  model::{CallToolRequestParam, ReadResourceRequestParam, GetPromptRequestParam},
+};
+use rmcp::transport::sse_client::SseClientTransport;
 use base64::Engine; // for .encode on base64 engines
 // Audio decoding (fallback for non-WAV responses)
 use symphonia::core::audio::{AudioBufferRef, SampleBuffer};
@@ -353,6 +370,268 @@ fn clear_conversations() -> Result<String, String> {
   }
 }
 
+// ---------------------------
+// MCP Tools — rmcp integration
+// ---------------------------
+
+static MCP_CLIENTS: Lazy<AsyncMutex<std::collections::HashMap<String, Arc<RunningService<RoleClient, Box<dyn DynService<RoleClient>>>>>>> = Lazy::new(|| {
+  AsyncMutex::new(std::collections::HashMap::new())
+});
+
+#[cfg(target_os = "windows")]
+fn resolve_windows_program(prog: &str, cwd: Option<&str>) -> Option<String> {
+  use std::path::{Path, PathBuf};
+
+  // If the program already has an extension or a path separator, use as-is.
+  if prog.contains('\\') || prog.contains('/') || Path::new(prog).extension().is_some() {
+    return None;
+  }
+
+  // PATHEXT determines which extensions are executable in Windows shells.
+  // We include a sensible default if PATHEXT is missing.
+  let pathext: Vec<String> = std::env::var("PATHEXT")
+    .ok()
+    .map(|v| v.split(';').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect())
+    .unwrap_or_else(|| vec![".COM".into(), ".EXE".into(), ".BAT".into(), ".CMD".into()]);
+
+  // Candidate directories to search: node_modules/.bin under cwd first (common for JS tools), then PATH.
+  let mut candidate_dirs: Vec<PathBuf> = Vec::new();
+  if let Some(d) = cwd {
+    let mut p = PathBuf::from(d);
+    p.push("node_modules");
+    p.push(".bin");
+    candidate_dirs.push(p);
+  }
+  if let Some(path_var) = std::env::var_os("PATH") {
+    for p in std::env::split_paths(&path_var) {
+      candidate_dirs.push(p);
+    }
+  }
+
+  for dir in candidate_dirs {
+    for ext in &pathext {
+      let candidate = dir.join(format!("{}{}", prog, ext));
+      if candidate.is_file() {
+        return Some(candidate.to_string_lossy().to_string());
+      }
+    }
+  }
+
+  None
+}
+
+#[tauri::command]
+async fn mcp_connect(
+  app: tauri::AppHandle,
+  server_id: String,
+  command: String,
+  args: Vec<String>,
+  cwd: Option<String>,
+  env: Option<serde_json::Value>,
+  transport: Option<String>,
+) -> Result<String, String> {
+  // fast path: already connected
+  {
+    let map = MCP_CLIENTS.lock().await;
+    if map.contains_key(&server_id) {
+      return Ok("already connected".into());
+    }
+  }
+
+  // Select transport: default stdio; support http (streamable http client)
+  let transport_kind = transport.unwrap_or_else(|| "stdio".to_string());
+  if transport_kind == "sse" {
+    // For SSE, interpret `command` as the SSE endpoint URL
+    let uri = command.trim().to_string();
+    if uri.is_empty() {
+      return Err("SSE transport requires a non-empty URI in 'command'".into());
+    }
+    let sse_transport = SseClientTransport::<reqwest::Client>::start(uri)
+      .await
+      .map_err(|e| {
+        let msg = format!("sse start failed: {e}");
+        let _ = app.emit("mcp:error", serde_json::json!({ "serverId": server_id, "message": msg }));
+        msg
+      })?;
+    let service = ().into_dyn().serve(sse_transport).await.map_err(|e| {
+      let msg = format!("serve failed: {e}");
+      let _ = app.emit("mcp:error", serde_json::json!({ "serverId": server_id, "message": msg }));
+      msg
+    })?;
+    let service = Arc::new(service);
+    {
+      let mut map = MCP_CLIENTS.lock().await;
+      map.insert(server_id.clone(), service.clone());
+    }
+    let _ = app.emit("mcp:connected", serde_json::json!({ "serverId": server_id }));
+    return Ok("connected".into());
+  }
+  if transport_kind == "http" {
+    // For HTTP, interpret `command` as the server URI
+    let uri = command.trim().to_string();
+    if uri.is_empty() {
+      return Err("HTTP transport requires a non-empty URI in 'command'".into());
+    }
+    let http_transport = StreamableHttpClientTransport::<reqwest::Client>::from_uri(uri);
+    let service = ().into_dyn().serve(http_transport).await.map_err(|e| {
+      let msg = format!("serve failed: {e}");
+      let _ = app.emit("mcp:error", serde_json::json!({ "serverId": server_id, "message": msg }));
+      msg
+    })?;
+    let service = Arc::new(service);
+    {
+      let mut map = MCP_CLIENTS.lock().await;
+      map.insert(server_id.clone(), service.clone());
+    }
+    let _ = app.emit("mcp:connected", serde_json::json!({ "serverId": server_id }));
+    return Ok("connected".into());
+  }
+
+  // Default: Build child process (stdio)
+  // On Windows, resolve commands like "npx" via PATH/PATHEXT and local node_modules/.bin
+  #[cfg(target_os = "windows")]
+  let program_to_run: String = resolve_windows_program(&command, cwd.as_deref()).unwrap_or_else(|| command.clone());
+  #[cfg(not(target_os = "windows"))]
+  let program_to_run: String = command.clone();
+
+  let mut cmd = TokioCommand::new(&program_to_run);
+  cmd.args(args.iter());
+  if let Some(dir) = cwd.as_ref() {
+    cmd.current_dir(dir);
+  }
+  if let Some(envv) = env.as_ref() {
+    if let Some(obj) = envv.as_object() {
+      for (k, v) in obj.iter() {
+        if let Some(s) = v.as_str() {
+          cmd.env(k, s);
+        }
+      }
+    }
+  }
+
+  // Connect via rmcp using stdio child process
+  let child_transport = TokioChildProcess::new(cmd).map_err(|e| format!("spawn failed: {e}"))?;
+  let service = ().into_dyn().serve(child_transport).await.map_err(|e| {
+    let msg = format!("serve failed: {e}");
+    let _ = app.emit("mcp:error", serde_json::json!({ "serverId": server_id, "message": msg }));
+    msg
+  })?;
+  let service = Arc::new(service);
+
+  {
+    let mut map = MCP_CLIENTS.lock().await;
+    map.insert(server_id.clone(), service.clone());
+  }
+  let _ = app.emit("mcp:connected", serde_json::json!({ "serverId": server_id }));
+  Ok("connected".into())
+}
+
+#[tauri::command]
+async fn mcp_disconnect(app: tauri::AppHandle, server_id: String) -> Result<String, String> {
+  let svc = {
+    let mut map = MCP_CLIENTS.lock().await;
+    map.remove(&server_id)
+  };
+  let existed = svc.is_some();
+  if let Some(svc) = svc {
+    // Gracefully cancel without moving the service
+    svc.cancellation_token().cancel();
+  }
+  let _ = app.emit("mcp:disconnected", serde_json::json!({ "serverId": server_id, "existed": existed }));
+  if existed { Ok("disconnected".into()) } else { Err("not connected".into()) }
+}
+
+#[tauri::command]
+async fn mcp_list_tools(server_id: String) -> Result<serde_json::Value, String> {
+  let svc = {
+    let map = MCP_CLIENTS.lock().await;
+    map.get(&server_id).cloned()
+  }.ok_or_else(|| "not connected".to_string())?;
+  let res = svc.list_tools(Default::default()).await.map_err(|e| format!("list_tools failed: {e}"))?;
+  serde_json::to_value(res).map_err(|e| format!("serialize failed: {e}"))
+}
+
+#[tauri::command]
+async fn mcp_call_tool(server_id: String, name: String, args: serde_json::Value) -> Result<serde_json::Value, String> {
+  let svc = {
+    let map = MCP_CLIENTS.lock().await;
+    map.get(&server_id).cloned()
+  }.ok_or_else(|| "not connected".to_string())?;
+  // Prepare arguments map if provided
+  let arg_map_opt = if args.is_null() {
+    None
+  } else if let Some(obj) = args.as_object() {
+    Some(obj.clone())
+  } else {
+    return Err("call_tool args must be an object".into());
+  };
+  let res = svc
+    .call_tool(CallToolRequestParam { name: name.into(), arguments: arg_map_opt })
+    .await
+    .map_err(|e| format!("call_tool failed: {e}"))?;
+  serde_json::to_value(res).map_err(|e| format!("serialize failed: {e}"))
+}
+
+#[tauri::command]
+async fn mcp_list_resources(server_id: String) -> Result<serde_json::Value, String> {
+  let svc = {
+    let map = MCP_CLIENTS.lock().await;
+    map.get(&server_id).cloned()
+  }.ok_or_else(|| "not connected".to_string())?;
+  let res = svc.list_resources(Default::default()).await.map_err(|e| format!("list_resources failed: {e}"))?;
+  serde_json::to_value(res).map_err(|e| format!("serialize failed: {e}"))
+}
+
+#[tauri::command]
+async fn mcp_read_resource(server_id: String, uri: String) -> Result<serde_json::Value, String> {
+  let svc = {
+    let map = MCP_CLIENTS.lock().await;
+    map.get(&server_id).cloned()
+  }.ok_or_else(|| "not connected".to_string())?;
+  let res = svc
+    .read_resource(ReadResourceRequestParam { uri })
+    .await
+    .map_err(|e| format!("read_resource failed: {e}"))?;
+  serde_json::to_value(res).map_err(|e| format!("serialize failed: {e}"))
+}
+
+#[tauri::command]
+async fn mcp_list_prompts(server_id: String) -> Result<serde_json::Value, String> {
+  let svc = {
+    let map = MCP_CLIENTS.lock().await;
+    map.get(&server_id).cloned()
+  }.ok_or_else(|| "not connected".to_string())?;
+  let res = svc.list_prompts(Default::default()).await.map_err(|e| format!("list_prompts failed: {e}"))?;
+  serde_json::to_value(res).map_err(|e| format!("serialize failed: {e}"))
+}
+
+#[tauri::command]
+async fn mcp_get_prompt(server_id: String, name: String, arguments: Option<serde_json::Value>) -> Result<serde_json::Value, String> {
+  let svc = {
+    let map = MCP_CLIENTS.lock().await;
+    map.get(&server_id).cloned()
+  }.ok_or_else(|| "not connected".to_string())?;
+  let arg_map_opt = if let Some(v) = arguments {
+    if v.is_null() { None } else if let Some(obj) = v.as_object() { Some(obj.clone()) } else { return Err("get_prompt arguments must be an object".into()); }
+  } else { None };
+  let res = svc
+    .get_prompt(GetPromptRequestParam { name: name.into(), arguments: arg_map_opt })
+    .await
+    .map_err(|e| format!("get_prompt failed: {e}"))?;
+  serde_json::to_value(res).map_err(|e| format!("serialize failed: {e}"))
+}
+
+#[tauri::command]
+async fn mcp_ping(server_id: String) -> Result<String, String> {
+  let svc = {
+    let map = MCP_CLIENTS.lock().await;
+    map.get(&server_id).cloned()
+  }.ok_or_else(|| "not connected".to_string())?;
+  // No explicit ping API; perform a lightweight request as a health check
+  let _ = svc.list_tools(Default::default()).await.map_err(|e| format!("ping(list_tools) failed: {e}"))?;
+  Ok("ok".into())
+}
+
 fn load_settings_json() -> serde_json::Value {
   if let Some(path) = settings_config_path() {
     if let Ok(text) = fs::read_to_string(&path) {
@@ -407,6 +686,8 @@ fn save_settings(map: serde_json::Value) -> Result<String, String> {
   if let Some(m) = map.get("openai_chat_model").and_then(|x| x.as_str()) { obj.insert("openai_chat_model".to_string(), serde_json::Value::String(m.to_string())); }
   if let Some(t) = map.get("temperature").and_then(|x| x.as_f64()) { obj.insert("temperature".to_string(), serde_json::Value::Number(serde_json::Number::from_f64(t).unwrap_or_else(|| serde_json::Number::from_f64(1.0).unwrap()))); }
   if let Some(p) = map.get("persist_conversations").and_then(|x| x.as_bool()) { obj.insert("persist_conversations".to_string(), serde_json::Value::Bool(p)); }
+  // Pass-through for MCP servers configuration when provided
+  if let Some(ms) = map.get("mcp_servers") { obj.insert("mcp_servers".to_string(), ms.clone()); }
 
   // New TTS preference keys
   if let Some(e) = map.get("tts_engine").and_then(|x| x.as_str()) { obj.insert("tts_engine".to_string(), serde_json::Value::String(e.to_string())); }
@@ -570,13 +851,11 @@ fn prompt_action(app: tauri::AppHandle, safe_mode: Option<bool>) -> Result<Strin
     let _ = win.show();
     let _ = win.set_focus();
   }
-  let preview: String = selection.chars().take(200).collect();
+  // Emit a direct-insert + new-conversation event (no preview UI)
   let payload = serde_json::json!({
-    "selection": selection,
-    "preview": preview,
-    "length": payload_length(&preview),
+    "text": selection,
   });
-  let _ = app.emit("prompt:open", payload);
+  let _ = app.emit("prompt:new-conversation", payload);
   Ok("ok".to_string())
 }
 
