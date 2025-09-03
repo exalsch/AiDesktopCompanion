@@ -1652,6 +1652,35 @@ fn parse_mcp_fn_call_name(name: &str) -> Option<(String, String)> {
   None
 }
 
+// Produce a concise, single-line summary of required/optional input fields for a tool.
+// Example output: "libraryName: string (required); topic: string (optional)"
+fn summarize_input_schema(schema: &serde_json::Value) -> String {
+  let props = schema.get("properties").and_then(|v| v.as_object());
+  if props.is_none() { return String::new(); }
+  let props = props.unwrap();
+  let required: std::collections::HashSet<String> = schema
+    .get("required")
+    .and_then(|v| v.as_array())
+    .map(|arr| arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+    .unwrap_or_default();
+
+  let mut parts: Vec<String> = Vec::new();
+  for (name, def) in props.iter() {
+    let ty = def.get("type").and_then(|v| v.as_str()).unwrap_or("any");
+    let is_req = required.contains(name);
+    let mut piece = format!("{}: {}{}", name, ty, if is_req { " (required)" } else { " (optional)" });
+    if let Some(desc) = def.get("description").and_then(|v| v.as_str()) {
+      if !desc.is_empty() {
+        // Keep it short
+        let trimmed = if desc.len() > 120 { &desc[..120] } else { desc };
+        piece.push_str(&format!(" - {}", trimmed));
+      }
+    }
+    parts.push(piece);
+  }
+  parts.join("; ")
+}
+
 async fn build_openai_tools_from_mcp() -> Vec<serde_json::Value> {
   let mut out: Vec<serde_json::Value> = Vec::new();
   let map = MCP_CLIENTS.lock().await;
@@ -1665,21 +1694,57 @@ async fn build_openai_tools_from_mcp() -> Vec<serde_json::Value> {
             if name.is_empty() { continue; }
             let desc = t.get("description").and_then(|x| x.as_str()).unwrap_or("");
             // JSON schema forwarded as-is when available; otherwise fall back to permissive object
-            let mut params = t.get("input_schema").cloned().unwrap_or_else(|| serde_json::json!({
-              "type": "object",
-              "properties": {},
-              "additionalProperties": true
-            }));
+            // Some servers use `input_schema`, others `inputSchema` (camelCase), or just `schema`.
+            let mut params = t
+              .get("input_schema")
+              .or_else(|| t.get("inputSchema"))
+              .or_else(|| t.get("schema"))
+              .cloned()
+              .unwrap_or_else(|| serde_json::json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              }));
             // Ensure parameters is an object per OpenAI expectations
             if !params.is_object() {
               params = serde_json::json!({ "type": "object", "properties": {}, "additionalProperties": true });
             }
+            // Ensure minimal JSON-Schema shape for OpenAI: type/object/properties keys present
+            if params.get("type").and_then(|x| x.as_str()).is_none() {
+              if let Some(obj) = params.as_object_mut() {
+                obj.insert("type".to_string(), serde_json::json!("object"));
+              }
+            }
+            if params.get("properties").is_none() {
+              if let Some(obj) = params.as_object_mut() {
+                obj.insert("properties".to_string(), serde_json::json!({}));
+              }
+            }
+            if params.get("additionalProperties").is_none() {
+              if let Some(obj) = params.as_object_mut() {
+                obj.insert("additionalProperties".to_string(), serde_json::json!(true));
+              }
+            }
             let fn_name = sanitize_fn_name(&format!("mcp__{}__{}", server_id, name));
+            let inputs_summary = summarize_input_schema(&params);
+            let desc_aug = if desc.is_empty() {
+              if inputs_summary.is_empty() {
+                format!("MCP tool '{}' from server '{}'.", name, server_id)
+              } else {
+                format!("MCP tool '{}' from server '{}'. Inputs: {}", name, server_id, inputs_summary)
+              }
+            } else {
+              if inputs_summary.is_empty() {
+                format!("{} (server: {})", desc, server_id)
+              } else {
+                format!("{} (server: {}) Inputs: {}", desc, server_id, inputs_summary)
+              }
+            };
             out.push(serde_json::json!({
               "type": "function",
               "function": {
                 "name": fn_name,
-                "description": if desc.is_empty() { format!("MCP tool '{}' from server '{}'.", name, server_id) } else { format!("{} (server: {})", desc, server_id) },
+                "description": desc_aug,
                 "parameters": params
               }
             }));
@@ -1692,7 +1757,7 @@ async fn build_openai_tools_from_mcp() -> Vec<serde_json::Value> {
 }
 
 #[tauri::command]
-async fn chat_complete(messages: Vec<ChatMessage>) -> Result<String, String> {
+async fn chat_complete(app: tauri::AppHandle, messages: Vec<ChatMessage>) -> Result<String, String> {
   let key = get_api_key_from_settings_or_env()?;
   let model = get_model_from_settings_or_env();
   let temp = get_temperature_from_settings_or_env();
@@ -1733,7 +1798,14 @@ async fn chat_complete(messages: Vec<ChatMessage>) -> Result<String, String> {
   let tools = build_openai_tools_from_mcp().await;
 
   let client = reqwest::Client::new();
-  let mut msgs_for_oai = norm_msgs.clone();
+  // Prepend a short system directive to improve first-call argument completeness
+  let sys_tool_guidance = serde_json::json!({
+    "role": "system",
+    "content": "You can use MCP tools. When you call a tool, ALWAYS provide all required parameters per its JSON Schema, with correct types. Do not call tools with empty arguments."
+  });
+  let mut msgs_for_oai: Vec<serde_json::Value> = Vec::new();
+  msgs_for_oai.push(sys_tool_guidance);
+  msgs_for_oai.extend(norm_msgs.clone());
   let mut final_text: Option<String> = None;
 
   // Iterate tool-calls up to a reasonable limit
@@ -1791,6 +1863,14 @@ async fn chat_complete(messages: Vec<ChatMessage>) -> Result<String, String> {
 
         let mut tool_result_text = String::new();
         if let Some((server_id, tool_name)) = parse_mcp_fn_call_name(&fname) {
+          // Emit tool-call event for UI visibility
+          let _ = app.emit("chat:tool-call", serde_json::json!({
+            "id": id,
+            "function": fname,
+            "serverId": server_id,
+            "tool": tool_name,
+            "args": fargs_val.clone()
+          }));
           // Call MCP tool directly
           let svc_opt = {
             let map2 = MCP_CLIENTS.lock().await;
@@ -1801,6 +1881,14 @@ async fn chat_complete(messages: Vec<ChatMessage>) -> Result<String, String> {
             match svc.call_tool(CallToolRequestParam { name: tool_name.clone().into(), arguments: arg_map_opt }).await {
               Ok(res) => {
                 tool_result_text = serde_json::to_string(&serde_json::json!({ "serverId": server_id, "tool": tool_name, "result": res })).unwrap_or_else(|_| "{}".to_string());
+                let _ = app.emit("chat:tool-result", serde_json::json!({
+                  "id": id,
+                  "function": fname,
+                  "serverId": server_id,
+                  "tool": tool_name,
+                  "ok": true,
+                  "result": res
+                }));
               }
               Err(e) => {
                 tool_result_text = serde_json::json!({
@@ -1808,13 +1896,35 @@ async fn chat_complete(messages: Vec<ChatMessage>) -> Result<String, String> {
                   "tool": tool_name,
                   "error": format!("call_tool failed: {}", e)
                 }).to_string();
+                let _ = app.emit("chat:tool-result", serde_json::json!({
+                  "id": id,
+                  "function": fname,
+                  "serverId": server_id,
+                  "tool": tool_name,
+                  "ok": false,
+                  "error": format!("call_tool failed: {}", e)
+                }));
               }
             }
           } else {
             tool_result_text = serde_json::json!({ "error": format!("MCP server not connected: {}", server_id) }).to_string();
+            let _ = app.emit("chat:tool-result", serde_json::json!({
+              "id": id,
+              "function": fname,
+              "serverId": server_id,
+              "tool": tool_name,
+              "ok": false,
+              "error": format!("MCP server not connected: {}", server_id)
+            }));
           }
         } else {
           tool_result_text = serde_json::json!({ "error": format!("Unsupported tool function: {}", fname) }).to_string();
+          let _ = app.emit("chat:tool-result", serde_json::json!({
+            "id": id,
+            "function": fname,
+            "ok": false,
+            "error": format!("Unsupported tool function: {}", fname)
+          }));
         }
 
         // Append tool result message

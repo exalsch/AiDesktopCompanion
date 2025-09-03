@@ -9,7 +9,7 @@ import PromptComposer from './components/PromptComposer.vue'
 import TTSPanel from './components/TTSPanel.vue'
 import STTPanel from './components/STTPanel.vue'
 import LoadingDots from './components/LoadingDots.vue'
-import conversation, { appendMessage, getPersistState, setPersistState, clearAllConversations, newConversation } from './state/conversation'
+import conversation, { appendMessage, getPersistState, setPersistState, clearAllConversations, newConversation, updateMessage } from './state/conversation'
 import { onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
@@ -233,6 +233,65 @@ onMounted(async () => {
       if (s) s.error = p.message || 'Unknown error'
       showToast(`MCP error: ${p.message || 'Unknown error'}`, 'error')
     }); unsubs.push(u9)
+
+    // Tool call lifecycle events from chat_complete()
+    const u11 = await listen<any>('chat:tool-call', (e) => {
+      try {
+        const p: any = e?.payload || {}
+        const id: string = typeof p.id === 'string' ? p.id : ''
+        const mid = id ? `tool_${id}` : undefined
+        const patch = {
+          role: 'tool' as const,
+          type: 'tool' as const,
+          tool: {
+            id,
+            function: typeof p.function === 'string' ? p.function : undefined,
+            serverId: typeof p.serverId === 'string' ? p.serverId : undefined,
+            tool: typeof p.tool === 'string' ? p.tool : undefined,
+            args: p.args,
+            status: 'started' as const,
+          }
+        }
+        if (mid) {
+          const updated = updateMessage(mid, patch as any)
+          if (!updated) {
+            appendMessage({ id: mid, ...patch })
+          }
+        } else {
+          appendMessage(patch as any)
+        }
+      } catch (err) {
+        console.warn('[chat] tool-call event handling failed', err)
+      }
+    }); unsubs.push(u11)
+
+    const u12 = await listen<any>('chat:tool-result', (e) => {
+      try {
+        const p: any = e?.payload || {}
+        const id: string = typeof p.id === 'string' ? p.id : ''
+        const mid = id ? `tool_${id}` : ''
+        const patch = {
+          role: 'tool' as const,
+          type: 'tool' as const,
+          tool: {
+            id,
+            function: typeof p.function === 'string' ? p.function : undefined,
+            serverId: typeof p.serverId === 'string' ? p.serverId : undefined,
+            tool: typeof p.tool === 'string' ? p.tool : undefined,
+            ok: p.ok === true,
+            result: (p.ok === true) ? p.result : undefined,
+            error: (p.ok === false && typeof p.error === 'string') ? p.error : (typeof p.error === 'string' ? p.error : undefined),
+            status: 'finished' as const,
+          }
+        }
+        const updated = mid ? updateMessage(mid, patch as any) : null
+        if (!updated) {
+          appendMessage({ id: mid || undefined, ...patch })
+        }
+      } catch (err) {
+        console.warn('[chat] tool-result event handling failed', err)
+      }
+    }); unsubs.push(u12)
   } catch (e) {
     console.warn('[mcp] event listen failed', e)
   }
@@ -265,6 +324,7 @@ const settings = reactive({
   openai_chat_model: 'gpt-4o-mini',
   temperature: 1.0 as number,
   persist_conversations: false as boolean,
+  hide_tool_calls_in_chat: false as boolean,
   ui_style: 'sidebar' as 'sidebar' | 'tabs' | 'light',
   // Global MCP auto-connect toggle
   auto_connect: false as boolean,
@@ -282,6 +342,7 @@ async function loadSettings() {
     if (typeof v.openai_chat_model === 'string' && v.openai_chat_model.trim()) settings.openai_chat_model = v.openai_chat_model
     if (typeof v.temperature === 'number') settings.temperature = v.temperature
     if (typeof v.persist_conversations === 'boolean') settings.persist_conversations = v.persist_conversations
+    if (typeof (v as any).hide_tool_calls_in_chat === 'boolean') settings.hide_tool_calls_in_chat = (v as any).hide_tool_calls_in_chat
     if (v.ui_style === 'tabs' || v.ui_style === 'sidebar' || v.ui_style === 'light') settings.ui_style = v.ui_style
     if (typeof (v as any).auto_connect === 'boolean') settings.auto_connect = (v as any).auto_connect
     // Load MCP servers and derive UI fields
@@ -859,7 +920,7 @@ watch(() => settings.ui_style, (v) => {
             <template v-else>
               <div class="prompt-layout">
                 <div class="convo-wrap">
-                  <ConversationView :messages="conversation.currentConversation.messages" />
+                  <ConversationView :messages="conversation.currentConversation.messages" :hide-tool-details="settings.hide_tool_calls_in_chat" />
                 </div>
                 <PromptComposer ref="composerRef" v-model="composerInput" @busy="busy.prompt = $event" />
               </div>
@@ -925,6 +986,9 @@ watch(() => settings.ui_style, (v) => {
 
                 <div class="settings-row">
                   <label class="checkbox"><input type="checkbox" v-model="settings.persist_conversations"/> Persist conversations (OFF by default)</label>
+                </div>
+                <div class="settings-row">
+                  <label class="checkbox"><input type="checkbox" v-model="settings.hide_tool_calls_in_chat"/> Hide tool call details in chat</label>
                 </div>
                 <div class="settings-hint">Privacy-first: history is not saved unless enabled. When enabled, conversation history is saved locally.</div>
 
@@ -1141,7 +1205,7 @@ watch(() => settings.ui_style, (v) => {
           <template v-else>
             <div class="prompt-layout">
               <div class="convo-wrap">
-                <ConversationView :messages="conversation.currentConversation.messages" />
+                <ConversationView :messages="conversation.currentConversation.messages" :hide-tool-details="settings.hide_tool_calls_in_chat" />
               </div>
               <PromptComposer v-model="composerInput" @busy="busy.prompt = $event" />
             </div>
@@ -1207,6 +1271,9 @@ watch(() => settings.ui_style, (v) => {
 
               <div class="settings-row">
                 <label class="checkbox"><input type="checkbox" v-model="settings.persist_conversations"/> Persist conversations (OFF by default)</label>
+              </div>
+              <div class="settings-row">
+                <label class="checkbox"><input type="checkbox" v-model="settings.hide_tool_calls_in_chat"/> Hide tool call details in chat</label>
               </div>
               <div class="settings-hint">Privacy-first: history is not saved unless enabled. When enabled, conversation history is saved locally.</div>
 

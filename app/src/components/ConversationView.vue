@@ -7,6 +7,7 @@ import { newConversation } from '../state/conversation'
 
 const props = defineProps<{
   messages: Message[]
+  hideToolDetails?: boolean
 }>()
 
 const listRef = ref<HTMLElement | null>(null)
@@ -54,7 +55,7 @@ onMounted(async () => {
 
 
     <div ref="listRef" class="list convo-wrap">
-      <MessageItem v-for="m in messages" :key="m.id" :message="m" @image-click="onImageClick" />
+      <MessageItem v-for="m in messages" :key="m.id" :message="m" :hide-tool-details="props.hideToolDetails" @image-click="onImageClick" />
     </div>
   </div>
   <div class="mcp-hint">‼️ Select tools (MCP) to be used — placeholder UI</div>

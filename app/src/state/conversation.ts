@@ -1,7 +1,7 @@
 import { reactive } from 'vue'
 
-export type Role = 'user' | 'assistant' | 'system'
-export type MessageType = 'text' | 'image'
+export type Role = 'user' | 'assistant' | 'system' | 'tool'
+export type MessageType = 'text' | 'image' | 'tool'
 
 export interface ImageRef {
   path: string
@@ -14,6 +14,18 @@ export interface Message {
   type: MessageType
   text?: string
   images?: ImageRef[]
+  // Structured tool call metadata (only for type === 'tool' or role === 'tool')
+  tool?: {
+    id?: string
+    function?: string
+    serverId?: string
+    tool?: string
+    args?: any
+    ok?: boolean
+    result?: any
+    error?: string
+    status?: 'started' | 'finished'
+  }
   createdAt: number
 }
 
@@ -72,12 +84,34 @@ export function appendMessage(
     type: msg.type,
     text: msg.text,
     images: msg.images,
+    tool: msg.tool,
   }
   state.currentConversation.messages.push(m)
   // bump last updated on this conversation
   const t = m.createdAt || Date.now()
   state.currentConversation.updatedAt = Math.max(state.currentConversation.updatedAt || 0, t)
   return m
+}
+
+/**
+ * Update a message in-place by id. Returns the updated message or null if not found.
+ */
+export function updateMessage(id: string, patch: Partial<Message>): Message | null {
+  const list = state.currentConversation.messages
+  const idx = list.findIndex(m => m.id === id)
+  if (idx === -1) return null
+  const cur = list[idx]
+  const next: Message = {
+    ...cur,
+    ...patch,
+    // Merge nested tool object safely
+    tool: (patch.tool || cur.tool) ? { ...(cur.tool || {}), ...(patch.tool || {}) } : undefined,
+  }
+  // Assign to preserve reactivity
+  list[idx] = next
+  // bump updatedAt
+  state.currentConversation.updatedAt = Math.max(state.currentConversation.updatedAt || 0, Date.now())
+  return next
 }
 
 export default state
@@ -106,6 +140,17 @@ export function getPersistState(): PersistedState {
         type: m.type,
         text: m.text,
         images: m.images ? m.images.map((i) => ({ path: i.path, src: i.src })) : undefined,
+        tool: m.tool ? {
+          id: m.tool.id,
+          function: m.tool.function,
+          serverId: m.tool.serverId,
+          tool: m.tool.tool,
+          args: m.tool.args,
+          ok: m.tool.ok,
+          result: m.tool.result,
+          error: m.tool.error,
+          status: m.tool.status,
+        } : undefined,
       })),
     })),
     currentId: state.currentConversation.id,
@@ -128,8 +173,8 @@ export function setPersistState(v: any): boolean {
       if (!m || typeof m !== 'object') continue
       if (typeof m.id !== 'string') continue
       if (typeof m.createdAt !== 'number') continue
-      if (m.role !== 'user' && m.role !== 'assistant' && m.role !== 'system') continue
-      if (m.type !== 'text' && m.type !== 'image') continue
+      if (m.role !== 'user' && m.role !== 'assistant' && m.role !== 'system' && m.role !== 'tool') continue
+      if (m.type !== 'text' && m.type !== 'image' && m.type !== 'tool') continue
       const msg: Message = {
         id: m.id,
         createdAt: m.createdAt,
@@ -140,6 +185,19 @@ export function setPersistState(v: any): boolean {
           ? m.images
               .filter((i: any) => i && typeof i.path === 'string' && typeof i.src === 'string')
               .map((i: any) => ({ path: i.path, src: i.src }))
+          : undefined,
+        tool: (m.type === 'tool' || m.role === 'tool') && m.tool && typeof m.tool === 'object'
+          ? {
+              id: typeof (m.tool as any).id === 'string' ? (m.tool as any).id : undefined,
+              function: typeof (m.tool as any).function === 'string' ? (m.tool as any).function : undefined,
+              serverId: typeof (m.tool as any).serverId === 'string' ? (m.tool as any).serverId : undefined,
+              tool: typeof (m.tool as any).tool === 'string' ? (m.tool as any).tool : undefined,
+              args: (m.tool as any).args,
+              ok: typeof (m.tool as any).ok === 'boolean' ? (m.tool as any).ok : undefined,
+              result: (m.tool as any).result,
+              error: typeof (m.tool as any).error === 'string' ? (m.tool as any).error : undefined,
+              status: ((m.tool as any).status === 'started' || (m.tool as any).status === 'finished') ? (m.tool as any).status : undefined,
+            }
           : undefined,
       }
       safeMessages.push(msg)
@@ -168,8 +226,8 @@ export function setPersistState(v: any): boolean {
       if (!m || typeof m !== 'object') continue
       if (typeof m.id !== 'string') continue
       if (typeof m.createdAt !== 'number') continue
-      if (m.role !== 'user' && m.role !== 'assistant' && m.role !== 'system') continue
-      if (m.type !== 'text' && m.type !== 'image') continue
+      if (m.role !== 'user' && m.role !== 'assistant' && m.role !== 'system' && m.role !== 'tool') continue
+      if (m.type !== 'text' && m.type !== 'image' && m.type !== 'tool') continue
       const msg: Message = {
         id: m.id,
         createdAt: m.createdAt,
@@ -180,6 +238,19 @@ export function setPersistState(v: any): boolean {
           ? m.images
               .filter((i: any) => i && typeof i.path === 'string' && typeof i.src === 'string')
               .map((i: any) => ({ path: i.path, src: i.src }))
+          : undefined,
+        tool: (m.type === 'tool' || m.role === 'tool') && m.tool && typeof m.tool === 'object'
+          ? {
+              id: typeof (m.tool as any).id === 'string' ? (m.tool as any).id : undefined,
+              function: typeof (m.tool as any).function === 'string' ? (m.tool as any).function : undefined,
+              serverId: typeof (m.tool as any).serverId === 'string' ? (m.tool as any).serverId : undefined,
+              tool: typeof (m.tool as any).tool === 'string' ? (m.tool as any).tool : undefined,
+              args: (m.tool as any).args,
+              ok: typeof (m.tool as any).ok === 'boolean' ? (m.tool as any).ok : undefined,
+              result: (m.tool as any).result,
+              error: typeof (m.tool as any).error === 'string' ? (m.tool as any).error : undefined,
+              status: ((m.tool as any).status === 'started' || (m.tool as any).status === 'finished') ? (m.tool as any).status : undefined,
+            }
           : undefined,
       }
       safeMessages.push(msg)
