@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import QuickActions from './QuickActions.vue'
 import PromptPanel from './components/PromptPanel.vue'
-import QuickPromptsEditor from './components/QuickPromptsEditor.vue'
 import CaptureOverlay from './components/CaptureOverlay.vue'
 import ConversationView from './components/ConversationView.vue'
 import ConversationHistory from './components/ConversationHistory.vue'
@@ -9,6 +8,9 @@ import PromptComposer from './components/PromptComposer.vue'
 import TTSPanel from './components/TTSPanel.vue'
 import STTPanel from './components/STTPanel.vue'
 import LoadingDots from './components/LoadingDots.vue'
+import SettingsGeneral from './components/settings/SettingsGeneral.vue'
+import SettingsMcpServers from './components/settings/SettingsMcpServers.vue'
+import SettingsQuickPrompts from './components/settings/SettingsQuickPrompts.vue'
 import conversation, { appendMessage, getPersistState, setPersistState, clearAllConversations, newConversation, updateMessage } from './state/conversation'
 import { onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { listen } from '@tauri-apps/api/event'
@@ -53,8 +55,7 @@ const composerInput = ref('')
 const ttsRef = ref<InstanceType<typeof TTSPanel> | null>(null)
 // Ref to PromptComposer to allow programmatic send
 const composerRef = ref<InstanceType<typeof PromptComposer> | null>(null)
-// Ref to Quick Prompts Editor to trigger save/reset from parent
-const quickPromptsRef = ref<InstanceType<typeof QuickPromptsEditor> | null>(null)
+// (Quick Prompts editor now encapsulated in SettingsQuickPrompts)
 
 // Simple toast state
 const toast = reactive({
@@ -315,29 +316,7 @@ onBeforeUnmount(() => {
   try { document.body.classList.remove('qa-window') } catch {}
 })
 
-async function generateDefaults() {
-  try {
-    const path = await invoke<string>('generate_default_quick_prompts')
-    showToast(`Default quick_prompts.json written:\n${path}`, 'success')
-  } catch (err) {
-    const msg = typeof err === 'string' ? err : (err && (err as any).message) ? (err as any).message : 'Unknown error'
-    showToast(`Failed to write defaults: ${msg}`, 'error')
-  }
-}
-
-async function saveQuickPrompts() {
-  try {
-    const c = quickPromptsRef.value as any
-    if (c && typeof c.save === 'function') {
-      await c.save()
-    } else {
-      showToast('Quick Prompts editor not ready', 'error')
-    }
-  } catch (e) {
-    const msg = (e && (e as any).message) ? (e as any).message : 'Unknown error'
-    showToast(`Failed to save quick prompts: ${msg}`, 'error')
-  }
-}
+// Removed legacy Quick Prompts helpers (now handled inside SettingsQuickPrompts)
 
 // ---------------------------
 // Prompt Settings state & actions
@@ -356,7 +335,6 @@ const settings = reactive({
   mcp_servers: [] as Array<any>,
 })
 const models = reactive<{ list: string[]; loading: boolean; error: string | null }>({ list: [], loading: false, error: null })
-const showApiKey = ref(false)
 
 async function loadSettings() {
   const v = await invoke<any>('get_settings')
@@ -893,7 +871,7 @@ watch(() => settings.ui_style, (v) => {
     />
 
     <!-- Sidebar layout (dark/light) -->
-    <div v-if="settings.ui_style === 'sidebar-dark' || settings.ui_style === 'sidebar-light' || settings.ui_style === 'sidebar'" class="shell">
+    <div v-if="settings.ui_style === 'sidebar-dark' || settings.ui_style === 'sidebar-light'" class="shell">
       <aside class="sidebar" :class="{ collapsed: !layout.sidebarOpen }">
         <button class="burger" title="Toggle menu" @click="layout.sidebarOpen = !layout.sidebarOpen">☰</button>
         <template v-for="s in ui.sections" :key="s">
@@ -1055,190 +1033,34 @@ watch(() => settings.ui_style, (v) => {
           <div v-else-if="ui.activeSection === 'Settings'" class="section">
             <div class="settings">
               <!-- Settings subview: General -->
-              <div v-if="ui.settingsSubview === 'General'" class="settings-section">
-                <div class="settings-title">Prompt Settings</div>
-                <div class="actions"><button class="btn" @click="saveSettings">Save Settings</button></div>
-                <div class="settings-row col">
-                  <label class="label">OpenAI API Key</label>
-                  <div class="row-inline">
-                    <input
-                      :type="showApiKey ? 'text' : 'password'"
-                      v-model="settings.openai_api_key"
-                      class="input"
-                      placeholder="sk-..."
-                      autocomplete="off"
-                      spellcheck="false"
-                    />
-                    <button class="btn ghost" @click="showApiKey = !showApiKey">{{ showApiKey ? 'Hide' : 'Show' }}</button>
-                  </div>
-                </div>
-
-                <div class="settings-row col">
-                  <label class="label">Model</label>
-                  <div class="row-inline">
-                    <select v-model="settings.openai_chat_model" class="input">
-                      <option v-if="!models.list.includes(settings.openai_chat_model)" :value="settings.openai_chat_model">{{ settings.openai_chat_model }} (current)</option>
-                      <option v-for="m in models.list" :key="m" :value="m">{{ m }}</option>
-                    </select>
-                    <button class="btn" :disabled="models.loading" @click="refreshModels">{{ models.loading ? 'Fetching…' : 'Fetch Models' }}</button>
-                  </div>
-                  <div v-if="models.error" class="settings-hint error">{{ models.error }}</div>
-                </div>
-
-                <div class="settings-row col">
-                  <label class="label">Temperature: {{ settings.temperature.toFixed(2) }}</label>
-                  <input type="range" min="0" max="2" step="0.05" v-model.number="settings.temperature" />
-                  <div class="settings-hint">Lower = deterministic, Higher = creative. Default 1.0</div>
-                </div>
-                <div class="settings-row">
-                  <label class="checkbox"><input type="checkbox" v-model="settings.persist_conversations"/> Persist conversations</label>
-                </div>
-                <div class="settings-row">
-                  <label class="checkbox"><input type="checkbox" v-model="settings.hide_tool_calls_in_chat"/> Hide tool call details in chat</label>
-                  <button class="btn danger" @click="onClearConversations">Clear All Conversations</button>
-                </div>
-                <div class="settings-hint">When enabled, conversation history is saved locally.</div>
-                <div class="settings-row col">
-                  <div class="settings-title">UI Style</div>
-                  <select v-model="settings.ui_style" class="input">
-                    <option value="sidebar-dark">Sidebar Dark (default)</option>
-                    <option value="sidebar-light">Sidebar Light</option>
-                    <option value="tabs">Top Tabs</option>
-                  </select>
-                </div>
-              </div>
+              <SettingsGeneral
+                v-if="ui.settingsSubview === 'General'"
+                :settings="settings"
+                :models="models"
+                :onSave="saveSettings"
+                :onRefreshModels="refreshModels"
+                :onClearConversations="onClearConversations"
+              />
 
               <!-- Settings subview: Quick Prompts -->
-              <div v-else-if="ui.settingsSubview === 'Quick Prompts'" class="settings-section">
-                <div class="settings-title">Quick Prompts</div>
-                <div class="settings-hint">Writes defaults to %APPDATA%/AiDesktopCompanion/quick_prompts.json</div>
-                <QuickPromptsEditor ref="quickPromptsRef" :notify="showToast" />
-              </div>
+              <SettingsQuickPrompts v-else-if="ui.settingsSubview === 'Quick Prompts'" :notify="showToast" />
 
               <!-- Settings subview: MCP Servers -->
-              <div v-else class="settings-section">
-                <div class="settings-title">MCP Servers</div>
-                <div class="settings-hint">Configure MCP servers. Supports stdio and http transports.</div>
-                <div class="settings-row">
-                  <label class="checkbox"><input type="checkbox" v-model="settings.auto_connect"/> Auto-connect on startup</label>
-                </div>
-                <div class="settings-row">
-                  <button class="btn" @click="addMcpServer">Add Server</button>
-                  <button class="btn" @click="saveSettings">Save MCP Servers</button>
-                </div>
-
-                <div v-if="settings.mcp_servers.length === 0" class="settings-hint">No servers configured.</div>
-                <div v-for="(s, i) in settings.mcp_servers" :key="s.id || i" class="settings-section" style="margin-top:8px;">
-                  <div class="settings-row">
-                    <label class="label" style="width:100px;">Name</label>
-                    <input class="input" v-model="s.id" placeholder="my-server" />
-                    <span class="settings-hint">Used as key for events/commands.</span>
-                  </div>
-                  <div class="settings-row">
-                    <label class="label" style="width:100px;">Transport</label>
-                    <select class="input" v-model="s.transport">
-                      <option value="stdio">stdio</option>
-                      <option value="http">http</option>
-                    </select>
-                  </div>
-                  <!-- URL for HTTP -->
-                  <div class="settings-row" v-if="s.transport === 'http'">
-                    <label class="label" style="width:100px;">URL</label>
-                    <input class="input" v-model="s.command" placeholder="https://server.example.com/mcp" />
-                  </div>
-                  <!-- stdio-only fields -->
-                  <div class="settings-row" v-if="s.transport === 'stdio'">
-                    <label class="label" style="width:100px;">Command</label>
-                    <input class="input" v-model="s.command" placeholder="uv / node / python / server.exe" />
-                  </div>
-                  <div class="settings-row" v-if="s.transport === 'stdio'">
-                    <label class="label" style="width:100px;">Args</label>
-                    <input class="input" v-model="s.argsText" placeholder="--flag value 'quoted arg'" />
-                  </div>
-                  <div class="settings-row" v-if="s.transport === 'stdio'">
-                    <label class="label" style="width:100px;">CWD</label>
-                    <input class="input" v-model="s.cwd" placeholder="c:\\path\\to\\server" />
-                  </div>
-                  <div class="settings-row col" v-if="s.transport === 'stdio'">
-                    <label class="label">Env (JSON object or KEY=VALUE lines)</label>
-                    <textarea
-                      class="input"
-                      rows="2"
-                      v-model="s.envJson"
-                      spellcheck="false"
-                      placeholder='{"LOG_LEVEL":"info"}'
-                      @input="validateEnvJsonInput(s)"
-                    ></textarea>
-                    <div v-if="s.envError" class="settings-hint error">{{ s.envError }}</div>
-                  </div>
-                  <div class="settings-row">
-                    <label class="checkbox"><input type="checkbox" v-model="s.auto_connect"/> Auto-connect this server</label>
-                  </div>
-                  <div class="settings-row" style="justify-content: space-between;">
-                    <div>
-                      <span class="label">Status:</span>
-                      <span style="margin-left:6px;">{{ s.status }}</span>
-                      <span v-if="s.error" class="settings-hint error" style="margin-left:10px;">{{ s.error }}</span>
-                    </div>
-                    <div style="display:flex; gap:8px;">
-                      <button class="btn" :disabled="s.connecting" @click="connectServer(s)">{{ s.connecting ? 'Connecting…' : 'Connect' }}</button>
-                      <button class="btn" @click="disconnectServer(s)">Disconnect</button>
-                      <button class="btn" @click="pingServer(s)">Ping</button>
-                      <button class="btn" @click="listTools(s)">List Tools</button>
-                      <button class="btn danger" @click="removeMcpServer(i)">Remove</button>
-                    </div>
-                  </div>
-                  <!-- Tools panel -->
-                  <div v-if="s.toolsOpen" class="settings-section" style="margin-top:8px;">
-                    <div class="settings-title">Tools</div>
-                    <div class="settings-row">
-                      <label class="label" style="width:100px;">Tool</label>
-                      <select class="input" v-model="s.selectedTool">
-                        <option value="" disabled>Select a tool</option>
-                        <option v-for="t in s.tools" :key="t.name || t.id || t.title" :value="t.name || t.id">{{ t.name || t.id || t.title }}</option>
-                      </select>
-                      <button class="btn" :disabled="!s.selectedTool" @click="callTool(s)">Call Tool</button>
-                    </div>
-                    <div class="settings-hint" v-if="s.selectedTool">
-                      {{ (s.tools.find((t:any) => (t.name||t.id) === s.selectedTool)?.description) || '' }}
-                    </div>
-                    <!-- Dynamic parameter fields from tool schema -->
-                    <div v-if="s.selectedTool" class="settings-row col" style="margin-top:4px;">
-                      <label class="label">Parameters</label>
-                      <div v-if="(selectedToolObj(s)?.inputSchema?.properties) || (selectedToolObj(s)?.input_schema?.properties)" class="settings-hint">
-                        <div v-for="(prop, key) in (selectedToolObj(s)?.inputSchema?.properties || selectedToolObj(s)?.input_schema?.properties)" :key="String(key)" style="margin:2px 0;">
-                          <span class="label" style="min-width:120px; display:inline-block;">{{ key }}</span>
-                          <span class="settings-hint">{{ (prop as any)?.type || '' }}</span>
-                          <span class="settings-hint" v-if="(prop as any)?.description"> — {{ (prop as any).description }}</span>
-                        </div>
-                      </div>
-                      <div v-else class="settings-hint">No parameter schema provided.</div>
-                      <div style="margin-top:4px;">
-                        <button class="btn" @click="fillArgsTemplate(s)">Fill args template</button>
-                      </div>
-                    </div>
-                    <div class="settings-row col" style="margin-top:6px;">
-                      <label class="label">Args (JSON object)</label>
-                      <textarea class="input" rows="3" v-model="s.toolArgsJson" spellcheck="false"></textarea>
-                      <div v-if="s.toolArgsError" class="settings-hint error">{{ s.toolArgsError }}</div>
-                    </div>
-                    <div class="settings-row col" style="margin-top:6px;">
-                      <label class="label">Recent Results</label>
-                      <div v-if="!s.toolResults || s.toolResults.length === 0" class="settings-hint">No results yet.</div>
-                      <div v-for="(r, idx) in s.toolResults" :key="idx" class="settings-section" style="margin-top:6px;">
-                        <div class="settings-row" style="justify-content: space-between;">
-                          <div><span class="label">Tool:</span> {{ r.tool }}</div>
-                          <div class="settings-hint">{{ r.at }}</div>
-                        </div>
-                        <div class="settings-row col">
-                          <label class="label">Output</label>
-                          <pre class="input" style="white-space: pre-wrap; overflow:auto;">{{ JSON.stringify(r.result, null, 2) }}</pre>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
+              <SettingsMcpServers
+                v-else
+                :settings="settings"
+                :onAdd="addMcpServer"
+                :onRemove="removeMcpServer"
+                :onSave="saveSettings"
+                :onConnect="connectServer"
+                :onDisconnect="disconnectServer"
+                :onPing="pingServer"
+                :onListTools="listTools"
+                :onFillArgsTemplate="fillArgsTemplate"
+                :onValidateEnvJsonInput="validateEnvJsonInput"
+                :onCallTool="callTool"
+                :selectedToolObj="selectedToolObj"
+              />
             </div>
           </div>
         </div>
@@ -1339,205 +1161,42 @@ watch(() => settings.ui_style, (v) => {
         <div v-else-if="ui.activeSection === 'Settings'" class="section">
           <div class="settings">
             <!-- Settings subview: General -->
-            <div v-if="ui.settingsSubview === 'General'" class="settings-section">
-              <div class="settings-title">Prompt Settings</div>
-              <div class="settings-row col">
-                <label class="label">OpenAI API Key</label>
-                <div class="row-inline">
-                  <input
-                    :type="showApiKey ? 'text' : 'password'"
-                    v-model="settings.openai_api_key"
-                    class="input"
-                    placeholder="sk-..."
-                    autocomplete="off"
-                    spellcheck="false"
-                  />
-                  <button class="btn ghost" @click="showApiKey = !showApiKey">{{ showApiKey ? 'Hide' : 'Show' }}</button>
-                </div>
-              </div>
-
-              <div class="settings-row col">
-                <label class="label">Model</label>
-                <div class="row-inline">
-                  <select v-model="settings.openai_chat_model" class="input">
-                    <option v-if="!models.list.includes(settings.openai_chat_model)" :value="settings.openai_chat_model">{{ settings.openai_chat_model }} (current)</option>
-                    <option v-for="m in models.list" :key="m" :value="m">{{ m }}</option>
-                  </select>
-                  <button class="btn" :disabled="models.loading" @click="refreshModels">{{ models.loading ? 'Fetching…' : 'Fetch Models' }}</button>
-                </div>
-                <div v-if="models.error" class="settings-hint error">{{ models.error }}</div>
-              </div>
-
-              <div class="settings-row col">
-                <label class="label">Temperature: {{ settings.temperature.toFixed(2) }}</label>
-                <input type="range" min="0" max="2" step="0.05" v-model.number="settings.temperature" />
-                <div class="settings-hint">Lower = deterministic, Higher = creative. Default 1.0</div>
-              </div>
-
-              <div class="settings-row col">
-                <label class="label">UI Style</label>
-                <select v-model="settings.ui_style" class="input">
-                  <option value="sidebar-dark">Sidebar Dark (default)</option>
-                  <option value="sidebar-light">Sidebar Light</option>
-                  <option value="tabs">Top Tabs</option>
-                </select>
-                <div class="settings-hint">Switch between Sidebar Dark, Sidebar Light, or Top Tabs.</div>
-              </div>
-
-              <div class="settings-row">
-                <label class="checkbox"><input type="checkbox" v-model="settings.persist_conversations"/> Persist conversations (OFF by default)</label>
-              </div>
-              <div class="settings-row">
-                <label class="checkbox"><input type="checkbox" v-model="settings.hide_tool_calls_in_chat"/> Hide tool call details in chat</label>
-              </div>
-              <div class="settings-hint">Privacy-first: history is not saved unless enabled. When enabled, conversation history is saved locally.</div>
-
-              <div class="settings-row">
-                <button class="btn" @click="saveSettings">Save Settings</button>
-                <button class="btn danger" @click="onClearConversations">Clear All Conversations</button>
-              </div>
-            </div>
+            <SettingsGeneral
+              v-if="ui.settingsSubview === 'General'"
+              :settings="settings"
+              :models="models"
+              :onSave="saveSettings"
+              :onRefreshModels="refreshModels"
+              :onClearConversations="onClearConversations"
+            />
 
             <!-- Settings subview: Quick Prompts -->
-            <div v-else-if="ui.settingsSubview === 'Quick Prompts'" class="settings-section">
-              <div class="settings-title">Quick Prompts</div>
-              <div class="settings-hint">Writes defaults to %APPDATA%/AiDesktopCompanion/quick_prompts.json</div>
-              <QuickPromptsEditor ref="quickPromptsRef" :notify="showToast" />
-            </div>
+            <SettingsQuickPrompts v-else-if="ui.settingsSubview === 'Quick Prompts'" :notify="showToast" />
 
             <!-- Settings subview: MCP Servers -->
-            <div v-else class="settings-section">
-              <div class="settings-title">MCP Servers</div>
-              <div class="settings-hint">Configure MCP servers. Supports stdio and http transports.</div>
-              <div class="settings-row">
-                <label class="checkbox"><input type="checkbox" v-model="settings.auto_connect"/> Auto-connect on startup</label>
-              </div>
-              <div class="settings-row">
-                <button class="btn" @click="addMcpServer">Add Server</button>
-                <button class="btn" @click="saveSettings">Save MCP Servers</button>
-              </div>
-
-              <div v-if="settings.mcp_servers.length === 0" class="settings-hint">No servers configured.</div>
-              <div v-for="(s, i) in settings.mcp_servers" :key="s.id || i" class="settings-section" style="margin-top:8px;">
-                <div class="settings-row">
-                  <label class="label" style="width:100px;">Name</label>
-                  <input class="input" v-model="s.id" placeholder="my-server" />
-                  <span class="settings-hint">Used as key for events/commands.</span>
-                </div>
-                <div class="settings-row">
-                  <label class="label" style="width:100px;">Transport</label>
-                  <select class="input" v-model="s.transport">
-                    <option value="stdio">stdio</option>
-                    <option value="http">http</option>
-                  </select>
-                </div>
-                <!-- URL for HTTP -->
-                <div class="settings-row" v-if="s.transport === 'http'">
-                  <label class="label" style="width:100px;">URL</label>
-                  <input class="input" v-model="s.command" placeholder="https://server.example.com/mcp" />
-                </div>
-                <!-- stdio-only fields -->
-                <div class="settings-row" v-if="s.transport === 'stdio'">
-                  <label class="label" style="width:100px;">Command</label>
-                  <input class="input" v-model="s.command" placeholder="uv / node / python / server.exe" />
-                </div>
-                <div class="settings-row" v-if="s.transport === 'stdio'">
-                  <label class="label" style="width:100px;">Args</label>
-                  <input class="input" v-model="s.argsText" placeholder="--flag value 'quoted arg'" />
-                </div>
-                <div class="settings-row" v-if="s.transport === 'stdio'">
-                  <label class="label" style="width:100px;">CWD</label>
-                  <input class="input" v-model="s.cwd" placeholder="c:\\path\\to\\server" />
-                </div>
-                <div class="settings-row col" v-if="s.transport === 'stdio'">
-                  <label class="label">Env (JSON object or KEY=VALUE lines)</label>
-                  <textarea
-                    class="input"
-                    rows="2"
-                    v-model="s.envJson"
-                    spellcheck="false"
-                    placeholder='{"LOG_LEVEL":"info"}'
-                    @input="validateEnvJsonInput(s)"
-                  ></textarea>
-                  <div v-if="s.envError" class="settings-hint error">{{ s.envError }}</div>
-                </div>
-                <div class="settings-row">
-                  <label class="checkbox"><input type="checkbox" v-model="s.auto_connect"/> Auto-connect this server</label>
-                </div>
-                <div class="settings-row" style="justify-content: space-between;">
-                  <div>
-                    <span class="label">Status:</span>
-                    <span style="margin-left:6px;">{{ s.status }}</span>
-                    <span v-if="s.error" class="settings-hint error" style="margin-left:10px;">{{ s.error }}</span>
-                  </div>
-                  <div style="display:flex; gap:8px;">
-                    <button class="btn" :disabled="s.connecting" @click="connectServer(s)">{{ s.connecting ? 'Connecting…' : 'Connect' }}</button>
-                    <button class="btn" @click="disconnectServer(s)">Disconnect</button>
-                    <button class="btn" @click="pingServer(s)">Ping</button>
-                    <button class="btn" @click="listTools(s)">List Tools</button>
-                    <button class="btn danger" @click="removeMcpServer(i)">Remove</button>
-                  </div>
-                </div>
-                <!-- Tools panel (tabs layout) -->
-                <div v-if="s.toolsOpen" class="settings-section" style="margin-top:8px;">
-                  <div class="settings-title">Tools</div>
-                  <div class="settings-row">
-                    <label class="label" style="width:100px;">Tool</label>
-                    <select class="input" v-model="s.selectedTool">
-                      <option value="" disabled>Select a tool</option>
-                      <option v-for="t in s.tools" :key="t.name || t.id || t.title" :value="t.name || t.id">{{ t.name || t.id || t.title }}</option>
-                    </select>
-                    <button class="btn" :disabled="!s.selectedTool" @click="callTool(s)">Call Tool</button>
-                  </div>
-                  <div class="settings-hint" v-if="s.selectedTool">
-                    {{ (s.tools.find((t:any) => (t.name||t.id) === s.selectedTool)?.description) || '' }}
-                  </div>
-                  <!-- Dynamic parameter fields from tool schema (tabs layout) -->
-                  <div v-if="s.selectedTool" class="settings-row col" style="margin-top:4px;">
-                    <label class="label">Parameters</label>
-                    <div v-if="(selectedToolObj(s)?.inputSchema?.properties) || (selectedToolObj(s)?.input_schema?.properties)" class="settings-hint">
-                      <div v-for="(prop, key) in (selectedToolObj(s)?.inputSchema?.properties || selectedToolObj(s)?.input_schema?.properties)" :key="String(key)" style="margin:2px 0;">
-                        <span class="label" style="min-width:120px; display:inline-block;">{{ key }}</span>
-                        <span class="settings-hint">{{ (prop as any)?.type || '' }}</span>
-                        <span class="settings-hint" v-if="(prop as any)?.description"> — {{ (prop as any).description }}</span>
-                      </div>
-                    </div>
-                    <div v-else class="settings-hint">No parameter schema provided.</div>
-                    <div style="margin-top:4px;">
-                      <button class="btn" @click="fillArgsTemplate(s)">Fill args template</button>
-                    </div>
-                  </div>
-                  <div class="settings-row col" style="margin-top:6px;">
-                    <label class="label">Args (JSON object)</label>
-                    <textarea class="input" rows="3" v-model="s.toolArgsJson" spellcheck="false"></textarea>
-                    <div v-if="s.toolArgsError" class="settings-hint error">{{ s.toolArgsError }}</div>
-                  </div>
-                  <div class="settings-row col" style="margin-top:6px;">
-                    <label class="label">Recent Results</label>
-                    <div v-if="!s.toolResults || s.toolResults.length === 0" class="settings-hint">No results yet.</div>
-                    <div v-for="(r, idx) in s.toolResults" :key="idx" class="settings-section" style="margin-top:6px;">
-                      <div class="settings-row" style="justify-content: space-between;">
-                        <div><span class="label">Tool:</span> {{ r.tool }}</div>
-                        <div class="settings-hint">{{ r.at }}</div>
-                      </div>
-                      <div class="settings-row col">
-                        <label class="label">Output</label>
-                        <pre class="input" style="white-space: pre-wrap; overflow:auto;">{{ JSON.stringify(r.result, null, 2) }}</pre>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
+            <SettingsMcpServers
+              v-else
+              :settings="settings"
+              :onAdd="addMcpServer"
+              :onRemove="removeMcpServer"
+              :onSave="saveSettings"
+              :onConnect="connectServer"
+              :onDisconnect="disconnectServer"
+              :onPing="pingServer"
+              :onListTools="listTools"
+              :onFillArgsTemplate="fillArgsTemplate"
+              :onValidateEnvJsonInput="validateEnvJsonInput"
+              :onCallTool="callTool"
+              :selectedToolObj="selectedToolObj"
+            />
           </div>
+        </div>
         </div>
       </div>
     </div>
 
     <!-- Toast -->
     <div v-if="toast.visible" class="toast" :class="toast.kind">{{ toast.message }}</div>
-
-  </div>
 
 </template>
 
@@ -1576,6 +1235,22 @@ watch(() => settings.ui_style, (v) => {
 .input { flex: 1; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); }
 .checkbox { display: flex; gap: 8px; align-items: center; }
 .settings-hint.error { color: #f2b8b8; }
+
+/* Ensure styles apply inside child settings components */
+.settings :deep(.settings-section) { border: 1px solid var(--adc-border); border-radius: 10px; padding: 14px; background: var(--adc-surface); }
+.settings :deep(.settings-title) { font-weight: 700; margin-bottom: 8px; }
+.settings :deep(.settings-row) { display: flex; gap: 10px; align-items: center; margin: 8px 0; }
+.settings :deep(.settings-row.col) { flex-direction: column; align-items: flex-start; }
+.settings :deep(.settings-hint) { font-size: 12px; color: var(--adc-fg-muted); margin-top: 6px; }
+.settings :deep(.btn) { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-accent); color: #fff; cursor: pointer; }
+.settings :deep(.btn:hover) { filter: brightness(1.05); }
+.settings :deep(.btn.ghost) { background: transparent; color: var(--adc-fg); border-color: var(--adc-border); }
+.settings :deep(.btn.danger) { background: var(--adc-danger); border-color: var(--adc-border); }
+.settings :deep(.row-inline) { display: flex; gap: 8px; width: 100%; }
+.settings :deep(.label) { font-size: 12px; color: var(--adc-fg-muted); }
+.settings :deep(.input) { flex: 1; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); }
+.settings :deep(.checkbox) { display: flex; gap: 8px; align-items: center; }
+.settings :deep(.settings-hint.error) { color: #f2b8b8; }
 
 .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 10px 14px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); white-space: pre-line; box-shadow: 0 6px 24px rgba(0,0,0,0.3); }
 .toast.success { border-color: #285c2a; background: #1e3b21; }
