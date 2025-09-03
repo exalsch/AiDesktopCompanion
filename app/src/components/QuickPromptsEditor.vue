@@ -69,6 +69,9 @@ async function resetDefaults() {
   }
 }
 
+// Expose methods to parent for external Save/Reset triggers
+defineExpose({ save, resetDefaults, loadPrompts })
+
 onMounted(loadPrompts)
 </script>
 

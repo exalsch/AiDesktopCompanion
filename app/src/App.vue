@@ -37,6 +37,7 @@ const ui = reactive({
   sections: ['Prompt', 'TTS', 'STT', 'Settings'] as const,
   activeSection: 'Prompt' as 'Prompt' | 'TTS' | 'STT' | 'Settings',
   promptSubview: 'Chat' as 'Chat' | 'History',
+  settingsSubview: 'General' as 'General' | 'Quick Prompts' | 'MCP Servers',
 })
 
 // Layout state for sidebar
@@ -52,6 +53,8 @@ const composerInput = ref('')
 const ttsRef = ref<InstanceType<typeof TTSPanel> | null>(null)
 // Ref to PromptComposer to allow programmatic send
 const composerRef = ref<InstanceType<typeof PromptComposer> | null>(null)
+// Ref to Quick Prompts Editor to trigger save/reset from parent
+const quickPromptsRef = ref<InstanceType<typeof QuickPromptsEditor> | null>(null)
 
 // Simple toast state
 const toast = reactive({
@@ -319,6 +322,20 @@ async function generateDefaults() {
   } catch (err) {
     const msg = typeof err === 'string' ? err : (err && (err as any).message) ? (err as any).message : 'Unknown error'
     showToast(`Failed to write defaults: ${msg}`, 'error')
+  }
+}
+
+async function saveQuickPrompts() {
+  try {
+    const c = quickPromptsRef.value as any
+    if (c && typeof c.save === 'function') {
+      await c.save()
+    } else {
+      showToast('Quick Prompts editor not ready', 'error')
+    }
+  } catch (e) {
+    const msg = (e && (e as any).message) ? (e as any).message : 'Unknown error'
+    showToast(`Failed to save quick prompts: ${msg}`, 'error')
   }
 }
 
@@ -944,6 +961,57 @@ watch(() => settings.ui_style, (v) => {
             </svg>
             <span v-if="layout.sidebarOpen">History</span>
           </button>
+          <!-- Sublinks under Settings: submenus -->
+          <button
+            v-if="s === 'Settings'"
+            class="side-subtab"
+            :class="{ active: ui.activeSection === 'Settings' && ui.settingsSubview === 'General' }"
+            @click="ui.activeSection = 'Settings'; ui.settingsSubview = 'General'"
+            title="General Settings"
+          >
+            <!-- Sliders icon for General -->
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="4" y1="21" x2="4" y2="14"/>
+              <line x1="4" y1="10" x2="4" y2="3"/>
+              <line x1="12" y1="21" x2="12" y2="12"/>
+              <line x1="12" y1="8" x2="12" y2="3"/>
+              <line x1="20" y1="21" x2="20" y2="16"/>
+              <line x1="20" y1="12" x2="20" y2="3"/>
+              <line x1="2" y1="14" x2="6" y2="14"/>
+              <line x1="10" y1="8" x2="14" y2="8"/>
+              <line x1="18" y1="16" x2="22" y2="16"/>
+            </svg>
+            <span v-if="layout.sidebarOpen">General</span>
+          </button>
+          <button
+            v-if="s === 'Settings'"
+            class="side-subtab"
+            :class="{ active: ui.activeSection === 'Settings' && ui.settingsSubview === 'Quick Prompts' }"
+            @click="ui.activeSection = 'Settings'; ui.settingsSubview = 'Quick Prompts'"
+            title="Quick Prompts"
+          >
+            <!-- Zap icon for Quick Prompts -->
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+            </svg>
+            <span v-if="layout.sidebarOpen">Quick Prompts</span>
+          </button>
+          <button
+            v-if="s === 'Settings'"
+            class="side-subtab"
+            :class="{ active: ui.activeSection === 'Settings' && ui.settingsSubview === 'MCP Servers' }"
+            @click="ui.activeSection = 'Settings'; ui.settingsSubview = 'MCP Servers'"
+            title="MCP Servers"
+          >
+            <!-- Server icon for MCP Servers -->
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="2" y="2" width="20" height="8" rx="2"/>
+              <rect x="2" y="14" width="20" height="8" rx="2"/>
+              <line x1="6" y1="6" x2="6.01" y2="6"/>
+              <line x1="6" y1="18" x2="6.01" y2="18"/>
+            </svg>
+            <span v-if="layout.sidebarOpen">MCP Servers</span>
+          </button>
         </template>
         <div class="side-spacer"></div>
         <div class="side-status"><LoadingDots v-if="isBusy()" text="Working" /></div>
@@ -986,8 +1054,10 @@ watch(() => settings.ui_style, (v) => {
 
           <div v-else-if="ui.activeSection === 'Settings'" class="section">
             <div class="settings">
-              <div class="settings-section">
+              <!-- Settings subview: General -->
+              <div v-if="ui.settingsSubview === 'General'" class="settings-section">
                 <div class="settings-title">Prompt Settings</div>
+                <div class="actions"><button class="btn" @click="saveSettings">Save Settings</button></div>
                 <div class="settings-row col">
                   <label class="label">OpenAI API Key</label>
                   <div class="row-inline">
@@ -1020,41 +1090,33 @@ watch(() => settings.ui_style, (v) => {
                   <input type="range" min="0" max="2" step="0.05" v-model.number="settings.temperature" />
                   <div class="settings-hint">Lower = deterministic, Higher = creative. Default 1.0</div>
                 </div>
-
+                <div class="settings-row">
+                  <label class="checkbox"><input type="checkbox" v-model="settings.persist_conversations"/> Persist conversations</label>
+                </div>
+                <div class="settings-row">
+                  <label class="checkbox"><input type="checkbox" v-model="settings.hide_tool_calls_in_chat"/> Hide tool call details in chat</label>
+                  <button class="btn danger" @click="onClearConversations">Clear All Conversations</button>
+                </div>
+                <div class="settings-hint">When enabled, conversation history is saved locally.</div>
                 <div class="settings-row col">
-                  <label class="label">UI Style</label>
+                  <div class="settings-title">UI Style</div>
                   <select v-model="settings.ui_style" class="input">
                     <option value="sidebar-dark">Sidebar Dark (default)</option>
                     <option value="sidebar-light">Sidebar Light</option>
                     <option value="tabs">Top Tabs</option>
                   </select>
-                  <div class="settings-hint">Switch between Sidebar Dark, Sidebar Light, or Top Tabs.</div>
-                </div>
-
-                <div class="settings-row">
-                  <label class="checkbox"><input type="checkbox" v-model="settings.persist_conversations"/> Persist conversations (OFF by default)</label>
-                </div>
-                <div class="settings-row">
-                  <label class="checkbox"><input type="checkbox" v-model="settings.hide_tool_calls_in_chat"/> Hide tool call details in chat</label>
-                </div>
-                <div class="settings-hint">Privacy-first: history is not saved unless enabled. When enabled, conversation history is saved locally.</div>
-
-                <div class="settings-row">
-                  <button class="btn" @click="saveSettings">Save Settings</button>
-                  <button class="btn danger" @click="onClearConversations">Clear All Conversations</button>
                 </div>
               </div>
 
-              <div class="settings-section">
-                <div class="settings-title">Settings (Quick Prompts)</div>
-                <div class="settings-row">
-                  <button class="btn" @click="generateDefaults">Generate default quick_prompts.json</button>
-                </div>
+              <!-- Settings subview: Quick Prompts -->
+              <div v-else-if="ui.settingsSubview === 'Quick Prompts'" class="settings-section">
+                <div class="settings-title">Quick Prompts</div>
                 <div class="settings-hint">Writes defaults to %APPDATA%/AiDesktopCompanion/quick_prompts.json</div>
-                <QuickPromptsEditor :notify="showToast" />
+                <QuickPromptsEditor ref="quickPromptsRef" :notify="showToast" />
               </div>
 
-              <div class="settings-section" style="margin-top: 14px;">
+              <!-- Settings subview: MCP Servers -->
+              <div v-else class="settings-section">
                 <div class="settings-title">MCP Servers</div>
                 <div class="settings-hint">Configure MCP servers. Supports stdio and http transports.</div>
                 <div class="settings-row">
@@ -1276,7 +1338,8 @@ watch(() => settings.ui_style, (v) => {
 
         <div v-else-if="ui.activeSection === 'Settings'" class="section">
           <div class="settings">
-            <div class="settings-section">
+            <!-- Settings subview: General -->
+            <div v-if="ui.settingsSubview === 'General'" class="settings-section">
               <div class="settings-title">Prompt Settings</div>
               <div class="settings-row col">
                 <label class="label">OpenAI API Key</label>
@@ -1335,16 +1398,15 @@ watch(() => settings.ui_style, (v) => {
               </div>
             </div>
 
-            <div class="settings-section">
-              <div class="settings-title">Settings (Quick Prompts)</div>
-              <div class="settings-row">
-                <button class="btn" @click="generateDefaults">Generate default quick_prompts.json</button>
-              </div>
+            <!-- Settings subview: Quick Prompts -->
+            <div v-else-if="ui.settingsSubview === 'Quick Prompts'" class="settings-section">
+              <div class="settings-title">Quick Prompts</div>
               <div class="settings-hint">Writes defaults to %APPDATA%/AiDesktopCompanion/quick_prompts.json</div>
-              <QuickPromptsEditor :notify="showToast" />
+              <QuickPromptsEditor ref="quickPromptsRef" :notify="showToast" />
             </div>
 
-            <div class="settings-section">
+            <!-- Settings subview: MCP Servers -->
+            <div v-else class="settings-section">
               <div class="settings-title">MCP Servers</div>
               <div class="settings-hint">Configure MCP servers. Supports stdio and http transports.</div>
               <div class="settings-row">
@@ -1387,8 +1449,8 @@ watch(() => settings.ui_style, (v) => {
                   <label class="label" style="width:100px;">CWD</label>
                   <input class="input" v-model="s.cwd" placeholder="c:\\path\\to\\server" />
                 </div>
-                <div class="settings-row" v-if="s.transport === 'stdio'">
-                  <label class="label" style="width:100px;">Env (JSON object or KEY=VALUE lines)</label>
+                <div class="settings-row col" v-if="s.transport === 'stdio'">
+                  <label class="label">Env (JSON object or KEY=VALUE lines)</label>
                   <textarea
                     class="input"
                     rows="2"
@@ -1399,10 +1461,14 @@ watch(() => settings.ui_style, (v) => {
                   ></textarea>
                   <div v-if="s.envError" class="settings-hint error">{{ s.envError }}</div>
                 </div>
+                <div class="settings-row">
+                  <label class="checkbox"><input type="checkbox" v-model="s.auto_connect"/> Auto-connect this server</label>
+                </div>
                 <div class="settings-row" style="justify-content: space-between;">
                   <div>
                     <span class="label">Status:</span>
                     <span style="margin-left:6px;">{{ s.status }}</span>
+                    <span v-if="s.error" class="settings-hint error" style="margin-left:10px;">{{ s.error }}</span>
                   </div>
                   <div style="display:flex; gap:8px;">
                     <button class="btn" :disabled="s.connecting" @click="connectServer(s)">{{ s.connecting ? 'Connecting…' : 'Connect' }}</button>
