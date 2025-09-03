@@ -133,7 +133,6 @@ use rmcp::{
   transport::{TokioChildProcess, streamable_http_client::StreamableHttpClientTransport},
   model::{CallToolRequestParam, ReadResourceRequestParam, GetPromptRequestParam},
 };
-use rmcp::transport::sse_client::SseClientTransport;
 use base64::Engine; // for .encode on base64 engines
 // Audio decoding (fallback for non-WAV responses)
 use symphonia::core::audio::{AudioBufferRef, SampleBuffer};
@@ -440,32 +439,6 @@ async fn mcp_connect(
 
   // Select transport: default stdio; support http (streamable http client)
   let transport_kind = transport.unwrap_or_else(|| "stdio".to_string());
-  if transport_kind == "sse" {
-    // For SSE, interpret `command` as the SSE endpoint URL
-    let uri = command.trim().to_string();
-    if uri.is_empty() {
-      return Err("SSE transport requires a non-empty URI in 'command'".into());
-    }
-    let sse_transport = SseClientTransport::<reqwest::Client>::start(uri)
-      .await
-      .map_err(|e| {
-        let msg = format!("sse start failed: {e}");
-        let _ = app.emit("mcp:error", serde_json::json!({ "serverId": server_id, "message": msg }));
-        msg
-      })?;
-    let service = ().into_dyn().serve(sse_transport).await.map_err(|e| {
-      let msg = format!("serve failed: {e}");
-      let _ = app.emit("mcp:error", serde_json::json!({ "serverId": server_id, "message": msg }));
-      msg
-    })?;
-    let service = Arc::new(service);
-    {
-      let mut map = MCP_CLIENTS.lock().await;
-      map.insert(server_id.clone(), service.clone());
-    }
-    let _ = app.emit("mcp:connected", serde_json::json!({ "serverId": server_id }));
-    return Ok("connected".into());
-  }
   if transport_kind == "http" {
     // For HTTP, interpret `command` as the server URI
     let uri = command.trim().to_string();
@@ -557,6 +530,11 @@ async fn mcp_call_tool(server_id: String, name: String, args: serde_json::Value)
     let map = MCP_CLIENTS.lock().await;
     map.get(&server_id).cloned()
   }.ok_or_else(|| "not connected".to_string())?;
+  // Respect disabled tools from settings
+  let disabled_map = get_disabled_tools_map();
+  if disabled_map.get(&server_id).map(|set| set.contains(&name)).unwrap_or(false) {
+    return Err("tool disabled by settings".into());
+  }
   // Prepare arguments map if provided
   let arg_map_opt = if args.is_null() {
     None
@@ -641,6 +619,29 @@ fn load_settings_json() -> serde_json::Value {
     }
   }
   serde_json::json!({})
+}
+
+// Build a map of server_id -> set of disabled tool names from persisted settings
+fn get_disabled_tools_map() -> std::collections::HashMap<String, std::collections::HashSet<String>> {
+  let mut out: std::collections::HashMap<String, std::collections::HashSet<String>> = std::collections::HashMap::new();
+  let v = load_settings_json();
+  if let Some(arr) = v.get("mcp_servers").and_then(|x| x.as_array()) {
+    for s in arr.iter() {
+      let server_id = s.get("id").and_then(|x| x.as_str()).unwrap_or("").trim();
+      if server_id.is_empty() { continue; }
+      if let Some(dis) = s.get("disabled_tools").and_then(|x| x.as_array()) {
+        let mut set: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for t in dis.iter() {
+          if let Some(name) = t.as_str() {
+            let n = name.trim();
+            if !n.is_empty() { set.insert(n.to_string()); }
+          }
+        }
+        if !set.is_empty() { out.insert(server_id.to_string(), set); }
+      }
+    }
+  }
+  out
 }
 
 fn get_api_key_from_settings_or_env() -> Result<String, String> {
@@ -1683,6 +1684,7 @@ fn summarize_input_schema(schema: &serde_json::Value) -> String {
 
 async fn build_openai_tools_from_mcp() -> Vec<serde_json::Value> {
   let mut out: Vec<serde_json::Value> = Vec::new();
+  let disabled_map = get_disabled_tools_map();
   let map = MCP_CLIENTS.lock().await;
   for (server_id, svc) in map.iter() {
     // Best-effort: list tools; skip server on error
@@ -1692,6 +1694,10 @@ async fn build_openai_tools_from_mcp() -> Vec<serde_json::Value> {
           for t in arr {
             let name = t.get("name").and_then(|x| x.as_str()).unwrap_or("");
             if name.is_empty() { continue; }
+            // Filter out disabled tools per settings
+            if let Some(set) = disabled_map.get(server_id) {
+              if set.contains(name) { continue; }
+            }
             let desc = t.get("description").and_then(|x| x.as_str()).unwrap_or("");
             // JSON schema forwarded as-is when available; otherwise fall back to permissive object
             // Some servers use `input_schema`, others `inputSchema` (camelCase), or just `schema`.
@@ -1761,6 +1767,7 @@ async fn chat_complete(app: tauri::AppHandle, messages: Vec<ChatMessage>) -> Res
   let key = get_api_key_from_settings_or_env()?;
   let model = get_model_from_settings_or_env();
   let temp = get_temperature_from_settings_or_env();
+  let disabled_map = get_disabled_tools_map();
 
   // Normalize incoming messages to OpenAI format
   let mut norm_msgs: Vec<serde_json::Value> = Vec::new();
@@ -1871,6 +1878,23 @@ async fn chat_complete(app: tauri::AppHandle, messages: Vec<ChatMessage>) -> Res
             "tool": tool_name,
             "args": fargs_val.clone()
           }));
+          // Respect disabled tools from settings
+          let is_disabled = disabled_map.get(&server_id).map(|set| set.contains(&tool_name)).unwrap_or(false);
+          if is_disabled {
+            tool_result_text = serde_json::json!({
+              "serverId": server_id,
+              "tool": tool_name,
+              "error": "tool disabled by settings"
+            }).to_string();
+            let _ = app.emit("chat:tool-result", serde_json::json!({
+              "id": id,
+              "function": fname,
+              "serverId": server_id,
+              "tool": tool_name,
+              "ok": false,
+              "error": "tool disabled by settings"
+            }));
+          } else {
           // Call MCP tool directly
           let svc_opt = {
             let map2 = MCP_CLIENTS.lock().await;
@@ -1916,6 +1940,7 @@ async fn chat_complete(app: tauri::AppHandle, messages: Vec<ChatMessage>) -> Res
               "ok": false,
               "error": format!("MCP server not connected: {}", server_id)
             }));
+          }
           }
         } else {
           tool_result_text = serde_json::json!({ "error": format!("Unsupported tool function: {}", fname) }).to_string();

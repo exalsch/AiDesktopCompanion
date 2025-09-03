@@ -288,6 +288,12 @@ onMounted(async () => {
         if (!updated) {
           appendMessage({ id: mid || undefined, ...patch })
         }
+        // Notify if tool call was blocked due to being disabled by settings
+        if (p && p.ok === false && typeof p.error === 'string' && p.error.toLowerCase().includes('disabled')) {
+          const sid = typeof p.serverId === 'string' ? p.serverId : 'server'
+          const tname = typeof p.tool === 'string' ? p.tool : 'tool'
+          showToast(`MCP tool blocked by settings: ${sid}/${tname}`, 'error', 2500)
+        }
       } catch (err) {
         console.warn('[chat] tool-result event handling failed', err)
       }
@@ -329,7 +335,7 @@ const settings = reactive({
   // Global MCP auto-connect toggle
   auto_connect: false as boolean,
   // MCP servers persisted configuration
-  // Each item persisted as: { id, transport: 'stdio'|'http'|'sse', command, args: string[], cwd?: string, env?: Record<string,string> }
+  // Each item persisted as: { id, transport: 'stdio'|'http', command, args: string[], cwd?: string, env?: Record<string,string> }
   mcp_servers: [] as Array<any>,
 })
 const models = reactive<{ list: string[]; loading: boolean; error: string | null }>({ list: [], loading: false, error: null })
@@ -352,7 +358,8 @@ async function loadSettings() {
         const envJsonStr = Object.keys(envObj).length ? JSON.stringify(envObj, null, 0) : '{ "LOG_LEVEL": "info" }'
         return {
           id: String(s.id || ''),
-          transport: (s.transport === 'http' || s.transport === 'sse') ? s.transport : 'stdio',
+          // Normalize legacy 'sse' to 'http'
+          transport: (s.transport === 'http' || s.transport === 'sse') ? 'http' : 'stdio',
           command: String(s.command || ''),
           args: Array.isArray(s.args) ? s.args.filter((x: any) => typeof x === 'string') : [],
           argsText: Array.isArray(s.args) ? s.args.join(' ') : (typeof s.args === 'string' ? s.args : ''),
@@ -361,6 +368,8 @@ async function loadSettings() {
           envJson: envJsonStr,
           // Per-server auto connect (persisted)
           auto_connect: s.auto_connect === true,
+          // Persisted list of disabled MCP tool names for this server
+          disabled_tools: Array.isArray(s.disabled_tools) ? s.disabled_tools.filter((x: any) => typeof x === 'string') : [],
           status: 'disconnected',
           connecting: false,
           error: null as string | null,
@@ -394,11 +403,13 @@ async function saveSettings() {
       const env = normalizeEnvInput(typeof s.envJson === 'string' ? s.envJson : s.env)
       return {
         id: String(s.id || ''),
-        transport: (s.transport === 'http' || s.transport === 'sse') ? s.transport : 'stdio',
+        // Persist only 'stdio' or 'http'; map legacy 'sse' to 'http'
+        transport: (s.transport === 'http' || s.transport === 'sse') ? 'http' : 'stdio',
         command: String(s.command || ''),
         args,
         cwd: typeof s.cwd === 'string' ? s.cwd : '',
         env,
+        disabled_tools: Array.isArray(s.disabled_tools) ? s.disabled_tools.filter((x: any) => typeof x === 'string') : [],
         auto_connect: s.auto_connect === true,
       }
     })
@@ -623,6 +634,27 @@ async function listTools(s: any) {
     const msg = typeof err === 'string' ? err : (err && (err as any).message) ? (err as any).message : 'Unknown error'
     showToast(`list_tools failed: ${msg}`, 'error')
   }
+}
+
+// ConversationView event handlers
+function onListTools(serverId: string) {
+  const s = findServerById(serverId)
+  if (s) listTools(s)
+}
+
+function onToggleTool(payload: { serverId: string; tool: string; enabled: boolean }) {
+  const s = findServerById(payload.serverId)
+  if (!s || !payload.tool) return
+  const name = String(payload.tool)
+  s.disabled_tools = Array.isArray(s.disabled_tools) ? s.disabled_tools : []
+  const idx = s.disabled_tools.indexOf(name)
+  if (payload.enabled) {
+    if (idx !== -1) s.disabled_tools.splice(idx, 1)
+  } else {
+    if (idx === -1) s.disabled_tools.push(name)
+  }
+  // Persist immediately for privacy-first UX
+  try { saveSettings() } catch {}
 }
 
 function validateEnvJsonInput(s: any) {
@@ -920,7 +952,13 @@ watch(() => settings.ui_style, (v) => {
             <template v-else>
               <div class="prompt-layout">
                 <div class="convo-wrap">
-                  <ConversationView :messages="conversation.currentConversation.messages" :hide-tool-details="settings.hide_tool_calls_in_chat" />
+                  <ConversationView
+                    :messages="conversation.currentConversation.messages"
+                    :hide-tool-details="settings.hide_tool_calls_in_chat"
+                    :mcp-servers="settings.mcp_servers"
+                    @list-tools="onListTools"
+                    @toggle-tool="onToggleTool"
+                  />
                 </div>
                 <PromptComposer ref="composerRef" v-model="composerInput" @busy="busy.prompt = $event" />
               </div>
@@ -1009,7 +1047,7 @@ watch(() => settings.ui_style, (v) => {
 
               <div class="settings-section" style="margin-top: 14px;">
                 <div class="settings-title">MCP Servers</div>
-                <div class="settings-hint">Configure MCP servers. Supports stdio, http, and sse transports.</div>
+                <div class="settings-hint">Configure MCP servers. Supports stdio and http transports.</div>
                 <div class="settings-row">
                   <label class="checkbox"><input type="checkbox" v-model="settings.auto_connect"/> Auto-connect on startup</label>
                 </div>
@@ -1030,11 +1068,10 @@ watch(() => settings.ui_style, (v) => {
                     <select class="input" v-model="s.transport">
                       <option value="stdio">stdio</option>
                       <option value="http">http</option>
-                      <option value="sse">sse</option>
                     </select>
                   </div>
-                  <!-- URL for HTTP/SSE -->
-                  <div class="settings-row" v-if="s.transport === 'http' || s.transport === 'sse'">
+                  <!-- URL for HTTP -->
+                  <div class="settings-row" v-if="s.transport === 'http'">
                     <label class="label" style="width:100px;">URL</label>
                     <input class="input" v-model="s.command" placeholder="https://server.example.com/mcp" />
                   </div>
@@ -1205,7 +1242,13 @@ watch(() => settings.ui_style, (v) => {
           <template v-else>
             <div class="prompt-layout">
               <div class="convo-wrap">
-                <ConversationView :messages="conversation.currentConversation.messages" :hide-tool-details="settings.hide_tool_calls_in_chat" />
+                <ConversationView
+                  :messages="conversation.currentConversation.messages"
+                  :hide-tool-details="settings.hide_tool_calls_in_chat"
+                  :mcp-servers="settings.mcp_servers"
+                  @list-tools="onListTools"
+                  @toggle-tool="onToggleTool"
+                />
               </div>
               <PromptComposer v-model="composerInput" @busy="busy.prompt = $event" />
             </div>
@@ -1294,7 +1337,7 @@ watch(() => settings.ui_style, (v) => {
 
             <div class="settings-section">
               <div class="settings-title">MCP Servers</div>
-              <div class="settings-hint">Configure MCP servers. Supports stdio, http, and sse transports.</div>
+              <div class="settings-hint">Configure MCP servers. Supports stdio and http transports.</div>
               <div class="settings-row">
                 <label class="checkbox"><input type="checkbox" v-model="settings.auto_connect"/> Auto-connect on startup</label>
               </div>
@@ -1315,11 +1358,10 @@ watch(() => settings.ui_style, (v) => {
                   <select class="input" v-model="s.transport">
                     <option value="stdio">stdio</option>
                     <option value="http">http</option>
-                    <option value="sse">sse</option>
                   </select>
                 </div>
-                <!-- URL for HTTP/SSE -->
-                <div class="settings-row" v-if="s.transport === 'http' || s.transport === 'sse'">
+                <!-- URL for HTTP -->
+                <div class="settings-row" v-if="s.transport === 'http'">
                   <label class="label" style="width:100px;">URL</label>
                   <input class="input" v-model="s.command" placeholder="https://server.example.com/mcp" />
                 </div>
