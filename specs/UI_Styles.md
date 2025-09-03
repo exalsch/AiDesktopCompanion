@@ -2,11 +2,14 @@
 
 This app supports multiple UI styles (layouts) with their own CSS files. The current built‑in styles are:
 
-- sidebar: Sidebar navigation layout (default)
+- sidebar-dark: Sidebar navigation layout (default, dark)
+- sidebar-light: Sidebar navigation layout (light)
 - tabs: Top tabs layout (legacy)
-- light: Light theme variant (overrides tokens for a light palette)
 
 The active style is stored in `settings.ui_style` and can be switched in the Settings tab of the main window.
+
+Back‑compat note:
+- Legacy values `sidebar` and `light` are still accepted and automatically mapped to `sidebar-dark` and `sidebar-light` respectively.
 
 ## How it works
 
@@ -25,12 +28,17 @@ Relevant code:
 app/
   src/
     styles/
-      sidebar/
+      sidebar-dark/
+        style.css
+      sidebar-light/
         style.css
       tabs/
         style.css
-      light/
-        style.css
+      (legacy):
+        sidebar/        # kept for reference; not used by loader
+          style.css
+        light/          # kept for reference; not used by loader
+          style.css
 ```
 
 ‼️ The provided style files are placeholders — customize them to your needs.
@@ -38,7 +46,7 @@ app/
 ## Theme tokens and inputs
 
 - Base tokens are defined in `app/src/style.css` under `:root` for the default dark theme.
-- The Light theme overrides tokens in `app/src/styles/light/style.css`:
+- The Sidebar Light theme overrides tokens in `app/src/styles/sidebar-light/style.css`:
   - `--adc-bg`, `--adc-surface`, `--adc-fg`, `--adc-fg-muted`, `--adc-border`, `--adc-accent`, etc.
 
 ### Inputs and Textareas
@@ -74,18 +82,22 @@ textarea { width: 100%; min-height: 100px; resize: vertical; box-sizing: border-
 ```ts
 import myStyleUrl from './styles/myStyle/style.css?url'
 ```
-- Extend the style map in the loader section:
+- Extend the style map in the loader section (string map recommended):
 ```ts
-const styleCssMap: Record<'sidebar' | 'tabs' | 'myStyle', string> = {
-  sidebar: sidebarStyleUrl,
-  tabs: tabsStyleUrl,
-  myStyle: myStyleUrl,
+const styleCssMap: Record<string, string> = {
+  'sidebar-dark': sidebarDarkStyleUrl,
+  'sidebar-light': sidebarLightStyleUrl,
+  'tabs': tabsStyleUrl,
+  'myStyle': myStyleUrl,
+  // Back-compat aliases (optional):
+  'sidebar': sidebarDarkStyleUrl,
+  'light': sidebarLightStyleUrl,
 }
 ```
 
 3) Make the style selectable (optional)
 - Update the UI Style dropdown in `App.vue` Settings section to include an `<option value="myStyle">My Style</option>`.
-- Ensure any type definitions reflect the new literal (TypeScript unions).
+- Ensure any type definitions reflect the new literal (TypeScript unions). Current union is `'sidebar-dark' | 'sidebar-light' | 'tabs'`.
 
 4) Test
 - With the dev server running, switch styles in Settings and verify HMR applies the new CSS without page reload.

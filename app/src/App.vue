@@ -16,9 +16,9 @@ import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 // Per-style CSS asset URLs (bundler-resolved)
 // Add new styles by importing their style.css with ?url and extending styleCssMap below
-import sidebarStyleUrl from './styles/sidebar/style.css?url'
+import sidebarDarkStyleUrl from './styles/sidebar-dark/style.css?url'
+import sidebarLightStyleUrl from './styles/sidebar-light/style.css?url'
 import tabsStyleUrl from './styles/tabs/style.css?url'
-import lightStyleUrl from './styles/light/style.css?url'
 
 const winParam = new URLSearchParams(window.location.search).get('window')
 const isQuickActions = winParam === 'quick-actions'
@@ -331,7 +331,7 @@ const settings = reactive({
   temperature: 1.0 as number,
   persist_conversations: false as boolean,
   hide_tool_calls_in_chat: false as boolean,
-  ui_style: 'sidebar' as 'sidebar' | 'tabs' | 'light',
+  ui_style: 'sidebar-dark' as 'sidebar-dark' | 'sidebar-light' | 'tabs',
   // Global MCP auto-connect toggle
   auto_connect: false as boolean,
   // MCP servers persisted configuration
@@ -349,7 +349,13 @@ async function loadSettings() {
     if (typeof v.temperature === 'number') settings.temperature = v.temperature
     if (typeof v.persist_conversations === 'boolean') settings.persist_conversations = v.persist_conversations
     if (typeof (v as any).hide_tool_calls_in_chat === 'boolean') settings.hide_tool_calls_in_chat = (v as any).hide_tool_calls_in_chat
-    if (v.ui_style === 'tabs' || v.ui_style === 'sidebar' || v.ui_style === 'light') settings.ui_style = v.ui_style
+    {
+      let ui: any = (v as any).ui_style
+      // Back-compat: map legacy keys to new ones
+      if (ui === 'sidebar') ui = 'sidebar-dark'
+      if (ui === 'light') ui = 'sidebar-light'
+      if (ui === 'tabs' || ui === 'sidebar-dark' || ui === 'sidebar-light') settings.ui_style = ui
+    }
     if (typeof (v as any).auto_connect === 'boolean') settings.auto_connect = (v as any).auto_connect
     // Load MCP servers and derive UI fields
     if (Array.isArray(v.mcp_servers)) {
@@ -821,10 +827,13 @@ async function autoConnectServers() {
 // Per-style CSS loader
 // ---------------------------
 const themeCssLinkId = 'theme-style-css'
-const styleCssMap: Record<'sidebar' | 'tabs' | 'light', string> = {
-  sidebar: sidebarStyleUrl,
-  tabs: tabsStyleUrl,
-  light: lightStyleUrl,
+const styleCssMap: Record<string, string> = {
+  'sidebar-dark': sidebarDarkStyleUrl,
+  'sidebar-light': sidebarLightStyleUrl,
+  'tabs': tabsStyleUrl,
+  // Back-compat aliases
+  'sidebar': sidebarDarkStyleUrl,
+  'light': sidebarLightStyleUrl,
 }
 function ensureThemeLinkEl(): HTMLLinkElement {
   let el = document.getElementById(themeCssLinkId) as HTMLLinkElement | null
@@ -839,7 +848,7 @@ function ensureThemeLinkEl(): HTMLLinkElement {
 
 function applyStyleCss(styleName: string) {
   const el = ensureThemeLinkEl()
-  const resolved = styleCssMap[styleName as 'sidebar' | 'tabs' | 'light']
+  const resolved = styleCssMap[String(styleName)]
   if (resolved) {
     el.href = resolved
   } else {
@@ -866,8 +875,8 @@ watch(() => settings.ui_style, (v) => {
       @close="prompt.visible = false"
     />
 
-    <!-- Sidebar layout (default) -->
-    <div v-if="settings.ui_style === 'sidebar'" class="shell">
+    <!-- Sidebar layout (dark/light) -->
+    <div v-if="settings.ui_style === 'sidebar-dark' || settings.ui_style === 'sidebar-light' || settings.ui_style === 'sidebar'" class="shell">
       <aside class="sidebar" :class="{ collapsed: !layout.sidebarOpen }">
         <button class="burger" title="Toggle menu" @click="layout.sidebarOpen = !layout.sidebarOpen">☰</button>
         <template v-for="s in ui.sections" :key="s">
@@ -1015,11 +1024,11 @@ watch(() => settings.ui_style, (v) => {
                 <div class="settings-row col">
                   <label class="label">UI Style</label>
                   <select v-model="settings.ui_style" class="input">
-                    <option value="sidebar">Sidebar (default)</option>
+                    <option value="sidebar-dark">Sidebar Dark (default)</option>
+                    <option value="sidebar-light">Sidebar Light</option>
                     <option value="tabs">Top Tabs</option>
-                    <option value="light">Light</option>
                   </select>
-                  <div class="settings-hint">Switch between left sidebar, top tabs, or light theme.</div>
+                  <div class="settings-hint">Switch between Sidebar Dark, Sidebar Light, or Top Tabs.</div>
                 </div>
 
                 <div class="settings-row">
@@ -1305,11 +1314,11 @@ watch(() => settings.ui_style, (v) => {
               <div class="settings-row col">
                 <label class="label">UI Style</label>
                 <select v-model="settings.ui_style" class="input">
-                  <option value="sidebar">Sidebar (default)</option>
+                  <option value="sidebar-dark">Sidebar Dark (default)</option>
+                  <option value="sidebar-light">Sidebar Light</option>
                   <option value="tabs">Top Tabs</option>
-                  <option value="light">Light</option>
                 </select>
-                <div class="settings-hint">Switch between left sidebar, top tabs, or light theme.</div>
+                <div class="settings-hint">Switch between Sidebar Dark, Sidebar Light, or Top Tabs.</div>
               </div>
 
               <div class="settings-row">

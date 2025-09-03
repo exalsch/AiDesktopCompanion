@@ -1,0 +1,73 @@
+/* Sidebar Dark theme CSS
+   Applied when settings.ui_style === 'sidebar-dark'
+   Based on the previous 'sidebar' theme.
+   
+   ‼️ Placeholder: customize variables and overrides for the dark sidebar theme. */
+
+:root {
+  /* Theme variables */
+  --adc-accent: #2e5cff;
+  --adc-fg: #e6e9f2;
+  --adc-fg-muted: #a6b0c3;
+  --adc-bg: #101015;
+  --adc-surface: #171924;
+  --adc-border: #2a2f3a;
+  --adc-border-strong: #3a4050;
+  --adc-danger: #ff4d4f;
+  --adc-sidebar-bg: #10131b;
+  --adc-focus-ring: rgba(46, 92, 255, 0.22);
+}
+
+/* Global shells */
+.shell { background: var(--adc-bg); color: var(--adc-fg); }
+.content { background: var(--adc-bg); color: var(--adc-fg); }
+.section { color: var(--adc-fg); }
+.section-title { color: var(--adc-fg); }
+.section-hint { color: var(--adc-fg-muted); }
+
+/* Buttons */
+.btn { background: var(--adc-accent); border-color: var(--adc-accent); color: #fff; }
+.btn:hover { filter: brightness(1.05); }
+.btn.ghost { background: transparent; color: var(--adc-fg); border-color: var(--adc-border); }
+.btn.danger { background: var(--adc-danger); border-color: #c23a3c; color: #fff; }
+
+/* Inputs */
+.input { background: var(--adc-surface); color: var(--adc-fg); border-color: var(--adc-border); }
+.label { color: var(--adc-fg-muted); }
+
+/* Toast */
+.toast { background: var(--adc-surface); color: var(--adc-fg); border-color: var(--adc-border-strong); box-shadow: 0 6px 24px rgba(0,0,0,0.35); }
+.toast.success { background: #09301a; border-color: #14532d; }
+.toast.error { background: #3b1212; border-color: #6b1f1f; }
+
+/* Sidebar layout */
+.sidebar { background: var(--adc-sidebar-bg); border-right-color: var(--adc-border); }
+.burger { background: var(--adc-surface); color: var(--adc-fg); border-color: var(--adc-border); }
+.side-tab { background: var(--adc-surface); color: var(--adc-fg); border-color: var(--adc-border); }
+.side-tab.active { background: var(--adc-accent); border-color: var(--adc-accent); color: #fff; }
+.side-subtab { background: #131722; color: var(--adc-fg); border-color: var(--adc-border); }
+.side-subtab.active { background: var(--adc-accent); border-color: var(--adc-accent); color: #fff; }
+
+/* Prompt layout containers */
+.settings { color: var(--adc-fg); }
+.settings-section { background: var(--adc-surface); border-color: var(--adc-border); }
+.settings-title { color: var(--adc-fg); }
+.settings-hint { color: var(--adc-fg-muted); }
+
+/* Conversation area backgrounds (optional) */
+.convo-wrap { background: var(--adc-surface); border: 1px solid var(--adc-border); border-radius: 10px; }
+
+/* Focus and elevation */
+.settings-section, .convo-wrap { box-shadow: 0 4px 14px rgba(0,0,0,0.5); }
+.input:focus, .input:focus-visible, select.input:focus {
+  outline: none;
+  border-color: var(--adc-accent);
+  box-shadow: 0 0 0 3px var(--adc-focus-ring);
+}
+.btn:focus, .btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--adc-focus-ring);
+}
+.tab:hover, .subtab:hover, .side-tab:hover, .side-subtab:hover, .burger:hover {
+  border-color: var(--adc-accent);
+}
