@@ -69,8 +69,13 @@ const emit = defineEmits<{
   flex-direction: column;
   gap: 6px;
 }
-.assistant .bubble { border-top-left-radius: 6px; }
-.user .bubble {
+.row.assistant > .bubble {
+  background: var(--adc-assistant-bubble-bg, var(--adc-surface));
+  border-color: var(--adc-assistant-bubble-border, var(--adc-border));
+  color: var(--adc-assistant-bubble-fg, var(--adc-fg));
+  border-top-left-radius: 6px;
+}
+.row.user > .bubble {
   background: var(--adc-accent);
   border-color: var(--adc-accent);
   color: #ffffff;
@@ -87,8 +92,8 @@ const emit = defineEmits<{
 
 /* Meta line (time, badges) styled subtly */
 .meta-line { display: flex; align-items: center; gap: 8px; font-size: 11px; opacity: 0.9; }
-.assistant .meta-line { justify-content: flex-start; color: var(--adc-fg-muted); }
-.user .meta-line { justify-content: flex-end; color: #e9ebff; }
+.row.assistant .meta-line { justify-content: flex-start; color: var(--adc-fg-muted); }
+.row.user .meta-line { justify-content: flex-end; color: #e9ebff; }
 .badge { background: var(--adc-accent); color: #fff; border-radius: 6px; padding: 1px 6px; font-size: 10px; }
 
 /* Tool call rendering */

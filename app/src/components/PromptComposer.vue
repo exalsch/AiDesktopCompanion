@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import conversation, { appendMessage } from '../state/conversation'
 
-const props = defineProps<{ modelValue: string }>()
+const props = defineProps<{ modelValue: string; systemPromptText?: string }>()
 const emit = defineEmits<{ (e: 'update:modelValue', v: string): void; (e: 'busy', v: boolean): void }>()
 
 const input = computed({
@@ -31,7 +31,10 @@ function guessMimeFromPath(path: string): string | undefined {
 function buildChatMessages(): Array<{ role: string; content: string | ContentPart[] }> {
   const msgs: Array<{ role: string; content: string | ContentPart[] }> = []
   // Optional system primer for clarity
-  msgs.push({ role: 'system', content: [{ type: 'input_text', text: 'You are a helpful assistant. Be concise and clear.' }] })
+  const systemText = (props.systemPromptText && props.systemPromptText.trim()) ? props.systemPromptText.trim() : ''
+  if (systemText) {
+    msgs.push({ role: 'system', content: [{ type: 'input_text', text: systemText }] })
+  }
 
   for (const m of conversation.currentConversation.messages) {
     if (m.type === 'text') {
@@ -106,7 +109,7 @@ defineExpose({
 </template>
 
 <style scoped>
-.composer { display: flex; flex-direction: column; gap: 8px; margin: 10px; max-width: var(--content-max); }
+.composer { display: flex; flex-direction: column; gap: 8px; margin-left: 10px; margin-right: 10px; margin-bottom: 10px; max-width: var(--content-max); }
 .input {
   width: 100%;
   resize: vertical;

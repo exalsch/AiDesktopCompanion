@@ -12,7 +12,7 @@ import SettingsGeneral from './components/settings/SettingsGeneral.vue'
 import SettingsMcpServers from './components/settings/SettingsMcpServers.vue'
 import SettingsQuickPrompts from './components/settings/SettingsQuickPrompts.vue'
 import conversation, { appendMessage, getPersistState, setPersistState, clearAllConversations, newConversation, updateMessage } from './state/conversation'
-import { onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { onMounted, onBeforeUnmount, reactive, ref, watch, computed } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
@@ -218,6 +218,8 @@ onMounted(async () => {
 
   // Load persisted conversation if enabled
   try { await loadPersistedConversation() } catch {}
+  // Load Quick Prompts for composer buttons
+  try { await loadQuickPrompts() } catch {}
   // MCP events
   try {
     const u7 = await listen<{ serverId: string }>('mcp:connected', (e) => {
@@ -316,6 +318,68 @@ onBeforeUnmount(() => {
 })
 
 // Removed legacy Quick Prompts helpers (now handled inside SettingsQuickPrompts)
+
+// Quick Prompts state and helpers (read-only for main UI)
+const quickPrompts = reactive<Record<string, string>>({
+  '1': '', '2': '', '3': '',
+  '4': '', '5': '', '6': '',
+  '7': '', '8': '', '9': ''
+})
+
+async function loadQuickPrompts() {
+  try {
+    const data = await invoke<any>('get_quick_prompts')
+    for (let i = 1; i <= 9; i++) {
+      const k = String(i)
+      ;(quickPrompts as any)[k] = (data && typeof (data as any)[k] === 'string') ? (data as any)[k] : ''
+    }
+  } catch (err) {
+    console.warn('[quick-prompts] load failed', err)
+  }
+}
+
+function insertQuickPrompt(i: number) {
+  try {
+    const k = String(i)
+    const text = (quickPrompts as any)[k] || ''
+    if (!text || !text.trim()) return
+    const cur = composerInput.value || ''
+    // Prepend quick prompt text to the current input (pre-add, not append)
+    composerInput.value = cur ? `${text} ${cur}` : text
+    // Focus composer for immediate editing
+    requestAnimationFrame(() => {
+      try { (composerRef.value as any)?.focus?.() } catch {}
+    })
+  } catch (e) {
+    console.warn('[quick-prompts] insert failed', e)
+  }
+}
+
+// Active quick prompt used as a System message.
+// Single-select: clicking an active button toggles it off.
+const activeQuickPrompt = ref<number | null>(null)
+const selectedSystemPrompt = computed(() => {
+  const i = activeQuickPrompt.value
+  if (!i) return ''
+  const k = String(i)
+  const text = (quickPrompts as any)[k] || ''
+  return (typeof text === 'string' ? text.trim() : '')
+})
+
+function toggleQuickPrompt(i: number) {
+  try {
+    const k = String(i)
+    const text = (quickPrompts as any)[k] || ''
+    if (!text || !text.trim()) return
+    activeQuickPrompt.value = (activeQuickPrompt.value === i) ? null : i
+    // Keep focus on composer for a smooth UX
+    requestAnimationFrame(() => {
+      try { (composerRef.value as any)?.focus?.() } catch {}
+    })
+  } catch (e) {
+    console.warn('[quick-prompts] toggle failed', e)
+  }
+}
 
 // ---------------------------
 // Prompt Settings state & actions
@@ -1012,7 +1076,17 @@ watch(() => settings.ui_style, (v) => {
                     @toggle-tool="onToggleTool"
                   />
                 </div>
-                <PromptComposer ref="composerRef" v-model="composerInput" @busy="busy.prompt = $event" />
+                <div class="quick-prompt-bar">
+                  <button
+                    v-for="i in 9"
+                    :key="i"
+                    :class="['qp-btn', { active: activeQuickPrompt === i }]"
+                    :disabled="!quickPrompts[String(i)]"
+                    :title="quickPrompts[String(i)] || 'Empty'"
+                    @click="toggleQuickPrompt(i)"
+                  >{{ i }}</button>
+                </div>
+                <PromptComposer ref="composerRef" v-model="composerInput" :systemPromptText="selectedSystemPrompt" @busy="busy.prompt = $event" />
               </div>
             </template>
           </template>
@@ -1131,8 +1205,24 @@ watch(() => settings.ui_style, (v) => {
 .main-content { flex: 1; min-height: 0; overflow: auto; padding: 12px 12px; }
 
 /* Prompt layout with scrolling conversation */
-.prompt-layout { display: flex; flex-direction: column; gap: 10px; height: 95%; }
+.prompt-layout { display: flex; flex-direction: column; gap: 5px; height: 95%; }
 .convo-wrap { flex: 1; min-height: 0; }
+
+/* Quick Prompt buttons above composer */
+.quick-prompt-bar { display: flex; gap: 3px; align-items: center; flex-wrap: wrap; padding: 0 12px; }
+.qp-btn {
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--adc-border);
+  background: var(--adc-surface);
+  color: var(--adc-fg);
+  cursor: pointer;
+  font-size: 12px;
+  min-width: 28px;
+}
+.qp-btn:hover:not(:disabled) { background: var(--adc-accent); border-color: var(--adc-accent); color: #fff; }
+.qp-btn.active { background: var(--adc-accent); border-color: var(--adc-accent); color: #fff; }
+.qp-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>
 
 <!-- Global overrides for QuickActions window only -->

@@ -15,6 +15,10 @@
   --adc-danger: #c62828;
   --adc-sidebar-bg: #eef4ff;
   --adc-focus-ring: rgba(46, 92, 255, 0.18);
+  /* Assistant bubble theme variables */
+  --adc-assistant-bubble-bg: #f6f9ff; /* subtle blue-tinted surface for assistant */
+  --adc-assistant-bubble-border: var(--adc-border);
+  --adc-assistant-bubble-fg: var(--adc-fg);
 }
 
 /* Global shells */
