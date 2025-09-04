@@ -72,9 +72,9 @@ function openConversation(id: string) {
 </template>
 
 <style scoped>
-.history { margin: 0 auto 10px auto; max-width: 920px; padding: 8px; border: 1px solid var(--adc-border); border-radius: 10px; background: var(--adc-surface); }
+.history { margin: 0 auto 10px auto; padding: 8px; border: 1px solid var(--adc-border); border-radius: 10px; background: var(--adc-surface); }
 .row-title { font-weight: 700; margin-bottom: 6px; color: var(--adc-fg); }
-.list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+.list { display: flow-root; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
 .item { border: 1px solid var(--adc-border); border-radius: 8px; padding: 8px; background: var(--adc-surface); cursor: default; }
 .item.active { border-color: var(--adc-accent); box-shadow: 0 0 0 3px var(--adc-focus-ring); }
 .title-line { display: flex; align-items: center; gap: 8px; }

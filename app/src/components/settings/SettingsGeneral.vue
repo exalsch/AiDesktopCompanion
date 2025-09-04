@@ -13,8 +13,6 @@ const showApiKey = ref(false)
 </script>
 
 <template>
-<div class="section-title">Settings</div>
-
   <div class="settings-section">
     <div class="settings-title">General Settings</div>  
     <button class="btn" @click="props.onSave">Save</button>        
@@ -56,9 +54,8 @@ const showApiKey = ref(false)
       <select v-model="props.settings.ui_style" class="input">
         <option value="sidebar-dark">Sidebar Dark (default)</option>
         <option value="sidebar-light">Sidebar Light</option>
-        <option value="tabs">Top Tabs</option>
       </select>
-      <div class="settings-hint">Switch between Sidebar Dark, Sidebar Light, or Top Tabs.</div>
+      <div class="settings-hint">Switch between Sidebar Dark or Sidebar Light.</div>
     </div>
 
     <div class="settings-row">

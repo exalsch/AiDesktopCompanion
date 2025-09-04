@@ -20,7 +20,6 @@ import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 // Add new styles by importing their style.css with ?url and extending styleCssMap below
 import sidebarDarkStyleUrl from './styles/sidebar-dark/style.css?url'
 import sidebarLightStyleUrl from './styles/sidebar-light/style.css?url'
-import tabsStyleUrl from './styles/tabs/style.css?url'
 
 const winParam = new URLSearchParams(window.location.search).get('window')
 const isQuickActions = winParam === 'quick-actions'
@@ -327,7 +326,7 @@ const settings = reactive({
   temperature: 1.0 as number,
   persist_conversations: false as boolean,
   hide_tool_calls_in_chat: false as boolean,
-  ui_style: 'sidebar-dark' as 'sidebar-dark' | 'sidebar-light' | 'tabs',
+  ui_style: 'sidebar-dark' as 'sidebar-dark' | 'sidebar-light',
   // Global MCP auto-connect toggle
   auto_connect: false as boolean,
   // MCP servers persisted configuration
@@ -349,7 +348,8 @@ async function loadSettings() {
       // Back-compat: map legacy keys to new ones
       if (ui === 'sidebar') ui = 'sidebar-dark'
       if (ui === 'light') ui = 'sidebar-light'
-      if (ui === 'tabs' || ui === 'sidebar-dark' || ui === 'sidebar-light') settings.ui_style = ui
+      if (ui === 'tabs') ui = 'sidebar-dark'
+      if (ui === 'sidebar-dark' || ui === 'sidebar-light') settings.ui_style = ui
     }
     if (typeof (v as any).auto_connect === 'boolean') settings.auto_connect = (v as any).auto_connect
     // Load MCP servers and derive UI fields
@@ -825,10 +825,6 @@ const themeCssLinkId = 'theme-style-css'
 const styleCssMap: Record<string, string> = {
   'sidebar-dark': sidebarDarkStyleUrl,
   'sidebar-light': sidebarLightStyleUrl,
-  'tabs': tabsStyleUrl,
-  // Back-compat aliases
-  'sidebar': sidebarDarkStyleUrl,
-  'light': sidebarLightStyleUrl,
 }
 function ensureThemeLinkEl(): HTMLLinkElement {
   let el = document.getElementById(themeCssLinkId) as HTMLLinkElement | null
@@ -997,7 +993,8 @@ watch(() => settings.ui_style, (v) => {
 
       <div class="main">
         <div class="main-content">
-          <template v-if="ui.activeSection === 'Prompt'">
+          <template v-if="ui.activeSection === 'Prompt'">          
+            <div class="section"><div class="section-title">Prompt</div></div>
             <template v-if="ui.promptSubview === 'History'">
               <div class="section">
                 <div class="section-title">History</div>
@@ -1032,6 +1029,7 @@ watch(() => settings.ui_style, (v) => {
 
           <div v-else-if="ui.activeSection === 'Settings'" class="section">
             <div class="settings">
+            <div class="section-title">Settings</div>
               <!-- Settings subview: General -->
               <SettingsGeneral
                 v-if="ui.settingsSubview === 'General'"
@@ -1066,133 +1064,7 @@ watch(() => settings.ui_style, (v) => {
         </div>
       </div>
     </div>
-    <div v-else>
-      <div class="nav">
-        <button
-          v-for="s in ui.sections"
-          :key="s"
-          class="tab"
-          :class="{ active: ui.activeSection === s }"
-          @click="setSection(s)"
-        >
-          <template v-if="s === 'Prompt'">
-            <!-- Pen Tool -->
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="m12 19 7-7 3 3-7 7-3-3z"/>
-              <path d="m18 13-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/>
-              <path d="m2 2 7.586 7.586"/>
-              <circle cx="11" cy="11" r="2"/>
-            </svg>
-          </template>
-          <template v-else-if="s === 'TTS'">
-            <!-- Volume 2 -->
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-              <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
-              <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
-            </svg>
-          </template>
-          <template v-else-if="s === 'STT'">
-            <!-- Mic -->
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
-              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-              <line x1="12" x2="12" y1="19" y2="22"/>
-            </svg>
-          </template>
-          <template v-else>
-            <!-- Settings (cog) -->
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="3"/>
-              <rect x="11" y="0" width="2" height="4" rx="1"/>
-              <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(60 12 12)"/>
-              <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(120 12 12)"/>
-              <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(180 12 12)"/>
-              <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(240 12 12)"/>
-              <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(300 12 12)"/>
-            </svg>
-          </template>
-          <span>{{ s }}</span>
-        </button>
-        <div class="spacer"></div>
-        <LoadingDots v-if="isBusy()" text="Working" />
-      </div>
-
-      <!-- Subnav under Prompt -->
-      <div v-if="ui.activeSection === 'Prompt'" class="subnav">
-        <button class="subtab" :class="{ active: ui.promptSubview === 'Chat' }" @click="ui.promptSubview = 'Chat'">Chat</button>
-        <button class="subtab" :class="{ active: ui.promptSubview === 'History' }" @click="ui.promptSubview = 'History'">History</button>
-      </div>
-
-      <div class="content">
-        <template v-if="ui.activeSection === 'Prompt'">
-          <template v-if="ui.promptSubview === 'History'">
-            <div class="section">
-              <div class="section-title">History</div>
-              <ConversationHistory @open="ui.activeSection = 'Prompt'; ui.promptSubview = 'Chat'" />
-            </div>
-          </template>
-          <template v-else>
-            <div class="prompt-layout">
-              <div class="convo-wrap">
-                <ConversationView
-                  :messages="conversation.currentConversation.messages"
-                  :hide-tool-details="settings.hide_tool_calls_in_chat"
-                  :mcp-servers="settings.mcp_servers"
-                  @list-tools="onListTools"
-                  @toggle-tool="onToggleTool"
-                />
-              </div>
-              <PromptComposer v-model="composerInput" @busy="busy.prompt = $event" />
-            </div>
-          </template>
-        </template>
-
-        <div v-else-if="ui.activeSection === 'TTS'" class="section">
-          <div class="section-title">TTS</div>
-          <TTSPanel ref="ttsRef" :notify="showToast" @busy="busy.tts = $event" />
-        </div>
-
-        <div v-else-if="ui.activeSection === 'STT'" class="section">
-          <div class="section-title">STT</div>
-          <STTPanel :notify="showToast" @use-as-prompt="handleUseAsPrompt" @busy="busy.stt = $event" />
-        </div>
-
-        <div v-else-if="ui.activeSection === 'Settings'" class="section">          
-          <div class="settings">
-            <!-- Settings subview: General -->
-            <SettingsGeneral
-              v-if="ui.settingsSubview === 'General'"
-              :settings="settings"
-              :models="models"
-              :onSave="saveSettings"
-              :onRefreshModels="refreshModels"
-              :onClearConversations="onClearConversations"
-            />
-
-            <!-- Settings subview: Quick Prompts -->
-            <SettingsQuickPrompts v-else-if="ui.settingsSubview === 'Quick Prompts'" :notify="showToast" />
-
-            <!-- Settings subview: MCP Servers -->
-            <SettingsMcpServers
-              v-else
-              :settings="settings"
-              :onAdd="addMcpServer"
-              :onRemove="removeMcpServer"
-              :onSave="saveSettings"
-              :onConnect="connectServer"
-              :onDisconnect="disconnectServer"
-              :onPing="pingServer"
-              :onListTools="listTools"
-              :onFillArgsTemplate="fillArgsTemplate"
-              :onValidateEnvJsonInput="validateEnvJsonInput"
-              :onCallTool="callTool"
-              :selectedToolObj="selectedToolObj"
-            />
-          </div>
-        </div>
-        </div>
-      </div>
+    
     </div>
 
     <!-- Toast -->
@@ -1201,26 +1073,14 @@ watch(() => settings.ui_style, (v) => {
 </template>
 
 <style scoped>
-/* Top navigation */
-.nav { display: flex; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--adc-border); }
-.tab { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }
-.tab.active { background: var(--adc-accent); border-color: var(--adc-accent); }
-.tab:hover { filter: brightness(1.05); }
-
-.spacer { flex: 1; }
-
+/* Section layout */
 .content { padding: 12px 0; overflow: auto; }
-.section { margin: 0 auto; max-width: 920px; }
+.section { margin: 0 auto; max-width: none; }
 .section-title { font-weight: 700; margin-bottom: 8px; font-size: 18px; }
 .section-hint { font-size: 12px; color: var(--adc-fg-muted); }
 
-/* Subnavigation under Prompt */
-.subnav { display: flex; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--adc-border); }
-.subtab { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); cursor: pointer; font-size: 12px; }
-.subtab.active { background: var(--adc-accent); border-color: var(--adc-accent); }
-.subtab:hover { filter: brightness(1.05); }
 
-.settings { margin: 24px auto; max-width: 720px; color: var(--adc-fg); }
+.settings { margin: 0px auto; max-width: none; color: var(--adc-fg); }
 .settings-section { border: 1px solid var(--adc-border); border-radius: 10px; padding: 14px; background: var(--adc-surface); }
 .settings-title { font-weight: 700; margin-bottom: 8px; }
 .settings-row { display: flex; gap: 10px; align-items: center; margin: 8px 0; }
@@ -1237,7 +1097,7 @@ watch(() => settings.ui_style, (v) => {
 .settings-hint.error { color: #f2b8b8; }
 
 /* Ensure styles apply inside child settings components */
-.settings :deep(.settings-section) { border: 1px solid var(--adc-border); border-radius: 10px; padding: 14px; background: var(--adc-surface); }
+.settings :deep(.settings-section) { border: 1px solid var(--adc-border); border-radius: 10px; background: var(--adc-surface); }
 .settings :deep(.settings-title) { font-weight: 700; margin-bottom: 8px; }
 .settings :deep(.settings-row) { display: flex; gap: 10px; align-items: center; margin: 8px 0; }
 .settings :deep(.settings-row.col) { flex-direction: column; align-items: flex-start; }
@@ -1261,7 +1121,7 @@ watch(() => settings.ui_style, (v) => {
 .sidebar.collapsed { width: 64px; }
 .burger { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); cursor: pointer; }
 .side-tab { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); cursor: pointer; text-align: left; display: flex; align-items: center; gap: 8px; }
-.tab svg, .side-tab svg, .side-subtab svg { width: 16px; height: 16px; }
+.side-tab svg, .side-subtab svg { width: 16px; height: 16px; }
 .side-tab.active { background: var(--adc-accent); border-color: var(--adc-accent); }
 .side-subtab { margin-left: 14px; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); cursor: pointer; text-align: left; font-size: 12px; display: flex; align-items: center; gap: 8px; }
 .side-subtab.active { background: var(--adc-accent); border-color: var(--adc-accent); color: #fff; }
@@ -1271,7 +1131,7 @@ watch(() => settings.ui_style, (v) => {
 .main-content { flex: 1; min-height: 0; overflow: auto; padding: 12px 12px; }
 
 /* Prompt layout with scrolling conversation */
-.prompt-layout { display: flex; flex-direction: column; gap: 10px; height: 100%; }
+.prompt-layout { display: flex; flex-direction: column; gap: 10px; height: 95%; }
 .convo-wrap { flex: 1; min-height: 0; }
 </style>
 

@@ -73,7 +73,7 @@ Last updated: 2025-08-26
 
 - Mechanism: Base styles live in `app/src/style.css`. The main window dynamically loads a style‑specific CSS via a `<link id="theme-style-css">` injected by `applyStyleCss()` in `app/src/App.vue`.
 - Styles directory: `app/src/styles/<styleName>/style.css`.
-- Current styles: `sidebar` (default) and `tabs` (legacy). ‼️ Both ship with placeholder overrides — customize as needed.
+- Current styles: `sidebar-dark` (default) and `sidebar-light`. ‼️ Both ship with placeholder overrides — customize as needed.
 - Switching: `Settings` ➜ `UI Style` updates `settings.ui_style`; a watcher updates the injected CSS at runtime (HMR-friendly).
 - Windows excluded: Quick Actions and Capture Overlay do not load style CSS by default to remain minimal and consistent.
 
@@ -82,7 +82,7 @@ Add a new style:
 2. In `app/src/App.vue`, import the CSS with `?url` and extend `styleCssMap`:
    ```ts
    import myStyleUrl from './styles/myStyle/style.css?url'
-   const styleCssMap = { sidebar: sidebarStyleUrl, tabs: tabsStyleUrl, myStyle: myStyleUrl }
+   const styleCssMap = { 'sidebar-dark': sidebarDarkStyleUrl, 'sidebar-light': sidebarLightStyleUrl, myStyle: myStyleUrl }
    ```
 3. (Optional) Add `<option value="myStyle">My Style</option>` in the Settings UI and extend the TypeScript union for `ui_style`.
 

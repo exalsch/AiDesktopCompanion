@@ -1,15 +1,14 @@
 # UI Styles
 
-This app supports multiple UI styles (layouts) with their own CSS files. The current built‑in styles are:
+This app supports multiple UI styles (layouts) with their own CSS files. The supported built‑in styles are:
 
 - sidebar-dark: Sidebar navigation layout (default, dark)
 - sidebar-light: Sidebar navigation layout (light)
-- tabs: Top tabs layout (legacy)
 
 The active style is stored in `settings.ui_style` and can be switched in the Settings tab of the main window.
 
 Back‑compat note:
-- Legacy values `sidebar` and `light` are still accepted and automatically mapped to `sidebar-dark` and `sidebar-light` respectively.
+- Legacy values `sidebar` and `light` are still accepted and automatically mapped to `sidebar-dark` and `sidebar-light` respectively. Any legacy `tabs` value is coerced to `sidebar-dark`.
 
 ## How it works
 
@@ -32,12 +31,12 @@ app/
         style.css
       sidebar-light/
         style.css
-      tabs/
-        style.css
-      (legacy):
-        sidebar/        # kept for reference; not used by loader
+      (legacy, not used by loader):
+        sidebar/
           style.css
-        light/          # kept for reference; not used by loader
+        light/
+          style.css
+        tabs/
           style.css
 ```
 
@@ -87,7 +86,6 @@ import myStyleUrl from './styles/myStyle/style.css?url'
 const styleCssMap: Record<string, string> = {
   'sidebar-dark': sidebarDarkStyleUrl,
   'sidebar-light': sidebarLightStyleUrl,
-  'tabs': tabsStyleUrl,
   'myStyle': myStyleUrl,
   // Back-compat aliases (optional):
   'sidebar': sidebarDarkStyleUrl,
@@ -97,7 +95,7 @@ const styleCssMap: Record<string, string> = {
 
 3) Make the style selectable (optional)
 - Update the UI Style dropdown in `App.vue` Settings section to include an `<option value="myStyle">My Style</option>`.
-- Ensure any type definitions reflect the new literal (TypeScript unions). Current union is `'sidebar-dark' | 'sidebar-light' | 'tabs'`.
+- Ensure any type definitions reflect the new literal (TypeScript unions). Current union is `'sidebar-dark' | 'sidebar-light'`.
 
 4) Test
 - With the dev server running, switch styles in Settings and verify HMR applies the new CSS without page reload.

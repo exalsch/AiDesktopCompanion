@@ -67,6 +67,6 @@
   outline: none;
   box-shadow: 0 0 0 3px var(--adc-focus-ring);
 }
-.tab:hover, .subtab:hover, .side-tab:hover, .side-subtab:hover, .burger:hover {
+.side-tab:hover, .side-subtab:hover, .burger:hover {
   border-color: var(--adc-accent);
 }

@@ -6,13 +6,13 @@
 ## UI Styles
 
 - Dynamic per-style CSS loading is implemented in `app/src/App.vue` via Vite `?url` assets.
-- Available styles: `sidebar` (default), `tabs`, and `light` (new light desktop theme).
+- Available styles: `sidebar-dark` (default) and `sidebar-light`.
 - Switch style via Settings: UI Style.
 
 ## Prompt History
 
 - The Prompt section has subviews: `Chat` and `History`.
-- Access History under Prompt in both sidebar and top-tabs layouts.
+- Access History under Prompt in the sidebar layout.
 
 ## Tray Icon
 

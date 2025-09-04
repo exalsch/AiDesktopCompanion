@@ -16,10 +16,15 @@
         "label": "main",
         "width": 800,
         "height": 600,
-        "minWidth": 650,
-        "minHeight": 600,
+        "minWidth": 760,
+        "minHeight": 740,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "browserExtensionsEnabled": false,
+        "allowLinkPreview": false,
+        "windowEffects": {
+          "effects": ["mica"]
+        }
       }
     ],
     "security": {

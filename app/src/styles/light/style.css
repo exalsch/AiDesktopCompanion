@@ -1,5 +1,5 @@
 /* Light desktop theme
-   Applied when settings.ui_style === 'light'
+   Legacy: not used by the style loader; kept for reference.
    Provide a clean, high-contrast light palette overriding base dark defaults. */
 
 :root {
@@ -36,16 +36,6 @@
 .toast { background: #ffffff; color: var(--adc-fg); border-color: var(--adc-border-strong); box-shadow: 0 6px 24px rgba(0,0,0,0.08); }
 .toast.success { background: #eaf6ed; border-color: #cfe8d5; }
 .toast.error { background: #fdeaea; border-color: #f2c0c0; }
-
-/* Top nav (tabs layout) */
-.nav { border-bottom-color: var(--adc-border); }
-.tab { background: var(--adc-surface); color: var(--adc-fg); border-color: var(--adc-border); }
-.tab.active { background: var(--adc-accent); border-color: var(--adc-accent); color: #fff; }
-
-/* Subnav under Prompt */
-.subnav { border-bottom-color: var(--adc-border); }
-.subtab { background: var(--adc-surface); color: var(--adc-fg); border-color: var(--adc-border); }
-.subtab.active { background: var(--adc-accent); border-color: var(--adc-accent); color: #fff; }
 
 /* Sidebar layout */
 .sidebar { background: var(--adc-sidebar-bg); border-right-color: var(--adc-border); }

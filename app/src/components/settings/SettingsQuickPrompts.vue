@@ -7,7 +7,6 @@ const props = defineProps<{
 </script>
 
 <template>
-  <div class="section-title">Settings</div>
   <div class="settings-section">
     <div class="settings-title">Quick Prompts</div>
     <div class="settings-hint">Writes defaults to %APPDATA%/AiDesktopCompanion/quick_prompts.json</div>

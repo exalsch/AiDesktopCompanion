@@ -17,9 +17,7 @@ const props = defineProps<{
 }>()
 </script>
 
-<template>
-  <div class="section-title">Settings</div>
-  
+<template>  
   <div class="settings-section">
     <div class="settings-title">MCP Servers</div>  
     <div class="settings-hint">Configure MCP servers. Supports stdio and http transports.</div>
@@ -99,7 +97,7 @@ const props = defineProps<{
         </div>
       </div>
 
-      <!-- Tools panel (tabs layout) -->
+      <!-- Tools panel -->
       <div v-if="s.toolsOpen" class="settings-section" style="margin-top:8px;">
         <div class="settings-title">Tools</div>
         <div class="settings-row">
@@ -113,7 +111,7 @@ const props = defineProps<{
         <div class="settings-hint" v-if="s.selectedTool">
           {{ (props.selectedToolObj(s)?.description) || '' }}
         </div>
-        <!-- Dynamic parameter fields from tool schema (tabs layout) -->
+        <!-- Dynamic parameter fields from tool schema -->
         <div v-if="s.selectedTool" class="settings-row col" style="margin-top:4px;">
           <label class="label">Parameters</label>
           <div v-if="(props.selectedToolObj(s)?.inputSchema?.properties) || (props.selectedToolObj(s)?.input_schema?.properties)" class="settings-hint">

@@ -290,7 +290,7 @@ defineExpose({
         <datalist id="openai-models">
           <option v-for="m in openaiModelOptions" :key="m" :value="m" />
         </datalist>
-        <div class="hint">Pick a model or type a custom one. Default is gpt-4o-mini-tts. ‼️ Options are suggestions.</div>
+        <div class="hint">Pick a model or type a custom one. Default is gpt-4o-mini-tts. Options might not be tts compatible.</div>
       </div>
       <div class="cell" v-if="engine === 'openai'">
         <label class="label">Voice (OpenAI)</label>
@@ -298,7 +298,7 @@ defineExpose({
         <datalist id="openai-voices">
           <option v-for="v in openaiVoiceOptions" :key="v" :value="v" />
         </datalist>
-        <div class="hint">Select a voice or type a custom one. Default is "alloy". ‼️ Suggestions list not exhaustive.</div>
+        <div class="hint">Select a voice or type a custom one. Default is "alloy". Suggestions list might be incomplete.</div>
       </div>
       <div class="cell">
         <label class="label">Rate: {{ form.rate }}</label>

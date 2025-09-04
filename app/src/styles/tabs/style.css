@@ -1,6 +1,6 @@
-/* Tabs layout theme CSS
-   Applied when settings.ui_style === 'tabs'
-   ‼️ Placeholder: customize variables and overrides for the tabs theme. */
+/* Tabs layout theme CSS (LEGACY)
+   This style is no longer used by the app's style loader and is kept only for reference.
+   ‼️ Placeholder: customize variables and overrides for the tabs theme if you ever reintroduce it. */
 
 :root {
   --adc-accent: #ff8844;
