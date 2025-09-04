@@ -18,8 +18,10 @@ const props = defineProps<{
 </script>
 
 <template>
+  <div class="section-title">Settings</div>
+  
   <div class="settings-section">
-    <div class="settings-title">MCP Servers</div>
+    <div class="settings-title">MCP Servers</div>  
     <div class="settings-hint">Configure MCP servers. Supports stdio and http transports.</div>
 
     <div class="settings-row">

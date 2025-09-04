@@ -77,8 +77,7 @@ onMounted(loadPrompts)
 
 <template>
   <div class="qp-editor">
-    <div class="qp-header">
-      <div class="title">Quick Prompts Editor</div>
+    <div class="qp-header">      
       <div class="actions">
         <button class="btn" :disabled="busy" @click="save">Save</button>
         <button class="btn secondary" :disabled="busy" @click="resetDefaults">Reset to defaults</button>

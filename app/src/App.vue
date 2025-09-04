@@ -1006,7 +1006,7 @@ watch(() => settings.ui_style, (v) => {
             </template>
             <template v-else>
               <div class="prompt-layout">
-                <div class="convo-wrap">
+                <div class="main-content">
                   <ConversationView
                     :messages="conversation.currentConversation.messages"
                     :hide-tool-details="settings.hide_tool_calls_in_chat"
@@ -1158,7 +1158,7 @@ watch(() => settings.ui_style, (v) => {
           <STTPanel :notify="showToast" @use-as-prompt="handleUseAsPrompt" @busy="busy.stt = $event" />
         </div>
 
-        <div v-else-if="ui.activeSection === 'Settings'" class="section">
+        <div v-else-if="ui.activeSection === 'Settings'" class="section">          
           <div class="settings">
             <!-- Settings subview: General -->
             <SettingsGeneral

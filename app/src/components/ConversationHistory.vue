@@ -50,8 +50,7 @@ function openConversation(id: string) {
 </script>
 
 <template>
-  <div class="history">
-    <div class="row-title">History</div>
+  <div class="history">    
     <div class="list" role="list">
       <div
         v-for="it in items"

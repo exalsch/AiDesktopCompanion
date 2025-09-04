@@ -13,9 +13,11 @@ const showApiKey = ref(false)
 </script>
 
 <template>
-  <div class="settings-section">
-    <div class="settings-title">Prompt Settings</div>
+<div class="section-title">Settings</div>
 
+  <div class="settings-section">
+    <div class="settings-title">General Settings</div>  
+    <button class="btn" @click="props.onSave">Save</button>        
     <div class="settings-row col">
       <label class="label">OpenAI API Key</label>
       <div class="row-inline">
@@ -60,16 +62,12 @@ const showApiKey = ref(false)
     </div>
 
     <div class="settings-row">
-      <label class="checkbox"><input type="checkbox" v-model="props.settings.persist_conversations"/> Persist conversations (OFF by default)</label>
+      <label class="checkbox"><input type="checkbox" v-model="props.settings.persist_conversations"/> Persist conversations</label>
+      <button class="btn danger" @click="props.onClearConversations">Clear All Conversations</button>      
     </div>
+    <div class="settings-hint">When enabled, conversation history is saved locally only.</div>
     <div class="settings-row">
       <label class="checkbox"><input type="checkbox" v-model="props.settings.hide_tool_calls_in_chat"/> Hide tool call details in chat</label>
-    </div>
-    <div class="settings-hint">Privacy-first: history is not saved unless enabled. When enabled, conversation history is saved locally.</div>
-
-    <div class="settings-row">
-      <button class="btn" @click="props.onSave">Save Settings</button>
-      <button class="btn danger" @click="props.onClearConversations">Clear All Conversations</button>
     </div>
   </div>
 </template>
