@@ -198,9 +198,9 @@ function escapeHtml(s: string): string {
 .text { white-space: normal; text-align: left; }
 .md-content { line-height: 1.45; }
 .md-content :where(h1,h2,h3,h4,h5,h6) { margin: 0.6em 0 0.3em; font-weight: 700; }
-.md-content h1 { font-size: 1.10em; }
-.md-content h2 { font-size: 1.06em; }
-.md-content h3 { font-size: 1.02em; }
+.md-content h1 { font-size: 1.04em; }
+.md-content h2 { font-size: 1.02em; }
+.md-content h3 { font-size: 1.00em; }
 .md-content p { margin: 0.4em 0; }
 .md-content ul { margin: 0.4em 0 0.4em 1.2em; }
 .md-content li { margin: 0.2em 0; }
