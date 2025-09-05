@@ -242,6 +242,14 @@ onMounted(async () => {
       })
     })
     unsubs.push(u6c)
+    // Observe speaking state to auto-clear when background playback ends naturally
+    const u6d = await listen<{ speaking: boolean }>('tts:speaking', (e) => {
+      try {
+        const speaking = !!((e?.payload as any)?.speaking)
+        if (!speaking) { ttsBg.playing = false; ttsBg.currentMessageId = '' }
+      } catch {}
+    })
+    unsubs.push(u6d)
   } catch (err) {
     console.error('[app] event listen failed', err)
   }
