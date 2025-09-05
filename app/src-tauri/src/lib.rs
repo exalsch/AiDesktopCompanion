@@ -1163,6 +1163,7 @@ try {{
 }
 
 #[cfg(target_os = "windows")]
+#[allow(dead_code)]
 fn speak_windows(text: &str) -> Result<(), String> {
   use std::io::Write;
   use std::process::{Command, Stdio};
@@ -1198,6 +1199,7 @@ $s.Rate = -2; $s.Volume = 100;
 }
 
 #[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
 fn speak_windows(_text: &str) -> Result<(), String> {
   Err("TTS not implemented on this platform".into())
 }
@@ -1868,7 +1870,7 @@ async fn chat_complete(app: tauri::AppHandle, messages: Vec<ChatMessage>) -> Res
         let mut fargs_val: serde_json::Value = serde_json::from_str(fargs_str).unwrap_or_else(|_| serde_json::json!({}));
         if !fargs_val.is_object() { fargs_val = serde_json::json!({}); }
 
-        let mut tool_result_text = String::new();
+        let tool_result_text: String;
         if let Some((server_id, tool_name)) = parse_mcp_fn_call_name(&fname) {
           // Emit tool-call event for UI visibility
           let _ = app.emit("chat:tool-call", serde_json::json!({

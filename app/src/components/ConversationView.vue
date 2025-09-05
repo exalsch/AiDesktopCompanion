@@ -9,6 +9,8 @@ const props = defineProps<{
   messages: Message[]
   hideToolDetails?: boolean
   mcpServers?: any[]
+  ttsPlayingId?: string
+  ttsPlaying?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -94,7 +96,7 @@ onMounted(async () => {
 
 
     <div ref="listRef" class="list convo-wrap">
-      <MessageItem v-for="m in messages" :key="m.id" :message="m" :hide-tool-details="props.hideToolDetails" @image-click="onImageClick" />
+      <MessageItem v-for="m in messages" :key="m.id" :message="m" :hide-tool-details="props.hideToolDetails" :is-playing="!!props.ttsPlaying && props.ttsPlayingId === m.id" @image-click="onImageClick" />
     </div>
   </div>
   <!-- MCP Tool Selection Modal -->
