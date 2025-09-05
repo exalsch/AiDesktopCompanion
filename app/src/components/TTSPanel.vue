@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { reactive, ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { emit as emitTauri } from '@tauri-apps/api/event'
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import { save as saveDialog } from '@tauri-apps/plugin-dialog'
 
@@ -230,6 +231,11 @@ onBeforeUnmount(() => {
 })
 
 watch(busy, (v) => emit('busy', !!v))
+
+// Broadcast speaking state so other parts of the app (e.g., background controller) can react
+watch(speaking, (v) => {
+  try { emitTauri('tts:speaking', { speaking: !!v }) } catch {}
+})
 
 async function loadOpenAIModels() {
   try {

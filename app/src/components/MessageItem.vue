@@ -2,8 +2,9 @@
 import { ref, computed, onMounted } from 'vue'
 import type { Message } from '../state/conversation'
 import 'highlight.js/styles/github-dark.css'
+import { emit as emitTauri } from '@tauri-apps/api/event'
 
-const props = defineProps<{ message: Message; hideToolDetails?: boolean }>()
+const props = defineProps<{ message: Message; hideToolDetails?: boolean; isPlaying?: boolean }>()
 const emit = defineEmits<{
   (e: 'image-click', payload: { images: { path: string; src: string }[]; index: number }): void
 }>()
@@ -50,6 +51,54 @@ onMounted(async () => {
     renderMarkdown.value = (src: string) => basicMarkdownFallback(src)
   }
 })
+
+// Copy and Read Aloud actions
+const copied = ref(false)
+
+async function copyMessage() {
+  try {
+    if (props.message.type !== 'text') return
+    const text = String(props.message.text ?? '')
+    if (!text) return
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text)
+    } else {
+      // Fallback: hidden textarea
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.focus()
+      ta.select()
+      try { document.execCommand('copy') } catch {}
+      document.body.removeChild(ta)
+    }
+    copied.value = true
+    setTimeout(() => (copied.value = false), 1200)
+  } catch (err) {
+    console.error('Copy failed:', err)
+  }
+}
+
+async function playTtsInBackground() {
+  try {
+    if (props.message.type !== 'text') return
+    const text = markdownToPlain(String(props.message.text ?? ''))
+    if (!text) return
+    await emitTauri('tts:play-background', { text, id: props.message.id })
+  } catch (err) {
+    console.error('Failed to trigger TTS:', err)
+  }
+}
+
+async function stopTtsInBackground() {
+  try {
+    await emitTauri('tts:stop-background')
+  } catch (err) {
+    console.error('Failed to stop TTS:', err)
+  }
+}
 
 const renderedHtml = computed(() => {
   if (props.message.type !== 'text') return ''
@@ -115,11 +164,51 @@ function escapeHtml(s: string): string {
     .replaceAll(/</g, '&lt;')
     .replaceAll(/>/g, '&gt;')
 }
+
+// Convert markdown to a plain, readable string for TTS
+function markdownToPlain(input: string): string {
+  let s = input ?? ''
+  s = s.replace(/```[\s\S]*?```/g, '') // remove fenced code blocks
+  s = s.replace(/`([^`]+)`/g, '$1') // inline code backticks
+  s = s.replace(/!\[[^\]]*\]\([^\)]+\)/g, '') // images
+  s = s.replace(/\[([^\]]+)\]\(([^\)]+)\)/g, '$1') // links keep text
+  s = s.replace(/^>+\s?/gm, '') // blockquotes
+  s = s.replace(/^#{1,6}\s*/gm, '') // headings
+  s = s.replace(/\*\*([^*]+)\*\*/g, '$1') // bold
+  s = s.replace(/(^|[^*])\*([^*]+)\*/g, '$1$2') // italic
+  s = s.replace(/^\s*[-*]\s+/gm, '• ') // lists to bullets
+  s = s.replace(/\n{3,}/g, '\n\n')
+  return s.trim()
+}
 </script>
 
 <template>
   <div class="row" :class="props.message.role">
     <div class="bubble" :data-type="props.message.type">
+      <div v-if="props.message.type === 'text'" class="bubble-actions">
+        <button class="bubble-action-btn" :title="copied ? 'Copied' : 'Copy'" @click="copyMessage" aria-label="Copy message">
+          <span v-if="!copied">📋</span>
+          <span v-else>✅</span>
+        </button>
+        <button
+          v-if="!props.isPlaying"
+          class="bubble-action-btn"
+          title="Read aloud"
+          @click="playTtsInBackground"
+          aria-label="Read aloud"
+        >
+          <span>🔊</span>
+        </button>
+        <button
+          v-else
+          class="bubble-action-btn"
+          title="Stop"
+          @click="stopTtsInBackground"
+          aria-label="Stop read aloud"
+        >
+          <span>⏹️</span>
+        </button>
+      </div>
       <div v-if="props.message.type === 'text'" class="text">
         <div class="md-content" v-html="renderedHtml"></div>
       </div>
@@ -180,6 +269,7 @@ function escapeHtml(s: string): string {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  position: relative;
 }
 .row.assistant > .bubble {
   background: var(--adc-assistant-bubble-bg, var(--adc-surface));
@@ -219,6 +309,13 @@ function escapeHtml(s: string): string {
 .row.assistant .meta-line { justify-content: flex-start; color: var(--adc-fg-muted); }
 .row.user .meta-line { justify-content: flex-end; color: #e9ebff; }
 .badge { background: var(--adc-accent); color: #fff; border-radius: 6px; padding: 1px 6px; font-size: 10px; }
+
+/* Bubble action buttons (copy, read aloud) */
+.bubble-actions { position: absolute; top: 6px; right: 6px; display: flex; align-items: center; gap: 6px; opacity: 0; transition: opacity 0.15s ease; z-index: 1; }
+.bubble:hover .bubble-actions { opacity: 0.9; }
+.bubble-action-btn { width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--adc-border); background: var(--adc-bg); color: var(--adc-fg); border-radius: 6px; cursor: pointer; padding: 0; font-size: 14px; line-height: 1; }
+.bubble-action-btn:hover { filter: brightness(1.05); }
+.row.user .bubble-action-btn { background: rgba(255,255,255,0.12); color: #fff; border-color: rgba(255,255,255,0.25); }
 
 /* Tool call rendering */
 .tool { display: flex; flex-direction: column; gap: 8px; }

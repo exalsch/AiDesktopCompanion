@@ -52,6 +52,9 @@ const isBusy = () => busy.prompt || busy.tts || busy.stt || models.loading
 const composerInput = ref('')
 // Ref to TTS panel for programmatic control
 const ttsRef = ref<InstanceType<typeof TTSPanel> | null>(null)
+// Hidden background TTS controller
+const ttsBgRef = ref<InstanceType<typeof TTSPanel> | null>(null)
+const ttsBg = reactive<{ playing: boolean; currentMessageId: string }>({ playing: false, currentMessageId: '' })
 // Ref to PromptComposer to allow programmatic send
 const composerRef = ref<InstanceType<typeof PromptComposer> | null>(null)
 // (Quick Prompts editor now encapsulated in SettingsQuickPrompts)
@@ -208,6 +211,37 @@ onMounted(async () => {
       })
     })
     unsubs.push(u6)
+    // Background TTS playback (non-disruptive)
+    const u6b = await listen<{ text: string; id?: string }>('tts:play-background', (e) => {
+      const p = e.payload || ({} as any)
+      const text = typeof p.text === 'string' ? p.text : ''
+      const id = typeof p.id === 'string' ? p.id : ''
+      requestAnimationFrame(() => {
+        const c = ttsBgRef.value as any
+        // Enforce single-stream: stop any current playback before starting new
+        if (c?.stop) {
+          Promise.resolve(c.stop()).catch(() => {}).finally(() => {
+            Promise.resolve(c.setTextAndPlay?.(text)).then(() => {
+              ttsBg.playing = true
+              ttsBg.currentMessageId = id
+            }).catch(() => {})
+          })
+        } else {
+          Promise.resolve(c?.setTextAndPlay?.(text)).then(() => {
+            ttsBg.playing = true
+            ttsBg.currentMessageId = id
+          }).catch(() => {})
+        }
+      })
+    })
+    unsubs.push(u6b)
+    const u6c = await listen('tts:stop-background', () => {
+      requestAnimationFrame(() => {
+        const c = ttsBgRef.value as any
+        Promise.resolve(c?.stop?.()).finally(() => { ttsBg.playing = false; ttsBg.currentMessageId = '' })
+      })
+    })
+    unsubs.push(u6c)
   } catch (err) {
     console.error('[app] event listen failed', err)
   }
@@ -1072,6 +1106,8 @@ watch(() => settings.ui_style, (v) => {
                     :messages="conversation.currentConversation.messages"
                     :hide-tool-details="settings.hide_tool_calls_in_chat"
                     :mcp-servers="settings.mcp_servers"
+                    :tts-playing-id="ttsBg.currentMessageId"
+                    :tts-playing="ttsBg.playing"
                     @list-tools="onListTools"
                     @toggle-tool="onToggleTool"
                   />
@@ -1139,6 +1175,11 @@ watch(() => settings.ui_style, (v) => {
       </div>
     </div>
     
+    </div>
+
+    <!-- Hidden background TTS controller (non-disruptive) -->
+    <div style="position: fixed; width: 0; height: 0; overflow: hidden; opacity: 0; pointer-events: none;">
+      <TTSPanel ref="ttsBgRef" />
     </div>
 
     <!-- Toast -->
