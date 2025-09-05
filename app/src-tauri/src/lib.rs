@@ -649,7 +649,7 @@ fn get_api_key_from_settings_or_env() -> Result<String, String> {
   if let Some(s) = v.get("openai_api_key").and_then(|x| x.as_str()) {
     if !s.trim().is_empty() { return Ok(s.to_string()); }
   }
-  std::env::var("OPENAI_API_KEY").map_err(|_| "OPENAI_API_KEY not set".to_string())
+  std::env::var("OPENAI_API_KEY").map_err(|_| "OPENAI_API_KEY not set in settings or environment".to_string())
 }
 
 fn get_model_from_settings_or_env() -> String {
