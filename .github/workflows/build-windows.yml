@@ -1,0 +1,78 @@
+name: Build Windows Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    name: Build Windows installer
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'app/package-lock.json'
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust (Cargo + target)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            app/src-tauri
+          cache-on-failure: true
+
+      - name: Install WiX Toolset (for MSI bundling)
+        run: choco install wixtoolset -y --no-progress
+
+      - name: Import Windows code signing cert (optional)
+        if: ${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' && secrets.WINDOWS_CERT_PASSWORD != '' }}
+        shell: pwsh
+        run: |
+          $certPath = "$env:RUNNER_TEMP\\codesign.pfx"
+          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
+          echo "CERT_PATH=$certPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Install frontend dependencies
+        working-directory: app
+        run: npm install
+
+      - name: Build Tauri app (Windows release)
+        working-directory: app
+        run: npm run tauri build
+
+      - name: Code-sign Windows artifacts (optional)
+        if: env.CERT_PATH != ''
+        shell: pwsh
+        run: |
+          $signtool = (Get-Command signtool.exe -ErrorAction SilentlyContinue).Source
+          if (-not $signtool) { throw "signtool.exe not found on PATH. Ensure Windows SDK is installed." }
+          $timestamp = if ('${{ secrets.WINDOWS_TIMESTAMP_URL }}') { '${{ secrets.WINDOWS_TIMESTAMP_URL }}' } else { 'http://timestamp.digicert.com' }
+          $bundleRoot = "app\src-tauri\target"
+          $files = Get-ChildItem $bundleRoot -Include *.exe,*.msi -Recurse -File
+          if ($files.Count -eq 0) { Write-Host "No signable artifacts found under $bundleRoot." }
+          foreach ($f in $files) {
+            & $signtool sign /f $env:CERT_PATH /p "${{ secrets.WINDOWS_CERT_PASSWORD }}" /fd SHA256 /td SHA256 /tr $timestamp "$($f.FullName)"
+          }
+
+      - name: Upload Windows bundle artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: AiDesktopCompanion-windows
+          path: |
+            app/src-tauri/target/release/bundle/**
+            app/src-tauri/target/*/release/bundle/**
+          if-no-files-found: error
+          retention-days: 7
