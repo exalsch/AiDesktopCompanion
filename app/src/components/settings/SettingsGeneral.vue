@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, defineProps } from 'vue'
+import { ref, defineProps, watch, computed } from 'vue'
+import { checkShortcutAvailable } from '../../hotkeys'
 
 const props = defineProps<{
   settings: any
@@ -10,12 +11,114 @@ const props = defineProps<{
 }>()
 
 const showApiKey = ref(false)
+
+// ----- Global Hotkey UI state
+const modOptions = [
+  { label: 'None', value: '' },
+  { label: 'Alt', value: 'Alt' },
+  { label: 'Shift', value: 'Shift' },
+  { label: 'Ctrl', value: 'Control' },
+  { label: 'Win', value: 'Win' }, // will be normalized to 'Super'
+]
+const ghkMod1 = ref<string>('')
+const ghkMod2 = ref<string>('')
+const ghkKey = ref<string>('')
+const ghkError = ref<string | null>(null)
+const ghkChecking = ref<boolean>(false)
+
+function parseHotkeyToFields(hk: string) {
+  try {
+    const s = (hk || '').trim()
+    if (!s) { ghkMod1.value = ''; ghkMod2.value = ''; ghkKey.value = ''; return }
+    const parts = s.split('+').map(p => p.trim()).filter(Boolean)
+    const mods: string[] = []
+    let key = ''
+    for (const p of parts) {
+      const up = p.toLowerCase()
+      if (up === 'alt' || up === 'shift' || up === 'control' || up === 'ctrl' || up === 'win' || up === 'super' || up === 'command' || up === 'cmd') {
+        // normalize ctrl synonyms
+        const norm = (up === 'ctrl') ? 'Control' : (up === 'super' ? 'Win' : (up === 'cmd' || up === 'command') ? 'Control' : p.charAt(0).toUpperCase() + p.slice(1))
+        mods.push(norm)
+      } else {
+        key = p
+      }
+    }
+    ghkMod1.value = mods[0] || ''
+    ghkMod2.value = mods[1] || ''
+    ghkKey.value = key
+  } catch { ghkMod1.value = ''; ghkMod2.value = ''; ghkKey.value = ''; }
+}
+
+function composeHotkey(): string {
+  const mods = [ghkMod1.value, ghkMod2.value]
+    .map(m => m.trim())
+    .filter(Boolean)
+    .map(m => m === 'Win' ? 'Super' : m) // normalize here for storage/consistency
+  const key = (ghkKey.value || '').trim()
+  const parts = [...mods, key].filter(Boolean)
+  return parts.join('+')
+}
+
+// Initialize from existing setting
+parseHotkeyToFields(props.settings.global_hotkey || '')
+
+// Keep in sync if settings are loaded later or changed externally
+watch(() => props.settings.global_hotkey, (v: string) => {
+  parseHotkeyToFields(typeof v === 'string' ? v : '')
+})
+
+let checkTimer: any = 0
+async function validateGhk() {
+  const hk = composeHotkey()
+  props.settings.global_hotkey = hk
+  ghkError.value = null
+  if (!hk) return
+  ghkChecking.value = true
+  try {
+    const ok = await checkShortcutAvailable(hk)
+    if (!ok) {
+      ghkError.value = 'Hotkey appears unavailable or already in use.'
+    }
+  } catch {
+    ghkError.value = 'Could not validate hotkey.'
+  } finally {
+    ghkChecking.value = false
+  }
+}
+
+watch([ghkMod1, ghkMod2, ghkKey], () => {
+  if (checkTimer) clearTimeout(checkTimer)
+  checkTimer = setTimeout(validateGhk, 300)
+})
 </script>
 
 <template>
   <div class="settings-section">
     <div class="settings-title">General Settings</div>  
     <button class="btn" @click="props.onSave">Save</button>        
+
+    <div class="settings-row col">
+      <label class="label">Global Hotkey</label>
+      <div class="row-inline">
+        <select v-model="ghkMod1" class="input" style="max-width: 160px;">
+          <option v-for="opt in modOptions" :key="'m1-'+opt.value" :value="opt.value">{{ opt.label }}</option>
+        </select>
+        <select v-model="ghkMod2" class="input" style="max-width: 160px;">
+          <option v-for="opt in modOptions" :key="'m2-'+opt.value" :value="opt.value">{{ opt.label }}</option>
+        </select>
+        <input
+          v-model="ghkKey"
+          class="input"
+          placeholder="A or F9 or Space"
+          autocomplete="off"
+          spellcheck="false"
+        />
+      </div>
+      <div class="settings-hint">Example: Alt + Shift + A. Leave all empty to disable. Current: <code>{{ props.settings.global_hotkey || 'disabled' }}</code></div>
+      <div v-if="ghkError" class="settings-hint error">{{ ghkError }}</div>
+    </div>
+
+    <div class="settings-title">AI Provider</div>
     <div class="settings-row col">
       <label class="label">OpenAI API Key</label>
       <div class="row-inline">
@@ -48,7 +151,7 @@ const showApiKey = ref(false)
       <input type="range" min="0" max="2" step="0.05" v-model.number="props.settings.temperature" />
       <div class="settings-hint">Lower = deterministic, Higher = creative. Default 1.0</div>
     </div>
-
+    <div class="settings-title">UI</div>
     <div class="settings-row col">
       <label class="label">UI Style</label>
       <select v-model="props.settings.ui_style" class="input">
@@ -57,7 +160,7 @@ const showApiKey = ref(false)
       </select>
       <div class="settings-hint">Switch between Sidebar Dark or Sidebar Light.</div>
     </div>
-
+    <div class="settings-title">Conversation</div>
     <div class="settings-row">
       <label class="checkbox"><input type="checkbox" v-model="props.settings.persist_conversations"/> Persist conversations</label>
       <button class="btn danger" @click="props.onClearConversations">Clear All Conversations</button>      

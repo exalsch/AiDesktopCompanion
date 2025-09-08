@@ -16,6 +16,7 @@ import { onMounted, onBeforeUnmount, reactive, ref, watch, computed } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
+import { applyGlobalHotkey, checkShortcutAvailable } from './hotkeys'
 // Per-style CSS asset URLs (bundler-resolved)
 // Add new styles by importing their style.css with ?url and extending styleCssMap below
 import sidebarDarkStyleUrl from './styles/sidebar-dark/style.css?url'
@@ -433,6 +434,7 @@ const settings = reactive({
   persist_conversations: false as boolean,
   hide_tool_calls_in_chat: false as boolean,
   ui_style: 'sidebar-dark' as 'sidebar-dark' | 'sidebar-light',
+  global_hotkey: '' as string,
   // Global MCP auto-connect toggle
   auto_connect: false as boolean,
   // MCP servers persisted configuration
@@ -449,6 +451,7 @@ async function loadSettings() {
     if (typeof v.temperature === 'number') settings.temperature = v.temperature
     if (typeof v.persist_conversations === 'boolean') settings.persist_conversations = v.persist_conversations
     if (typeof (v as any).hide_tool_calls_in_chat === 'boolean') settings.hide_tool_calls_in_chat = (v as any).hide_tool_calls_in_chat
+    if (typeof (v as any).global_hotkey === 'string') settings.global_hotkey = (v as any).global_hotkey
     {
       let ui: any = (v as any).ui_style
       // Back-compat: map legacy keys to new ones
@@ -497,6 +500,14 @@ async function loadSettings() {
 
 async function saveSettings() {
   try {
+    // Validate global hotkey availability before saving & applying
+    if (settings.global_hotkey && settings.global_hotkey.trim()) {
+      const ok = await checkShortcutAvailable(settings.global_hotkey)
+      if (!ok) {
+        showToast('Global hotkey is unavailable or already in use. Please choose another.', 'error')
+        return
+      }
+    }
     // Prepare clean MCP servers array for persistence (strip UI-only fields)
     const cleanServers = settings.mcp_servers.map((s: any) => {
       // Robust args/env parsing
@@ -525,9 +536,10 @@ async function saveSettings() {
     // Remove UI-only fields that may be present on root settings
     delete mapToSave.mcp_servers[0]?.argsText // harmless if undefined
     delete mapToSave.mcp_servers[0]?.envJson
-
     const path = await invoke<string>('save_settings', { map: mapToSave })
     showToast(`Settings saved:\n${path}`, 'success')
+    // Re-apply global hotkey immediately when changed
+    try { await applyGlobalHotkey(settings.global_hotkey) } catch {}
     // Persist/clear conversations immediately according to toggle for privacy
     try {
       if (settings.persist_conversations) {
