@@ -1,5 +1,12 @@
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+  // Initialize TTS streaming server on startup
+  tauri::async_runtime::spawn(async {
+    if let Err(e) = init_tts_streaming_server().await {
+      eprintln!("Failed to initialize TTS streaming server: {}", e);
+    }
+  });
+
   tauri::Builder::default()
     .plugin(tauri_plugin_global_shortcut::Builder::new().build())
     .plugin(tauri_plugin_dialog::init())
@@ -83,6 +90,14 @@ pub fn run() {
       tts_list_voices,
       tts_synthesize_wav,
       tts_openai_synthesize_wav,
+      tts_openai_synthesize_file,
+      tts_openai_stream_start,
+      tts_openai_stream_stop,
+      tts_openai_responses_stream_start,
+      tts_create_stream_session,
+      tts_stop_stream_session,
+      tts_stream_session_count,
+      tts_stream_cleanup_idle,
       stt_transcribe,
       chat_complete,
       insert_text_into_focused_app,
@@ -131,9 +146,15 @@ use serde::Deserialize;
 use std::io::{Write, Cursor};
 use std::process::{Command, Stdio};
 use once_cell::sync::Lazy;
+use tokio::sync::oneshot;
+use futures_util::StreamExt;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex as AsyncMutex;
+
+mod tts_streaming_server;
+use tts_streaming_server::TtsStreamingServer;
 use rmcp::{
   service::{ServiceExt, RoleClient, DynService, RunningService},
   transport::{TokioChildProcess, streamable_http_client::StreamableHttpClientTransport},
@@ -288,6 +309,222 @@ fn settings_config_path() -> Option<PathBuf> {
       return Some(p);
     }
     None
+  }
+}
+
+/// Start streaming using OpenAI Responses API with SSE, emitting the same tts:stream:* events.
+#[tauri::command]
+async fn tts_openai_responses_stream_start(app: tauri::AppHandle, text: String, voice: Option<String>, model: Option<String>, format: Option<String>) -> Result<u64, String> {
+  let key = get_api_key_from_settings_or_env()?;
+  let fmt = format.unwrap_or_else(|| "opus".to_string());
+  let req_model = model.unwrap_or_else(|| "gpt-4o-mini-tts".to_string());
+  // Responses API requires a compatible model for audio output; override common TTS-only models
+  let m = if req_model.contains("tts") { "gpt-4o-realtime-preview".to_string() } else { req_model };
+  let v = voice.unwrap_or_else(|| "alloy".to_string());
+
+  let body = serde_json::json!({
+    "model": m,
+    "modalities": ["text", "audio"],
+    "audio": { "voice": v, "format": fmt },
+    "input": text,
+    "stream": true
+  });
+
+  let (tx, mut rx) = oneshot::channel::<()>();
+  let id = STREAM_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
+  {
+    let mut map = STREAM_STOPPERS.lock().unwrap();
+    map.insert(id, tx);
+  }
+
+  let app2 = app.clone();
+  tauri::async_runtime::spawn(async move {
+    let client = reqwest::Client::new();
+    let resp_res = client
+      .post("https://api.openai.com/v1/responses")
+      .bearer_auth(key)
+      .header("Accept", "text/event-stream")
+      .json(&body)
+      .send()
+      .await;
+
+    let emit_err = |msg: String| {
+      let _ = app2.emit("tts:stream:error", serde_json::json!({ "id": id, "message": msg }));
+    };
+
+    let resp = match resp_res {
+      Ok(r) => r,
+      Err(e) => { emit_err(format!("request failed: {e}"));
+        let mut map = STREAM_STOPPERS.lock().unwrap(); map.remove(&id); return; }
+    };
+
+    if !resp.status().is_success() {
+      let status = resp.status();
+      let body_text = resp.text().await.unwrap_or_default();
+      emit_err(format!("OpenAI error: {status} {body_text}"));
+      let mut map = STREAM_STOPPERS.lock().unwrap(); map.remove(&id);
+      return;
+    }
+
+    // Decide MIME for frontend MSE based on requested fmt
+    let mime = match fmt.as_str() {
+      "mp3" => "audio/mpeg",
+      "wav" => "audio/wav",
+      // Prefer Opus; if WebM is required later we can switch here
+      _ => "audio/ogg; codecs=opus",
+    };
+    let _ = app2.emit("tts:stream:start", serde_json::json!({ "id": id, "mime": mime }));
+
+    let mut stream = resp.bytes_stream();
+    let mut buf: Vec<u8> = Vec::new();
+    loop {
+      tokio::select! {
+        _ = &mut rx => {
+          let _ = app2.emit("tts:stream:cancelled", serde_json::json!({ "id": id }));
+          break;
+        }
+        next = stream.next() => {
+          match next {
+            Some(Ok(chunk)) => {
+              buf.extend_from_slice(&chunk);
+              // Process complete SSE events separated by double newlines
+              loop {
+                if let Some(pos) = find_sse_event_boundary(&buf) {
+                  let ev_bytes = buf.drain(..pos).collect::<Vec<u8>>();
+                  // Remove potential trailing newlines
+                  let _ = consume_leading_newlines(&mut buf);
+                  if let Some(data_json) = extract_sse_data(&ev_bytes) {
+                    if data_json.trim() == "[DONE]" { let _ = app2.emit("tts:stream:end", serde_json::json!({ "id": id })); break; }
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&data_json) {
+                      let typ = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                      if typ == "response.output_audio.delta" {
+                        // New audio delta chunk
+                        let b64 = val.get("delta").and_then(|v| v.as_str())
+                          .or_else(|| val.get("audio").and_then(|v| v.as_str()))
+                          .unwrap_or("");
+                        if !b64.is_empty() {
+                          let _ = app2.emit("tts:stream:chunk", serde_json::json!({ "id": id, "data": b64 }));
+                        }
+                      } else if typ == "response.completed" {
+                        let _ = app2.emit("tts:stream:end", serde_json::json!({ "id": id }));
+                        break;
+                      }
+                    }
+                  }
+                } else { break; }
+              }
+            }
+            Some(Err(e)) => { emit_err(format!("stream error: {e}")); break; }
+            None => { let _ = app2.emit("tts:stream:end", serde_json::json!({ "id": id })); break; }
+          }
+        }
+      }
+    }
+
+    let mut map = STREAM_STOPPERS.lock().unwrap();
+    map.remove(&id);
+  });
+
+  Ok(id)
+}
+
+// Helpers to parse SSE lines from a raw byte buffer
+fn find_sse_event_boundary(buf: &[u8]) -> Option<usize> {
+  // SSE events are separated by two newlines (\n\n). Handle \r\n as well.
+  for i in 0..buf.len().saturating_sub(1) {
+    if buf[i] == b'\n' && buf[i+1] == b'\n' { return Some(i+2); }
+    if i+3 < buf.len() && buf[i] == b'\r' && buf[i+1] == b'\n' && buf[i+2] == b'\r' && buf[i+3] == b'\n' { return Some(i+4); }
+  }
+  None
+}
+
+fn consume_leading_newlines(buf: &mut Vec<u8>) -> usize {
+  let mut n = 0;
+  while n < buf.len() && (buf[n] == b'\n' || buf[n] == b'\r') { n += 1; }
+  if n > 0 { let _ = buf.drain(..n); }
+  n
+}
+
+fn extract_sse_data(ev_bytes: &[u8]) -> Option<String> {
+  // Find the last 'data: ' line and return its content
+  let text = String::from_utf8_lossy(ev_bytes);
+  let mut data: Option<String> = None;
+  for line in text.lines() {
+    let line = line.trim_start();
+    if let Some(rest) = line.strip_prefix("data:") {
+      data = Some(rest.trim_start().to_string());
+    }
+  }
+  data
+}
+
+/// Initialize TTS streaming server on app startup
+async fn init_tts_streaming_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+  let server = TtsStreamingServer::new().await?;
+  let mut server_guard = TTS_STREAMING_SERVER.lock().unwrap();
+  *server_guard = Some(server);
+  Ok(())
+}
+
+/// Create a new TTS streaming session and return the stream URL
+#[tauri::command]
+async fn tts_create_stream_session(text: String, voice: Option<String>, model: Option<String>, format: Option<String>, instructions: Option<String>) -> Result<String, String> {
+  let api_key = get_api_key_from_settings_or_env()?;
+  let voice = voice.unwrap_or_else(|| "alloy".to_string());
+  let model = model.unwrap_or_else(|| "gpt-4o-mini-tts".to_string());
+  let format = format.unwrap_or_else(|| "mp3".to_string()); // Default to MP3 for best compatibility
+  
+  // Ensure streaming server is initialized
+  {
+    let need_init = {
+      let server_guard = TTS_STREAMING_SERVER.lock().unwrap();
+      server_guard.is_none()
+    };
+    if need_init {
+      init_tts_streaming_server().await.map_err(|e| format!("failed to init streaming server: {}", e))?;
+    }
+  }
+  
+  let server_guard = TTS_STREAMING_SERVER.lock().unwrap();
+  let server = server_guard.as_ref().unwrap();
+  
+  let session_id = server.create_session(text, voice, model, format, api_key, instructions);
+  let stream_url = server.get_stream_url(&session_id);
+  
+  Ok(stream_url)
+}
+
+/// Stop a TTS streaming session
+#[tauri::command]
+fn tts_stop_stream_session(session_id: String) -> Result<bool, String> {
+  let server_guard = TTS_STREAMING_SERVER.lock().unwrap();
+  if let Some(server) = server_guard.as_ref() {
+    Ok(server.stop_session(&session_id))
+  } else {
+    Err("TTS streaming server not available".to_string())
+  }
+}
+
+/// QA: get active TTS streaming sessions count
+#[tauri::command]
+fn tts_stream_session_count() -> Result<usize, String> {
+  let server_guard = TTS_STREAMING_SERVER.lock().unwrap();
+  if let Some(server) = server_guard.as_ref() {
+    Ok(server.count_sessions())
+  } else {
+    Ok(0)
+  }
+}
+
+/// QA: cleanup idle TTS sessions older than ttl_seconds (that have not started)
+#[tauri::command]
+fn tts_stream_cleanup_idle(ttl_seconds: u64) -> Result<usize, String> {
+  let server_guard = TTS_STREAMING_SERVER.lock().unwrap();
+  if let Some(server) = server_guard.as_ref() {
+    let removed = server.cleanup_idle(std::time::Duration::from_secs(ttl_seconds));
+    Ok(removed)
+  } else {
+    Ok(0)
   }
 }
 
@@ -693,6 +930,12 @@ fn save_settings(map: serde_json::Value) -> Result<String, String> {
   if let Some(m) = map.get("openai_chat_model").and_then(|x| x.as_str()) { obj.insert("openai_chat_model".to_string(), serde_json::Value::String(m.to_string())); }
   if let Some(t) = map.get("temperature").and_then(|x| x.as_f64()) { obj.insert("temperature".to_string(), serde_json::Value::Number(serde_json::Number::from_f64(t).unwrap_or_else(|| serde_json::Number::from_f64(1.0).unwrap()))); }
   if let Some(p) = map.get("persist_conversations").and_then(|x| x.as_bool()) { obj.insert("persist_conversations".to_string(), serde_json::Value::Bool(p)); }
+  // Persist UI style selection
+  if let Some(ui) = map.get("ui_style").and_then(|x| x.as_str()) { obj.insert("ui_style".to_string(), serde_json::Value::String(ui.to_string())); }
+  // Persist chat display preference
+  if let Some(hide) = map.get("hide_tool_calls_in_chat").and_then(|x| x.as_bool()) { obj.insert("hide_tool_calls_in_chat".to_string(), serde_json::Value::Bool(hide)); }
+  // Persist global hotkey
+  if let Some(hk) = map.get("global_hotkey").and_then(|x| x.as_str()) { obj.insert("global_hotkey".to_string(), serde_json::Value::String(hk.to_string())); }
   // New global MCP auto-connect flag
   if let Some(ac) = map.get("auto_connect").and_then(|x| x.as_bool()) { obj.insert("auto_connect".to_string(), serde_json::Value::Bool(ac)); }
   // Pass-through for MCP servers configuration when provided
@@ -705,6 +948,8 @@ fn save_settings(map: serde_json::Value) -> Result<String, String> {
   if let Some(vl) = map.get("tts_voice_local").and_then(|x| x.as_str()) { obj.insert("tts_voice_local".to_string(), serde_json::Value::String(vl.to_string())); }
   if let Some(ov) = map.get("tts_openai_voice").and_then(|x| x.as_str()) { obj.insert("tts_openai_voice".to_string(), serde_json::Value::String(ov.to_string())); }
   if let Some(om) = map.get("tts_openai_model").and_then(|x| x.as_str()) { obj.insert("tts_openai_model".to_string(), serde_json::Value::String(om.to_string())); }
+  if let Some(of) = map.get("tts_openai_format").and_then(|x| x.as_str()) { obj.insert("tts_openai_format".to_string(), serde_json::Value::String(of.to_string())); }
+  if let Some(os) = map.get("tts_openai_streaming").and_then(|x| x.as_bool()) { obj.insert("tts_openai_streaming".to_string(), serde_json::Value::Bool(os)); }
 
   let pretty = serde_json::to_string_pretty(&serde_json::Value::Object(obj)).map_err(|e| format!("Serialize settings failed: {e}"))?;
   fs::write(&path, pretty).map_err(|e| format!("Write settings failed: {e}"))?;
@@ -1006,7 +1251,9 @@ fn tts_open_with_selection(app: tauri::AppHandle, safe_mode: Option<bool>, autop
   let selection = clipboard.get_text().unwrap_or_default();
 
   if !safe {
-    if let Some(prev) = previous_text { let _ = clipboard.set_text(prev); }
+    if let Some(prev) = previous_text {
+      let _ = clipboard.set_text(prev);
+    }
   }
 
   if selection.trim().is_empty() {
@@ -1168,47 +1415,7 @@ try {{
   }
 }
 
-#[cfg(target_os = "windows")]
-#[allow(dead_code)]
-fn speak_windows(text: &str) -> Result<(), String> {
-  use std::io::Write;
-  use std::process::{Command, Stdio};
-
-  // Use .NET's System.Speech via PowerShell to perform TTS.
-  // Rate is set slightly slower than default for clarity.
-  let ps = r#"
-Add-Type -AssemblyName System.Speech;
-$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;
-$s.Rate = -2; $s.Volume = 100;
-[void]$s.Speak([Console]::In.ReadToEnd());
-"#;
-
-  let mut child = Command::new("powershell.exe")
-    .args(["-NoProfile", "-NonInteractive", "-Command", ps])
-    .stdin(Stdio::piped())
-    .stdout(Stdio::null())
-    .stderr(Stdio::null())
-    .spawn()
-    .map_err(|e| format!("launch powershell failed: {e}"))?;
-
-  if let Some(stdin) = child.stdin.as_mut() {
-    stdin
-      .write_all(text.as_bytes())
-      .map_err(|e| format!("powershell stdin write failed: {e}"))?;
-  }
-
-  let status = child.wait().map_err(|e| format!("powershell wait failed: {e}"))?;
-  if !status.success() {
-    return Err(format!("powershell exited with status: {status}"));
-  }
-  Ok(())
-}
-
-#[cfg(not(target_os = "windows"))]
-#[allow(dead_code)]
-fn speak_windows(_text: &str) -> Result<(), String> {
-  Err("TTS not implemented on this platform".into())
-}
+// (removed unused speak_windows debug helpers)
 
 // ---------------------------
 // TTS controls (Windows-first): start/stop/list voices/synthesize to WAV
@@ -1216,6 +1423,13 @@ fn speak_windows(_text: &str) -> Result<(), String> {
 
 #[cfg(target_os = "windows")]
 static TTS_CHILD: Lazy<Mutex<Option<std::process::Child>>> = Lazy::new(|| Mutex::new(None));
+
+// Streaming state (OpenAI TTS chunked download)
+static STREAM_COUNTER: AtomicU64 = AtomicU64::new(0);
+static STREAM_STOPPERS: Lazy<Mutex<std::collections::HashMap<u64, oneshot::Sender<()>>>> = Lazy::new(|| Mutex::new(std::collections::HashMap::new()));
+
+// TTS Streaming Server (local HTTP proxy)
+static TTS_STREAMING_SERVER: Lazy<Mutex<Option<TtsStreamingServer>>> = Lazy::new(|| Mutex::new(None));
 
 #[cfg(target_os = "windows")]
 fn ps_escape_single_quoted(s: &str) -> String {
@@ -1378,30 +1592,38 @@ try {{
   }
 }
 
+/// Back-compat wrapper: synthesize WAV via OpenAI and return a temp file path.
 #[tauri::command]
 async fn tts_openai_synthesize_wav(text: String, voice: Option<String>, model: Option<String>, rate: Option<i32>, volume: Option<u8>) -> Result<String, String> {
-  // Uses OpenAI's TTS endpoint to synthesize speech as WAV and returns the file path
+  tts_openai_synthesize_file(text, voice, model, Some("wav".to_string()), rate, volume).await
+}
+
+/// Synthesize speech via OpenAI and return a temp file path. Supports wav/mp3/opus.
+#[tauri::command]
+async fn tts_openai_synthesize_file(text: String, voice: Option<String>, model: Option<String>, format: Option<String>, rate: Option<i32>, volume: Option<u8>) -> Result<String, String> {
   let key = get_api_key_from_settings_or_env()?;
+  let fmt_in = format.unwrap_or_else(|| "wav".to_string());
+  let (accept, body_format) = match fmt_in.as_str() {
+    "mp3" => ("audio/mpeg", "mp3"),
+    "opus" => ("audio/ogg", "opus"), // prefer OGG Opus container for broader player support
+    _ => ("audio/wav", "wav"),
+  };
+
   let m = model.unwrap_or_else(|| "gpt-4o-mini-tts".to_string());
   let v = voice.unwrap_or_else(|| "alloy".to_string());
-
-  let file_name = format!("aidc_tts_{}_openai.wav", chrono::Local::now().format("%Y%m%d_%H%M%S"));
-  let mut path = std::env::temp_dir();
-  path.push(file_name);
-  let target = path.to_string_lossy().to_string();
 
   let body = serde_json::json!({
     "model": m,
     "input": text,
     "voice": v,
-    "format": "wav"
+    "format": body_format,
   });
 
   let client = reqwest::Client::new();
   let resp = client
     .post("https://api.openai.com/v1/audio/speech")
     .bearer_auth(key)
-    .header("Accept", "audio/wav")
+    .header("Accept", accept)
     .json(&body)
     .send()
     .await
@@ -1413,13 +1635,139 @@ async fn tts_openai_synthesize_wav(text: String, voice: Option<String>, model: O
     return Err(format!("OpenAI error: {status} {body_text}"));
   }
 
-  let bytes = resp.bytes().await.map_err(|e| format!("bytes error: {e}"))?;
-  let r = rate.unwrap_or(0).clamp(-10, 10);
-  let vol = volume.unwrap_or(100).min(100);
+  // Decide extension from Content-Type header for robustness
+  let ct_hdr = resp.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("");
+  let ext = if ct_hdr.contains("wav") { "wav" }
+    else if ct_hdr.contains("mpeg") || ct_hdr.contains("mp3") { "mp3" }
+    else if ct_hdr.contains("ogg") { "ogg" }
+    else if ct_hdr.contains("opus") { "opus" }
+    else if fmt_in == "mp3" { "mp3" }
+    else if fmt_in == "opus" { "opus" } else { "wav" };
 
-  // Robustly decode regardless of actual container/encoding, then write PCM16 WAV
-  write_pcm16_wav_from_any(&bytes, &target, r, vol)?;
+  let file_name = format!("aidc_tts_{}_openai.{}", chrono::Local::now().format("%Y%m%d_%H%M%S"), ext);
+  let mut path = std::env::temp_dir();
+  path.push(file_name);
+  let target = path.to_string_lossy().to_string();
+
+  let bytes = resp.bytes().await.map_err(|e| format!("bytes error: {e}"))?;
+
+  if ext == "wav" {
+    let r = rate.unwrap_or(0).clamp(-10, 10);
+    let vol = volume.unwrap_or(100).min(100);
+    write_pcm16_wav_from_any(&bytes, &target, r, vol)?;
+  } else {
+    std::fs::write(&target, &bytes).map_err(|e| format!("write failed: {e}"))?;
+  }
+
   Ok(target)
+}
+
+/// Start a chunked download stream from OpenAI audio/speech and emit chunks to the frontend.
+/// NOTE: This streams raw container bytes (e.g., MP3 or OGG/Opus). Frontend must handle playback.
+#[tauri::command]
+async fn tts_openai_stream_start(app: tauri::AppHandle, text: String, voice: Option<String>, model: Option<String>, format: Option<String>) -> Result<u64, String> {
+  let key = get_api_key_from_settings_or_env()?;
+  let fmt = format.unwrap_or_else(|| "opus".to_string());
+  let (accept, body_format, mime) = match fmt.as_str() {
+    "mp3" => ("audio/mpeg", "mp3", "audio/mpeg"),
+    // Ogg Opus: include codecs in MIME for MSE
+    _ => ("audio/ogg", "opus", "audio/ogg; codecs=opus"),
+  };
+  let m = model.unwrap_or_else(|| "gpt-4o-mini-tts".to_string());
+  let v = voice.unwrap_or_else(|| "alloy".to_string());
+
+  let body = serde_json::json!({
+    "model": m,
+    "input": text,
+    "voice": v,
+    "format": body_format,
+  });
+
+  // Create a cancellation channel and stream id
+  let (tx, mut rx) = oneshot::channel::<()>();
+  let id = STREAM_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
+  {
+    let mut map = STREAM_STOPPERS.lock().unwrap();
+    map.insert(id, tx);
+  }
+
+  let app2 = app.clone();
+  tauri::async_runtime::spawn(async move {
+    let client = reqwest::Client::new();
+    let resp_res = client
+      .post("https://api.openai.com/v1/audio/speech")
+      .bearer_auth(key)
+      .header("Accept", accept)
+      .json(&body)
+      .send()
+      .await;
+
+    let emit_err = |msg: String| {
+      let _ = app2.emit("tts:stream:error", serde_json::json!({ "id": id, "message": msg }));
+    };
+
+    let resp = match resp_res {
+      Ok(r) => r,
+      Err(e) => { emit_err(format!("request failed: {e}"));
+        let mut map = STREAM_STOPPERS.lock().unwrap(); map.remove(&id); return; }
+    };
+
+    if !resp.status().is_success() {
+      let status = resp.status();
+      let body_text = resp.text().await.unwrap_or_default();
+      emit_err(format!("OpenAI error: {status} {body_text}"));
+      let mut map = STREAM_STOPPERS.lock().unwrap(); map.remove(&id);
+      return;
+    }
+
+    // Notify start with mime
+    let _ = app2.emit("tts:stream:start", serde_json::json!({ "id": id, "mime": mime }));
+
+    let mut stream = resp.bytes_stream();
+    loop {
+      tokio::select! {
+        _ = &mut rx => { // cancelled
+          let _ = app2.emit("tts:stream:cancelled", serde_json::json!({ "id": id }));
+          break;
+        }
+        next = stream.next() => {
+          match next {
+            Some(Ok(chunk)) => {
+              let b64 = base64::engine::general_purpose::STANDARD.encode(&chunk);
+              let _ = app2.emit("tts:stream:chunk", serde_json::json!({ "id": id, "data": b64 }));
+            }
+            Some(Err(e)) => {
+              emit_err(format!("stream error: {e}"));
+              break;
+            }
+            None => {
+              let _ = app2.emit("tts:stream:end", serde_json::json!({ "id": id }));
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    let mut map = STREAM_STOPPERS.lock().unwrap();
+    map.remove(&id);
+  });
+
+  Ok(id)
+}
+
+#[tauri::command]
+fn tts_openai_stream_stop(id: u64) -> Result<bool, String> {
+  let tx = {
+    let mut map = STREAM_STOPPERS.lock().unwrap();
+    map.remove(&id)
+  };
+  if let Some(tx) = tx {
+    let _ = tx.send(());
+    Ok(true)
+  } else {
+    Ok(false)
+  }
 }
 
 // Apply simple gain (volume) and playback rate (by adjusting the sample rate header) to a WAV buffer.

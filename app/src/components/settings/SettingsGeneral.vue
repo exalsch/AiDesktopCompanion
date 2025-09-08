@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, defineProps, watch, computed } from 'vue'
 import { checkShortcutAvailable } from '../../hotkeys'
+import { invoke } from '@tauri-apps/api/core'
 
 const props = defineProps<{
   settings: any
@@ -90,6 +91,34 @@ watch([ghkMod1, ghkMod2, ghkKey], () => {
   if (checkTimer) clearTimeout(checkTimer)
   checkTimer = setTimeout(validateGhk, 300)
 })
+
+// ----- TTS Proxy QA state
+const ttsQA_Count = ref<number>(0)
+const ttsQA_Busy = ref<boolean>(false)
+const ttsQA_LastRemoved = ref<number | null>(null)
+
+async function refreshTtsProxyCount() {
+  ttsQA_Busy.value = true
+  try {
+    ttsQA_Count.value = await invoke<number>('tts_stream_session_count')
+  } catch {
+    // ignore
+  } finally {
+    ttsQA_Busy.value = false
+  }
+}
+
+async function cleanupIdleTtsProxy() {
+  ttsQA_Busy.value = true
+  try {
+    ttsQA_LastRemoved.value = await invoke<number>('tts_stream_cleanup_idle', { ttl_seconds: 60 })
+    await refreshTtsProxyCount()
+  } catch {
+    // ignore
+  } finally {
+    ttsQA_Busy.value = false
+  }
+}
 </script>
 
 <template>
@@ -168,6 +197,39 @@ watch([ghkMod1, ghkMod2, ghkKey], () => {
     <div class="settings-hint">When enabled, conversation history is saved locally only.</div>
     <div class="settings-row">
       <label class="checkbox"><input type="checkbox" v-model="props.settings.hide_tool_calls_in_chat"/> Hide tool call details in chat</label>
+    </div>
+
+    <div class="settings-title">Text-to-Speech Defaults</div>
+    <div class="settings-row col">
+      <label class="label">Streaming enabled by default</label>
+      <label class="checkbox"><input type="checkbox" v-model="props.settings.tts_openai_streaming"/> Enable streaming for OpenAI TTS</label>
+      <div class="settings-hint">When enabled, the TTS panel and background playback will prefer streaming.</div>
+    </div>
+    <div class="settings-row col">
+      <label class="label">Default streaming format</label>
+      <select v-model="props.settings.tts_openai_format" class="input" style="max-width: 180px;">
+        <option value="mp3">MP3</option>
+        <option value="wav">WAV</option>
+        <option value="opus">OPUS</option>
+      </select>
+      <div class="settings-hint">MP3 offers broad compatibility for progressive playback. WAV is larger. OPUS is smaller but may not be supported everywhere.</div>
+    </div>
+    <div class="settings-row col">
+      <label class="label">Default instructions</label>
+      <input v-model="props.settings.tts_openai_instructions" class="input" placeholder="e.g. Cheerful and positive tone" />
+      <div class="settings-hint">Optional style/delivery hint sent with TTS requests.</div>
+    </div>
+
+    <div class="settings-title">TTS Proxy QA</div>
+    <div class="settings-row col">
+      <div class="row-inline" style="gap: 10px; align-items: center;">
+        <button class="btn" :disabled="ttsQA_Busy" @click="refreshTtsProxyCount">{{ ttsQA_Busy ? 'Checking…' : 'Count Active Sessions' }}</button>
+        <div class="settings-hint">Active sessions: <code>{{ ttsQA_Count }}</code></div>
+      </div>
+      <div class="row-inline" style="gap: 10px; align-items: center; margin-top: 6px;">
+        <button class="btn" :disabled="ttsQA_Busy" @click="cleanupIdleTtsProxy">{{ ttsQA_Busy ? 'Cleaning…' : 'Cleanup Idle (>60s)' }}</button>
+        <div class="settings-hint">Last removed: <code>{{ ttsQA_LastRemoved ?? 0 }}</code></div>
+      </div>
     </div>
   </div>
 </template>
