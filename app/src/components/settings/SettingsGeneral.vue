@@ -27,6 +27,24 @@ const ghkKey = ref<string>('')
 const ghkError = ref<string | null>(null)
 const ghkChecking = ref<boolean>(false)
 
+// Filtered modifier options to prevent selecting the same modifier in both dropdowns (except "None")
+const modOptions1 = computed(() => {
+  const other = ghkMod2.value
+  return other ? modOptions.filter(o => o.value !== other) : modOptions
+})
+const modOptions2 = computed(() => {
+  const other = ghkMod1.value
+  return other ? modOptions.filter(o => o.value !== other) : modOptions
+})
+
+// Ensure selections do not end up identical (e.g., when loading existing settings)
+watch(ghkMod1, (v) => {
+  if (v && v === ghkMod2.value) ghkMod2.value = ''
+})
+watch(ghkMod2, (v) => {
+  if (v && v === ghkMod1.value) ghkMod1.value = ''
+})
+
 function parseHotkeyToFields(hk: string) {
   try {
     const s = (hk || '').trim()
@@ -46,6 +64,10 @@ function parseHotkeyToFields(hk: string) {
     }
     ghkMod1.value = mods[0] || ''
     ghkMod2.value = mods[1] || ''
+    // Dedupe in case both parsed modifiers are identical
+    if (ghkMod1.value && ghkMod1.value === ghkMod2.value) {
+      ghkMod2.value = ''
+    }
     ghkKey.value = key
   } catch { ghkMod1.value = ''; ghkMod2.value = ''; ghkKey.value = ''; }
 }
@@ -130,10 +152,10 @@ async function cleanupIdleTtsProxy() {
       <label class="label">Global Hotkey</label>
       <div class="row-inline">
         <select v-model="ghkMod1" class="input" style="max-width: 160px;">
-          <option v-for="opt in modOptions" :key="'m1-'+opt.value" :value="opt.value">{{ opt.label }}</option>
+          <option v-for="opt in modOptions1" :key="'m1-'+opt.value" :value="opt.value">{{ opt.label }}</option>
         </select>
         <select v-model="ghkMod2" class="input" style="max-width: 160px;">
-          <option v-for="opt in modOptions" :key="'m2-'+opt.value" :value="opt.value">{{ opt.label }}</option>
+          <option v-for="opt in modOptions2" :key="'m2-'+opt.value" :value="opt.value">{{ opt.label }}</option>
         </select>
         <input
           v-model="ghkKey"

@@ -85,7 +85,7 @@ async function loadPersistedConversation() {
     const v = await invoke<any>('load_conversation_state')
     if (v && typeof v === 'object' && Object.keys(v).length > 0) {
       const ok = setPersistState(v)
-      if (ok) showToast('Loaded conversation history.', 'success', 2000)
+      if (!ok) showToast('Failed to load conversation history.', 'error')
     }
   } catch (err) {
     const msg = typeof err === 'string' ? err : (err && (err as any).message) ? (err as any).message : 'Unknown error'
@@ -1218,7 +1218,7 @@ watch(() => settings.ui_style, (v) => {
 .settings { margin: 0px auto; max-width: none; color: var(--adc-fg); }
 .settings-section { border: 1px solid var(--adc-border); border-radius: 10px; padding: 14px; background: var(--adc-surface); }
 .settings-title { font-weight: 700; margin-bottom: 8px; }
-.settings-row { display: flex; gap: 10px; align-items: center; margin: 8px 0; }
+.settings-row { display: flow; gap: 10px; align-items: center; margin: 8px 0; }
 .settings-row.col { flex-direction: column; align-items: flex-start; }
 .settings-hint { font-size: 12px; color: var(--adc-fg-muted); margin-top: 6px; }
 .btn { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-accent); color: #fff; cursor: pointer; }
@@ -1232,7 +1232,7 @@ watch(() => settings.ui_style, (v) => {
 .settings-hint.error { color: #f2b8b8; }
 
 /* Ensure styles apply inside child settings components */
-.settings :deep(.settings-section) { border: 1px solid var(--adc-border); border-radius: 10px; background: var(--adc-surface); }
+.settings :deep(.settings-section) {padding-left: 10px; padding-right: 10px; border: 1px solid var(--adc-border); border-radius: 10px; background: var(--adc-surface); }
 .settings :deep(.settings-title) { font-weight: 700; margin-bottom: 8px; }
 .settings :deep(.settings-row) { display: flex; gap: 10px; align-items: center; margin: 8px 0; }
 .settings :deep(.settings-row.col) { flex-direction: column; align-items: flex-start; }
