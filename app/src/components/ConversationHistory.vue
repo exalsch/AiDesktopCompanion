@@ -47,6 +47,25 @@ function openConversation(id: string) {
   setCurrentConversation(id)
   emit('open', id)
 }
+
+// Format timestamp for history: show time if today, else date + short time
+function formatHistoryTimestamp(ts: number): string {
+  try {
+    const d = new Date(ts)
+    if (Number.isNaN(d.getTime())) return ''
+    const now = new Date()
+    const sameDay =
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate()
+    if (sameDay) return d.toLocaleTimeString()
+    const datePart = d.toLocaleDateString()
+    const timePart = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    return `${datePart} ${timePart}`
+  } catch {
+    return ''
+  }
+}
 </script>
 
 <template>
@@ -63,7 +82,7 @@ function openConversation(id: string) {
       >
         <div class="title-line">
           <span class="title">{{ it.title }}</span>
-          <span class="time">{{ new Date(it.updatedAt).toLocaleTimeString() }}</span>
+          <span class="time">{{ formatHistoryTimestamp(it.updatedAt) }}</span>
         </div>
         <div v-if="it.subtitle" class="subtitle">{{ it.subtitle }}</div>
       </div>

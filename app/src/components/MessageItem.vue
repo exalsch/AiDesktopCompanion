@@ -180,6 +180,26 @@ function markdownToPlain(input: string): string {
   s = s.replace(/\n{3,}/g, '\n\n')
   return s.trim()
 }
+
+// Format timestamp: show only time for today, otherwise include date
+function formatMessageTimestamp(ts: number): string {
+  try {
+    const d = new Date(ts)
+    if (Number.isNaN(d.getTime())) return ''
+    const now = new Date()
+    const sameDay =
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate()
+    if (sameDay) return d.toLocaleTimeString()
+    // Include date and a shorter time (hours:minutes) for readability
+    const datePart = d.toLocaleDateString()
+    const timePart = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    return `${datePart} ${timePart}`
+  } catch {
+    return ''
+  }
+}
 </script>
 
 <template>
@@ -244,7 +264,7 @@ function markdownToPlain(input: string): string {
         </template>
       </div>
       <div class="meta-line">
-        <span class="time">{{ new Date(props.message.createdAt).toLocaleTimeString() }}</span>
+        <span class="time">{{ formatMessageTimestamp(props.message.createdAt) }}</span>
         <span v-if="props.message.type === 'image'" class="badge">Image</span>
         <span v-else-if="props.message.type === 'tool'" class="badge">Tool</span>
       </div>
