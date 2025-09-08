@@ -88,11 +88,11 @@ const props = defineProps<{
           <span style="margin-left:6px;">{{ s.status }}</span>
           <span v-if="s.error" class="settings-hint error" style="margin-left:10px;">{{ s.error }}</span>
         </div>
-        <div style="display:flex; gap:8px;">
+        <div style="display:flow; gap:8px;">
           <button class="btn" :disabled="s.connecting" @click="props.onConnect(s)">{{ s.connecting ? 'Connecting…' : 'Connect' }}</button>
           <button class="btn" @click="props.onDisconnect(s)">Disconnect</button>
           <button class="btn" @click="props.onPing(s)">Ping</button>
-          <button class="btn" @click="props.onListTools(s)">List Tools</button>
+          <button class="btn" @click="s.toolsOpen ? (s.toolsOpen = false) : props.onListTools(s)">{{ s.toolsOpen ? 'Hide Tools' : 'List Tools' }}</button>
           <button class="btn danger" @click="props.onRemove(i)">Remove</button>
         </div>
       </div>
