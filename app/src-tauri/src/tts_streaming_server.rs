@@ -92,9 +92,6 @@ impl TtsStreamingServer {
         Ok(server)
     }
     
-    pub fn get_port(&self) -> u16 {
-        self.port
-    }
     
     pub fn create_session(&self, text: String, voice: String, model: String, format: String, api_key: String, instructions: Option<String>) -> String {
         let session_id = Uuid::new_v4().to_string();
@@ -255,31 +252,30 @@ async fn handle_tts_stream(
     let upstream = openai_response.bytes_stream();
     let sessions_for_body = sessions.clone();
     let session_id_string = session_id.to_string();
-    let body_stream = futures_util::stream::unfold((upstream, cancel_flag, sessions_for_body, session_id_string, false), |(mut up, cancel, sessions_map, sid, mut cleaned)| async move {
-        if cancel.load(Ordering::SeqCst) {
-            if !cleaned {
+    let body_stream = futures_util::stream::unfold((upstream, cancel_flag, sessions_for_body, session_id_string, false), |(mut up, cancel, sessions_map, sid, cleaned)| async move {
+        let cleaned_flag = cleaned;
+        let maybe_cleanup = |sessions_map: &Arc<Mutex<HashMap<String, StreamingSession>>>, sid: &str, cleaned: &mut bool| {
+            if !*cleaned {
                 let mut guard = sessions_map.lock().unwrap();
-                guard.remove(&sid);
-                cleaned = true;
+                guard.remove(sid);
+                *cleaned = true;
             }
+        };
+        if cancel.load(Ordering::SeqCst) {
+            let mut c = cleaned_flag;
+            maybe_cleanup(&sessions_map, &sid, &mut c);
             return None;
         }
         match up.next().await {
-            Some(Ok(bytes)) => Some((Ok::<_, std::io::Error>(bytes), (up, cancel, sessions_map, sid, cleaned))),
+            Some(Ok(bytes)) => Some((Ok::<_, std::io::Error>(bytes), (up, cancel, sessions_map, sid, cleaned_flag))),
             Some(Err(e)) => {
-                if !cleaned {
-                    let mut guard = sessions_map.lock().unwrap();
-                    guard.remove(&sid);
-                    cleaned = true;
-                }
-                Some((Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())), (up, cancel, sessions_map, sid, cleaned)))
+                let mut c = cleaned_flag;
+                maybe_cleanup(&sessions_map, &sid, &mut c);
+                Some((Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())), (up, cancel, sessions_map, sid, c)))
             }
             None => {
-                if !cleaned {
-                    let mut guard = sessions_map.lock().unwrap();
-                    guard.remove(&sid);
-                    cleaned = true;
-                }
+                let mut c = cleaned_flag;
+                maybe_cleanup(&sessions_map, &sid, &mut c);
                 None
             }
         }

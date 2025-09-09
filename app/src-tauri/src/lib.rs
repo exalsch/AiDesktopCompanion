@@ -150,16 +150,17 @@ use tokio::sync::oneshot;
 use futures_util::StreamExt;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex as AsyncMutex;
 
 mod tts_streaming_server;
+mod config;
+mod quick_prompts;
+mod mcp;
 use tts_streaming_server::TtsStreamingServer;
 use rmcp::{
-  service::{ServiceExt, RoleClient, DynService, RunningService},
-  transport::{TokioChildProcess, streamable_http_client::StreamableHttpClientTransport},
-  model::{CallToolRequestParam, ReadResourceRequestParam, GetPromptRequestParam},
+  service::{RoleClient, DynService, RunningService},
 };
+use rmcp::model::CallToolRequestParam;
 use base64::Engine; // for .encode on base64 engines
 // Audio decoding (fallback for non-WAV responses)
 use symphonia::core::audio::{AudioBufferRef, SampleBuffer};
@@ -288,29 +289,7 @@ fn write_pcm16_wav_from_any(bytes: &[u8], target_path: &str, rate: i32, volume: 
 // Settings helpers and commands
 // ---------------------------
 
-fn settings_config_path() -> Option<PathBuf> {
-  #[cfg(target_os = "windows")]
-  {
-    if let Ok(appdata) = std::env::var("APPDATA") {
-      let mut p = PathBuf::from(appdata);
-      p.push("AiDesktopCompanion");
-      p.push("settings.json");
-      return Some(p);
-    }
-    None
-  }
-  #[cfg(not(target_os = "windows"))]
-  {
-    if let Ok(home) = std::env::var("HOME") {
-      let mut p = PathBuf::from(home);
-      p.push(".config");
-      p.push("AiDesktopCompanion");
-      p.push("settings.json");
-      return Some(p);
-    }
-    None
-  }
-}
+// settings_config_path wrapper removed; use config::settings_config_path() directly where needed
 
 /// Start streaming using OpenAI Responses API with SSE, emitting the same tts:stream:* events.
 #[tauri::command]
@@ -529,138 +508,29 @@ fn tts_stream_cleanup_idle(ttl_seconds: u64) -> Result<usize, String> {
 }
 
 // Path for persisted conversation state (single-thread for now)
-fn conversation_state_path() -> Option<PathBuf> {
-  #[cfg(target_os = "windows")]
-  {
-    if let Ok(appdata) = std::env::var("APPDATA") {
-      let mut p = PathBuf::from(appdata);
-      p.push("AiDesktopCompanion");
-      p.push("conversations.json");
-      return Some(p);
-    }
-    None
-  }
-  #[cfg(not(target_os = "windows"))]
-  {
-    if let Ok(home) = std::env::var("HOME") {
-      let mut p = PathBuf::from(home);
-      p.push(".config");
-      p.push("AiDesktopCompanion");
-      p.push("conversations.json");
-      return Some(p);
-    }
-    None
-  }
-}
-
-fn persist_conversations_enabled() -> bool {
-  let v = load_settings_json();
-  v.get("persist_conversations").and_then(|x| x.as_bool()).unwrap_or(false)
-}
+// conversation_state_path and persist_conversations_enabled wrappers removed; use config:: directly
 
 // ---------------------------
 // Conversation persistence commands
 // ---------------------------
 #[tauri::command]
-fn load_conversation_state() -> Result<serde_json::Value, String> {
-  if !persist_conversations_enabled() {
-    // Respect privacy: do not read/write when disabled
-    return Ok(serde_json::json!({}));
-  }
-  if let Some(path) = conversation_state_path() {
-    match fs::read_to_string(&path) {
-      Ok(text) => {
-        match serde_json::from_str::<serde_json::Value>(&text) {
-          Ok(v) => Ok(v),
-          Err(e) => Err(format!("Invalid JSON in conversations.json: {e}")),
-        }
-      }
-      Err(_) => Ok(serde_json::json!({})), // not found -> empty
-    }
-  } else {
-    Err("Unsupported platform for config path".into())
-  }
-}
+fn load_conversation_state() -> Result<serde_json::Value, String> { config::load_conversation_state() }
 
 #[tauri::command]
-fn save_conversation_state(state: serde_json::Value) -> Result<String, String> {
-  if !persist_conversations_enabled() {
-    // If disabled, proactively delete any existing file
-    if let Some(path) = conversation_state_path() {
-      let _ = fs::remove_file(path);
-    }
-    return Ok("persistence disabled".into());
-  }
-  let path = conversation_state_path().ok_or_else(|| "Unsupported platform for config path".to_string())?;
-  if let Some(dir) = path.parent() {
-    fs::create_dir_all(dir).map_err(|e| format!("Failed to create config directory: {e}"))?;
-  }
-  let pretty = serde_json::to_string_pretty(&state).map_err(|e| format!("Serialize conversation failed: {e}"))?;
-  fs::write(&path, pretty).map_err(|e| format!("Write conversations failed: {e}"))?;
-  Ok(path.to_string_lossy().to_string())
-}
+fn save_conversation_state(state: serde_json::Value) -> Result<String, String> { config::save_conversation_state(state) }
 
 #[tauri::command]
-fn clear_conversations() -> Result<String, String> {
-  if let Some(path) = conversation_state_path() {
-    if path.exists() {
-      fs::remove_file(&path).map_err(|e| format!("Remove conversations failed: {e}"))?;
-    }
-    Ok(path.to_string_lossy().to_string())
-  } else {
-    Err("Unsupported platform for config path".into())
-  }
-}
+fn clear_conversations() -> Result<String, String> { config::clear_conversations() }
 
 // ---------------------------
 // MCP Tools — rmcp integration
-// ---------------------------
+// ... (rest of the code remains the same)
 
 static MCP_CLIENTS: Lazy<AsyncMutex<std::collections::HashMap<String, Arc<RunningService<RoleClient, Box<dyn DynService<RoleClient>>>>>>> = Lazy::new(|| {
   AsyncMutex::new(std::collections::HashMap::new())
 });
 
-#[cfg(target_os = "windows")]
-fn resolve_windows_program(prog: &str, cwd: Option<&str>) -> Option<String> {
-  use std::path::{Path, PathBuf};
-
-  // If the program already has an extension or a path separator, use as-is.
-  if prog.contains('\\') || prog.contains('/') || Path::new(prog).extension().is_some() {
-    return None;
-  }
-
-  // PATHEXT determines which extensions are executable in Windows shells.
-  // We include a sensible default if PATHEXT is missing.
-  let pathext: Vec<String> = std::env::var("PATHEXT")
-    .ok()
-    .map(|v| v.split(';').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect())
-    .unwrap_or_else(|| vec![".COM".into(), ".EXE".into(), ".BAT".into(), ".CMD".into()]);
-
-  // Candidate directories to search: node_modules/.bin under cwd first (common for JS tools), then PATH.
-  let mut candidate_dirs: Vec<PathBuf> = Vec::new();
-  if let Some(d) = cwd {
-    let mut p = PathBuf::from(d);
-    p.push("node_modules");
-    p.push(".bin");
-    candidate_dirs.push(p);
-  }
-  if let Some(path_var) = std::env::var_os("PATH") {
-    for p in std::env::split_paths(&path_var) {
-      candidate_dirs.push(p);
-    }
-  }
-
-  for dir in candidate_dirs {
-    for ext in &pathext {
-      let candidate = dir.join(format!("{}{}", prog, ext));
-      if candidate.is_file() {
-        return Some(candidate.to_string_lossy().to_string());
-      }
-    }
-  }
-
-  None
-}
+// resolve_windows_program moved to mcp.rs
 
 #[tauri::command]
 async fn mcp_connect(
@@ -672,288 +542,67 @@ async fn mcp_connect(
   env: Option<serde_json::Value>,
   transport: Option<String>,
 ) -> Result<String, String> {
-  // fast path: already connected
-  {
-    let map = MCP_CLIENTS.lock().await;
-    if map.contains_key(&server_id) {
-      return Ok("already connected".into());
-    }
-  }
-
-  // Select transport: default stdio; support http (streamable http client)
-  let transport_kind = transport.unwrap_or_else(|| "stdio".to_string());
-  if transport_kind == "http" {
-    // For HTTP, interpret `command` as the server URI
-    let uri = command.trim().to_string();
-    if uri.is_empty() {
-      return Err("HTTP transport requires a non-empty URI in 'command'".into());
-    }
-    let http_transport = StreamableHttpClientTransport::<reqwest::Client>::from_uri(uri);
-    let service = ().into_dyn().serve(http_transport).await.map_err(|e| {
-      let msg = format!("serve failed: {e}");
-      let _ = app.emit("mcp:error", serde_json::json!({ "serverId": server_id, "message": msg }));
-      msg
-    })?;
-    let service = Arc::new(service);
-    {
-      let mut map = MCP_CLIENTS.lock().await;
-      map.insert(server_id.clone(), service.clone());
-    }
-    let _ = app.emit("mcp:connected", serde_json::json!({ "serverId": server_id }));
-    return Ok("connected".into());
-  }
-
-  // Default: Build child process (stdio)
-  // On Windows, resolve commands like "npx" via PATH/PATHEXT and local node_modules/.bin
-  #[cfg(target_os = "windows")]
-  let program_to_run: String = resolve_windows_program(&command, cwd.as_deref()).unwrap_or_else(|| command.clone());
-  #[cfg(not(target_os = "windows"))]
-  let program_to_run: String = command.clone();
-
-  let mut cmd = TokioCommand::new(&program_to_run);
-  cmd.args(args.iter());
-  if let Some(dir) = cwd.as_ref() {
-    cmd.current_dir(dir);
-  }
-  if let Some(envv) = env.as_ref() {
-    if let Some(obj) = envv.as_object() {
-      for (k, v) in obj.iter() {
-        if let Some(s) = v.as_str() {
-          cmd.env(k, s);
-        }
-      }
-    }
-  }
-
-  // Connect via rmcp using stdio child process
-  let child_transport = TokioChildProcess::new(cmd).map_err(|e| format!("spawn failed: {e}"))?;
-  let service = ().into_dyn().serve(child_transport).await.map_err(|e| {
-    let msg = format!("serve failed: {e}");
-    let _ = app.emit("mcp:error", serde_json::json!({ "serverId": server_id, "message": msg }));
-    msg
-  })?;
-  let service = Arc::new(service);
-
-  {
-    let mut map = MCP_CLIENTS.lock().await;
-    map.insert(server_id.clone(), service.clone());
-  }
-  let _ = app.emit("mcp:connected", serde_json::json!({ "serverId": server_id }));
-  Ok("connected".into())
+  mcp::connect(&app, &MCP_CLIENTS, server_id, command, args, cwd, env, transport).await
 }
 
 #[tauri::command]
 async fn mcp_disconnect(app: tauri::AppHandle, server_id: String) -> Result<String, String> {
-  let svc = {
-    let mut map = MCP_CLIENTS.lock().await;
-    map.remove(&server_id)
-  };
-  let existed = svc.is_some();
-  if let Some(svc) = svc {
-    // Gracefully cancel without moving the service
-    svc.cancellation_token().cancel();
-  }
-  let _ = app.emit("mcp:disconnected", serde_json::json!({ "serverId": server_id, "existed": existed }));
-  if existed { Ok("disconnected".into()) } else { Err("not connected".into()) }
+  mcp::disconnect(&app, &MCP_CLIENTS, server_id).await
 }
 
 #[tauri::command]
 async fn mcp_list_tools(server_id: String) -> Result<serde_json::Value, String> {
-  let svc = {
-    let map = MCP_CLIENTS.lock().await;
-    map.get(&server_id).cloned()
-  }.ok_or_else(|| "not connected".to_string())?;
-  let res = svc.list_tools(Default::default()).await.map_err(|e| format!("list_tools failed: {e}"))?;
-  serde_json::to_value(res).map_err(|e| format!("serialize failed: {e}"))
+  mcp::list_tools(&MCP_CLIENTS, &server_id).await
 }
 
 #[tauri::command]
 async fn mcp_call_tool(server_id: String, name: String, args: serde_json::Value) -> Result<serde_json::Value, String> {
-  let svc = {
-    let map = MCP_CLIENTS.lock().await;
-    map.get(&server_id).cloned()
-  }.ok_or_else(|| "not connected".to_string())?;
-  // Respect disabled tools from settings
-  let disabled_map = get_disabled_tools_map();
-  if disabled_map.get(&server_id).map(|set| set.contains(&name)).unwrap_or(false) {
-    return Err("tool disabled by settings".into());
-  }
-  // Prepare arguments map if provided
-  let arg_map_opt = if args.is_null() {
-    None
-  } else if let Some(obj) = args.as_object() {
-    Some(obj.clone())
-  } else {
-    return Err("call_tool args must be an object".into());
-  };
-  let res = svc
-    .call_tool(CallToolRequestParam { name: name.into(), arguments: arg_map_opt })
-    .await
-    .map_err(|e| format!("call_tool failed: {e}"))?;
-  serde_json::to_value(res).map_err(|e| format!("serialize failed: {e}"))
+  mcp::call_tool(&MCP_CLIENTS, &server_id, &name, args).await
 }
 
 #[tauri::command]
 async fn mcp_list_resources(server_id: String) -> Result<serde_json::Value, String> {
-  let svc = {
-    let map = MCP_CLIENTS.lock().await;
-    map.get(&server_id).cloned()
-  }.ok_or_else(|| "not connected".to_string())?;
-  let res = svc.list_resources(Default::default()).await.map_err(|e| format!("list_resources failed: {e}"))?;
-  serde_json::to_value(res).map_err(|e| format!("serialize failed: {e}"))
+  mcp::list_resources(&MCP_CLIENTS, &server_id).await
 }
 
 #[tauri::command]
 async fn mcp_read_resource(server_id: String, uri: String) -> Result<serde_json::Value, String> {
-  let svc = {
-    let map = MCP_CLIENTS.lock().await;
-    map.get(&server_id).cloned()
-  }.ok_or_else(|| "not connected".to_string())?;
-  let res = svc
-    .read_resource(ReadResourceRequestParam { uri })
-    .await
-    .map_err(|e| format!("read_resource failed: {e}"))?;
-  serde_json::to_value(res).map_err(|e| format!("serialize failed: {e}"))
+  mcp::read_resource(&MCP_CLIENTS, &server_id, &uri).await
 }
 
 #[tauri::command]
 async fn mcp_list_prompts(server_id: String) -> Result<serde_json::Value, String> {
-  let svc = {
-    let map = MCP_CLIENTS.lock().await;
-    map.get(&server_id).cloned()
-  }.ok_or_else(|| "not connected".to_string())?;
-  let res = svc.list_prompts(Default::default()).await.map_err(|e| format!("list_prompts failed: {e}"))?;
-  serde_json::to_value(res).map_err(|e| format!("serialize failed: {e}"))
+  mcp::list_prompts(&MCP_CLIENTS, &server_id).await
 }
 
 #[tauri::command]
 async fn mcp_get_prompt(server_id: String, name: String, arguments: Option<serde_json::Value>) -> Result<serde_json::Value, String> {
-  let svc = {
-    let map = MCP_CLIENTS.lock().await;
-    map.get(&server_id).cloned()
-  }.ok_or_else(|| "not connected".to_string())?;
-  let arg_map_opt = if let Some(v) = arguments {
-    if v.is_null() { None } else if let Some(obj) = v.as_object() { Some(obj.clone()) } else { return Err("get_prompt arguments must be an object".into()); }
-  } else { None };
-  let res = svc
-    .get_prompt(GetPromptRequestParam { name: name.into(), arguments: arg_map_opt })
-    .await
-    .map_err(|e| format!("get_prompt failed: {e}"))?;
-  serde_json::to_value(res).map_err(|e| format!("serialize failed: {e}"))
+  mcp::get_prompt(&MCP_CLIENTS, &server_id, &name, arguments).await
 }
 
 #[tauri::command]
 async fn mcp_ping(server_id: String) -> Result<String, String> {
-  let svc = {
-    let map = MCP_CLIENTS.lock().await;
-    map.get(&server_id).cloned()
-  }.ok_or_else(|| "not connected".to_string())?;
-  // No explicit ping API; perform a lightweight request as a health check
-  let _ = svc.list_tools(Default::default()).await.map_err(|e| format!("ping(list_tools) failed: {e}"))?;
-  Ok("ok".into())
+  mcp::ping(&MCP_CLIENTS, &server_id).await
 }
 
-fn load_settings_json() -> serde_json::Value {
-  if let Some(path) = settings_config_path() {
-    if let Ok(text) = fs::read_to_string(&path) {
-      if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-        if v.is_object() { return v; }
-      }
-    }
-  }
-  serde_json::json!({})
-}
+fn load_settings_json() -> serde_json::Value { config::load_settings_json() }
 
-// Build a map of server_id -> set of disabled tool names from persisted settings
-fn get_disabled_tools_map() -> std::collections::HashMap<String, std::collections::HashSet<String>> {
-  let mut out: std::collections::HashMap<String, std::collections::HashSet<String>> = std::collections::HashMap::new();
-  let v = load_settings_json();
-  if let Some(arr) = v.get("mcp_servers").and_then(|x| x.as_array()) {
-    for s in arr.iter() {
-      let server_id = s.get("id").and_then(|x| x.as_str()).unwrap_or("").trim();
-      if server_id.is_empty() { continue; }
-      if let Some(dis) = s.get("disabled_tools").and_then(|x| x.as_array()) {
-        let mut set: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for t in dis.iter() {
-          if let Some(name) = t.as_str() {
-            let n = name.trim();
-            if !n.is_empty() { set.insert(n.to_string()); }
-          }
-        }
-        if !set.is_empty() { out.insert(server_id.to_string(), set); }
-      }
-    }
-  }
-  out
-}
+// get_disabled_tools_map local helper removed; use config::get_disabled_tools_map()
 
-fn get_api_key_from_settings_or_env() -> Result<String, String> {
-  let v = load_settings_json();
-  if let Some(s) = v.get("openai_api_key").and_then(|x| x.as_str()) {
-    if !s.trim().is_empty() { return Ok(s.to_string()); }
-  }
-  std::env::var("OPENAI_API_KEY").map_err(|_| "OPENAI_API_KEY not set in settings or environment".to_string())
-}
+fn get_api_key_from_settings_or_env() -> Result<String, String> { config::get_api_key_from_settings_or_env() }
 
-fn get_model_from_settings_or_env() -> String {
-  let v = load_settings_json();
-  if let Some(s) = v.get("openai_chat_model").and_then(|x| x.as_str()) {
-    let t = s.trim();
-    if !t.is_empty() { return t.to_string(); }
-  }
-  std::env::var("OPENAI_CHAT_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string())
-}
+fn get_model_from_settings_or_env() -> String { config::get_model_from_settings_or_env() }
 
-fn get_temperature_from_settings_or_env() -> Option<f32> {
-  let v = load_settings_json();
-  v.get("temperature").and_then(|x| x.as_f64()).map(|f| f as f32)
-}
+fn get_temperature_from_settings_or_env() -> Option<f32> { config::get_temperature_from_settings_or_env() }
 
 #[tauri::command]
 fn get_settings() -> Result<serde_json::Value, String> {
-  let v = load_settings_json();
-  Ok(v)
+  config::get_settings()
 }
 
 #[tauri::command]
 fn save_settings(map: serde_json::Value) -> Result<String, String> {
-  let path = settings_config_path().ok_or_else(|| "Unsupported platform for config path".to_string())?;
-  if let Some(dir) = path.parent() {
-    fs::create_dir_all(dir).map_err(|e| format!("Failed to create config directory: {e}"))?;
-  }
-  // Merge with existing settings. Only update known keys present in `map`.
-  let current = load_settings_json();
-  let mut obj = current.as_object().cloned().unwrap_or_default();
-
-  // Existing keys
-  if let Some(k) = map.get("openai_api_key").and_then(|x| x.as_str()) { obj.insert("openai_api_key".to_string(), serde_json::Value::String(k.to_string())); }
-  if let Some(m) = map.get("openai_chat_model").and_then(|x| x.as_str()) { obj.insert("openai_chat_model".to_string(), serde_json::Value::String(m.to_string())); }
-  if let Some(t) = map.get("temperature").and_then(|x| x.as_f64()) { obj.insert("temperature".to_string(), serde_json::Value::Number(serde_json::Number::from_f64(t).unwrap_or_else(|| serde_json::Number::from_f64(1.0).unwrap()))); }
-  if let Some(p) = map.get("persist_conversations").and_then(|x| x.as_bool()) { obj.insert("persist_conversations".to_string(), serde_json::Value::Bool(p)); }
-  // Persist UI style selection
-  if let Some(ui) = map.get("ui_style").and_then(|x| x.as_str()) { obj.insert("ui_style".to_string(), serde_json::Value::String(ui.to_string())); }
-  // Persist chat display preference
-  if let Some(hide) = map.get("hide_tool_calls_in_chat").and_then(|x| x.as_bool()) { obj.insert("hide_tool_calls_in_chat".to_string(), serde_json::Value::Bool(hide)); }
-  // Persist global hotkey
-  if let Some(hk) = map.get("global_hotkey").and_then(|x| x.as_str()) { obj.insert("global_hotkey".to_string(), serde_json::Value::String(hk.to_string())); }
-  // New global MCP auto-connect flag
-  if let Some(ac) = map.get("auto_connect").and_then(|x| x.as_bool()) { obj.insert("auto_connect".to_string(), serde_json::Value::Bool(ac)); }
-  // Pass-through for MCP servers configuration when provided
-  if let Some(ms) = map.get("mcp_servers") { obj.insert("mcp_servers".to_string(), ms.clone()); }
-
-  // New TTS preference keys
-  if let Some(e) = map.get("tts_engine").and_then(|x| x.as_str()) { obj.insert("tts_engine".to_string(), serde_json::Value::String(e.to_string())); }
-  if let Some(r) = map.get("tts_rate").and_then(|x| x.as_i64()) { obj.insert("tts_rate".to_string(), serde_json::Value::Number((r as i64).into())); }
-  if let Some(v) = map.get("tts_volume").and_then(|x| x.as_i64()) { obj.insert("tts_volume".to_string(), serde_json::Value::Number((v as i64).into())); }
-  if let Some(vl) = map.get("tts_voice_local").and_then(|x| x.as_str()) { obj.insert("tts_voice_local".to_string(), serde_json::Value::String(vl.to_string())); }
-  if let Some(ov) = map.get("tts_openai_voice").and_then(|x| x.as_str()) { obj.insert("tts_openai_voice".to_string(), serde_json::Value::String(ov.to_string())); }
-  if let Some(om) = map.get("tts_openai_model").and_then(|x| x.as_str()) { obj.insert("tts_openai_model".to_string(), serde_json::Value::String(om.to_string())); }
-  if let Some(of) = map.get("tts_openai_format").and_then(|x| x.as_str()) { obj.insert("tts_openai_format".to_string(), serde_json::Value::String(of.to_string())); }
-  if let Some(os) = map.get("tts_openai_streaming").and_then(|x| x.as_bool()) { obj.insert("tts_openai_streaming".to_string(), serde_json::Value::Bool(os)); }
-
-  let pretty = serde_json::to_string_pretty(&serde_json::Value::Object(obj)).map_err(|e| format!("Serialize settings failed: {e}"))?;
-  fs::write(&path, pretty).map_err(|e| format!("Write settings failed: {e}"))?;
-  Ok(path.to_string_lossy().to_string())
+  config::save_settings(map)
 }
 
 #[tauri::command]
@@ -987,87 +636,17 @@ async fn list_openai_models() -> Result<Vec<String>, String> {
 
 #[tauri::command]
 fn generate_default_quick_prompts() -> Result<String, String> {
-  let path = quick_prompts_config_path().ok_or_else(|| "Unsupported platform for config path".to_string())?;
-  if let Some(dir) = path.parent() {
-    fs::create_dir_all(dir).map_err(|e| format!("Failed to create config directory: {e}"))?;
-  }
-
-  let defaults = serde_json::json!({
-    "1": quick_prompt_template(1),
-    "2": quick_prompt_template(2),
-    "3": quick_prompt_template(3),
-    "4": quick_prompt_template(4),
-    "5": quick_prompt_template(5),
-    "6": quick_prompt_template(6),
-    "7": quick_prompt_template(7),
-    "8": quick_prompt_template(8),
-    "9": quick_prompt_template(9)
-  });
-
-  let pretty = serde_json::to_string_pretty(&defaults).map_err(|e| format!("Serialize defaults failed: {e}"))?;
-  fs::write(&path, pretty).map_err(|e| format!("Write config failed: {e}"))?;
-  Ok(path.to_string_lossy().to_string())
+  quick_prompts::generate_default_quick_prompts()
 }
 
 #[tauri::command]
 fn get_quick_prompts() -> Result<serde_json::Value, String> {
-  // Return an object with keys "1".."9". Fill missing/invalid entries with defaults.
-  let mut obj = serde_json::Map::new();
-  for i in 1..=9u8 { obj.insert(i.to_string(), serde_json::Value::String(quick_prompt_template(i).to_string())); }
-
-  if let Some(path) = quick_prompts_config_path() {
-    if let Ok(text) = fs::read_to_string(&path) {
-      if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-        match v {
-          serde_json::Value::Array(arr) => {
-            for i in 1..=9u8 {
-              if let Some(s) = arr.get((i as usize) - 1).and_then(|x| x.as_str()) {
-                obj.insert(i.to_string(), serde_json::Value::String(s.to_string()));
-              }
-            }
-          }
-          serde_json::Value::Object(map_in) => {
-            for i in 1..=9u8 {
-              let k = i.to_string();
-              if let Some(s) = map_in.get(&k).and_then(|x| x.as_str()) {
-                obj.insert(k, serde_json::Value::String(s.to_string()));
-              }
-            }
-          }
-          _ => { /* keep defaults */ }
-        }
-      }
-    }
-  }
-
-  Ok(serde_json::Value::Object(obj))
+  quick_prompts::get_quick_prompts()
 }
 
 #[tauri::command]
 fn save_quick_prompts(map: serde_json::Value) -> Result<String, String> {
-  // Accept either array or object; normalize to object of 1..9 with strings.
-  let mut obj = serde_json::Map::new();
-  for i in 1..=9u8 {
-    let k = i.to_string();
-    let v = match &map {
-      serde_json::Value::Array(arr) => arr.get((i as usize) - 1).and_then(|x| x.as_str()).unwrap_or(quick_prompt_template(i)),
-      serde_json::Value::Object(m) => m.get(&k).and_then(|x| x.as_str()).unwrap_or(quick_prompt_template(i)),
-      _ => quick_prompt_template(i),
-    };
-    let trimmed = v.trim();
-    let final_v = if trimmed.is_empty() { quick_prompt_template(i) } else { trimmed };
-    obj.insert(k, serde_json::Value::String(final_v.to_string()));
-  }
-
-  let path = quick_prompts_config_path().ok_or_else(|| "Unsupported platform for config path".to_string())?;
-  if let Some(dir) = path.parent() {
-    fs::create_dir_all(dir).map_err(|e| format!("Failed to create config directory: {e}"))?;
-  }
-
-  let pretty = serde_json::to_string_pretty(&serde_json::Value::Object(obj))
-    .map_err(|e| format!("Serialize prompts failed: {e}"))?;
-  fs::write(&path, pretty).map_err(|e| format!("Write config failed: {e}"))?;
-  Ok(path.to_string_lossy().to_string())
+  quick_prompts::save_quick_prompts(map)
 }
 
 #[tauri::command]
@@ -1144,9 +723,7 @@ fn position_quick_actions(app: tauri::AppHandle) -> Result<(), String> {
   }
 }
 
-fn payload_length(s: &str) -> usize {
-  s.chars().count()
-}
+// payload_length removed (unused)
 
 // Return the Windows virtual desktop bounds (spanning all monitors).
 // x/y can be negative if a monitor is to the left/top of the primary.
@@ -1414,8 +991,6 @@ try {{
     }
   }
 }
-
-// (removed unused speak_windows debug helpers)
 
 // ---------------------------
 // TTS controls (Windows-first): start/stop/list voices/synthesize to WAV
@@ -1980,150 +1555,14 @@ fn guess_mime_from_path_rs(path: &str) -> Option<&'static str> {
   None
 }
 
-// ---------------------------
-// OpenAI tool-calling integration with MCP
-// ---------------------------
-
-fn sanitize_fn_name(s: &str) -> String {
-  let mut out = String::with_capacity(s.len());
-  for ch in s.chars() {
-    match ch {
-      'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => out.push(ch),
-      _ => out.push('_'),
-    }
-  }
-  out
-}
-
-fn parse_mcp_fn_call_name(name: &str) -> Option<(String, String)> {
-  // Expected format: mcp__{serverId}__{toolName}
-  if !name.starts_with("mcp__") { return None; }
-  let rest = &name[5..];
-  if let Some(idx) = rest.find("__") {
-    let server = &rest[..idx];
-    let tool = &rest[idx+2..];
-    if !server.is_empty() && !tool.is_empty() {
-      return Some((server.to_string(), tool.to_string()));
-    }
-  }
-  None
-}
-
-// Produce a concise, single-line summary of required/optional input fields for a tool.
-// Example output: "libraryName: string (required); topic: string (optional)"
-fn summarize_input_schema(schema: &serde_json::Value) -> String {
-  let props = schema.get("properties").and_then(|v| v.as_object());
-  if props.is_none() { return String::new(); }
-  let props = props.unwrap();
-  let required: std::collections::HashSet<String> = schema
-    .get("required")
-    .and_then(|v| v.as_array())
-    .map(|arr| arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
-    .unwrap_or_default();
-
-  let mut parts: Vec<String> = Vec::new();
-  for (name, def) in props.iter() {
-    let ty = def.get("type").and_then(|v| v.as_str()).unwrap_or("any");
-    let is_req = required.contains(name);
-    let mut piece = format!("{}: {}{}", name, ty, if is_req { " (required)" } else { " (optional)" });
-    if let Some(desc) = def.get("description").and_then(|v| v.as_str()) {
-      if !desc.is_empty() {
-        // Keep it short
-        let trimmed = if desc.len() > 120 { &desc[..120] } else { desc };
-        piece.push_str(&format!(" - {}", trimmed));
-      }
-    }
-    parts.push(piece);
-  }
-  parts.join("; ")
-}
-
-async fn build_openai_tools_from_mcp() -> Vec<serde_json::Value> {
-  let mut out: Vec<serde_json::Value> = Vec::new();
-  let disabled_map = get_disabled_tools_map();
-  let map = MCP_CLIENTS.lock().await;
-  for (server_id, svc) in map.iter() {
-    // Best-effort: list tools; skip server on error
-    if let Ok(res) = svc.list_tools(Default::default()).await {
-      if let Ok(v) = serde_json::to_value(&res) {
-        if let Some(arr) = v.get("tools").and_then(|x| x.as_array()) {
-          for t in arr {
-            let name = t.get("name").and_then(|x| x.as_str()).unwrap_or("");
-            if name.is_empty() { continue; }
-            // Filter out disabled tools per settings
-            if let Some(set) = disabled_map.get(server_id) {
-              if set.contains(name) { continue; }
-            }
-            let desc = t.get("description").and_then(|x| x.as_str()).unwrap_or("");
-            // JSON schema forwarded as-is when available; otherwise fall back to permissive object
-            // Some servers use `input_schema`, others `inputSchema` (camelCase), or just `schema`.
-            let mut params = t
-              .get("input_schema")
-              .or_else(|| t.get("inputSchema"))
-              .or_else(|| t.get("schema"))
-              .cloned()
-              .unwrap_or_else(|| serde_json::json!({
-                "type": "object",
-                "properties": {},
-                "additionalProperties": true
-              }));
-            // Ensure parameters is an object per OpenAI expectations
-            if !params.is_object() {
-              params = serde_json::json!({ "type": "object", "properties": {}, "additionalProperties": true });
-            }
-            // Ensure minimal JSON-Schema shape for OpenAI: type/object/properties keys present
-            if params.get("type").and_then(|x| x.as_str()).is_none() {
-              if let Some(obj) = params.as_object_mut() {
-                obj.insert("type".to_string(), serde_json::json!("object"));
-              }
-            }
-            if params.get("properties").is_none() {
-              if let Some(obj) = params.as_object_mut() {
-                obj.insert("properties".to_string(), serde_json::json!({}));
-              }
-            }
-            if params.get("additionalProperties").is_none() {
-              if let Some(obj) = params.as_object_mut() {
-                obj.insert("additionalProperties".to_string(), serde_json::json!(true));
-              }
-            }
-            let fn_name = sanitize_fn_name(&format!("mcp__{}__{}", server_id, name));
-            let inputs_summary = summarize_input_schema(&params);
-            let desc_aug = if desc.is_empty() {
-              if inputs_summary.is_empty() {
-                format!("MCP tool '{}' from server '{}'.", name, server_id)
-              } else {
-                format!("MCP tool '{}' from server '{}'. Inputs: {}", name, server_id, inputs_summary)
-              }
-            } else {
-              if inputs_summary.is_empty() {
-                format!("{} (server: {})", desc, server_id)
-              } else {
-                format!("{} (server: {}) Inputs: {}", desc, server_id, inputs_summary)
-              }
-            };
-            out.push(serde_json::json!({
-              "type": "function",
-              "function": {
-                "name": fn_name,
-                "description": desc_aug,
-                "parameters": params
-              }
-            }));
-          }
-        }
-      }
-    }
-  }
-  out
-}
+// MCP helper duplicates removed; use mcp::sanitize_fn_name, mcp::parse_mcp_fn_call_name, mcp::summarize_input_schema
 
 #[tauri::command]
 async fn chat_complete(app: tauri::AppHandle, messages: Vec<ChatMessage>) -> Result<String, String> {
   let key = get_api_key_from_settings_or_env()?;
   let model = get_model_from_settings_or_env();
   let temp = get_temperature_from_settings_or_env();
-  let disabled_map = get_disabled_tools_map();
+  let disabled_map = config::get_disabled_tools_map();
 
   // Normalize incoming messages to OpenAI format
   let mut norm_msgs: Vec<serde_json::Value> = Vec::new();
@@ -2157,8 +1596,11 @@ async fn chat_complete(app: tauri::AppHandle, messages: Vec<ChatMessage>) -> Res
     norm_msgs.push(serde_json::json!({ "role": r, "content": content_value }));
   }
 
-  // Build tool definitions from connected MCP servers
-  let tools = build_openai_tools_from_mcp().await;
+  // Build tool definitions from connected MCP servers (via MCP module)
+  let tools = {
+    let map = MCP_CLIENTS.lock().await;
+    mcp::build_openai_tools_from_mcp(&*map).await
+  };
 
   let client = reqwest::Client::new();
   // Prepend a short system directive to improve first-call argument completeness
@@ -2225,7 +1667,7 @@ async fn chat_complete(app: tauri::AppHandle, messages: Vec<ChatMessage>) -> Res
         if !fargs_val.is_object() { fargs_val = serde_json::json!({}); }
 
         let tool_result_text: String;
-        if let Some((server_id, tool_name)) = parse_mcp_fn_call_name(&fname) {
+        if let Some((server_id, tool_name)) = mcp::parse_mcp_fn_call_name(&fname) {
           // Emit tool-call event for UI visibility
           let _ = app.emit("chat:tool-call", serde_json::json!({
             "id": id,
@@ -2331,34 +1773,13 @@ async fn chat_complete(app: tauri::AppHandle, messages: Vec<ChatMessage>) -> Res
 // Open the main window prompt panel with provided text (used by STT flow).
 #[tauri::command]
 fn open_prompt_with_text(app: tauri::AppHandle, text: String) -> Result<(), String> {
-  if let Some(win) = app.get_webview_window("main") {
-    let _ = win.show();
-    let _ = win.set_focus();
-  }
-  let preview: String = text.chars().take(200).collect();
-  let payload = serde_json::json!({
-    "selection": text,
-    "preview": preview,
-    "length": payload_length(&preview),
-  });
-  let _ = app.emit("prompt:open", payload);
-  Ok(())
+  quick_prompts::open_prompt_with_text(app, text)
 }
 
 // Insert provided text directly into the prompt composer input (used by Quick Actions STT flow).
 #[tauri::command]
 fn insert_prompt_text(app: tauri::AppHandle, text: String) -> Result<(), String> {
-  // Intentionally do NOT show/focus the main window here.
-  // Quick Actions STT should insert text silently without changing window focus.
-  let payload = serde_json::json!({ "text": text });
-  if let Some(win) = app.get_webview_window("main") {
-    let _ = win.emit("prompt:insert", payload);
-  } else {
-    // Fallback: if main window is not available, emit app-wide (may be picked by another window),
-    // but still avoid focusing anything.
-    let _ = app.emit("prompt:insert", serde_json::json!({ "text": text }));
-  }
-  Ok(())
+  quick_prompts::insert_prompt_text(app, text)
 }
 
 // Paste provided text into the currently focused application via clipboard + Ctrl+V.
@@ -2399,93 +1820,7 @@ fn insert_text_into_focused_app(text: String, safe_mode: Option<bool>) -> Result
 // Uses aggressive copy-restore by default unless safe_mode is true.
 #[tauri::command]
 async fn run_quick_prompt(app: tauri::AppHandle, index: u8, safe_mode: Option<bool>) -> Result<(), String> {
-  let safe = safe_mode.unwrap_or(false);
-
-  // Capture selection text (duplication kept for clarity and simplicity; refactor later if needed)
-  let mut clipboard = Clipboard::new().map_err(|e| format!("clipboard init failed: {e}"))?;
-  let previous_text = if !safe { clipboard.get_text().ok() } else { None };
-
-  if !safe {
-    let mut enigo = Enigo::new();
-    enigo.key_down(Key::Control);
-    enigo.key_click(Key::Layout('c'));
-    enigo.key_up(Key::Control);
-    thread::sleep(Duration::from_millis(120));
-  }
-
-  let selection = clipboard.get_text().unwrap_or_default();
-
-  if !safe {
-    if let Some(prev) = previous_text {
-      let _ = clipboard.set_text(prev);
-    }
-  }
-
-  // If empty selection, open main window with a friendly message.
-  if selection.trim().is_empty() {
-    let _ = open_prompt_with_text(app, "No selection. Type your input or paste it here.".to_string());
-    return Ok(());
-  }
-
-  // Build messages: system carries instruction + template; user is raw selection
-  let template = load_quick_prompt_template_with_notify(Some(&app), index);
-  let system_content = format!("Reply only with the result and nothing else. {template}");
-  let user_content = selection.clone();
-
-  // Call OpenAI Chat Completions (respect settings overrides)
-  let key = get_api_key_from_settings_or_env()?;
-  let model = get_model_from_settings_or_env();
-  let temp = get_temperature_from_settings_or_env();
-
-  let mut body = serde_json::json!({
-    "model": model,
-    "messages": [
-      { "role": "system", "content": system_content },
-      { "role": "user", "content": user_content }
-    ]
-  });
-  if let Some(t) = temp { if let serde_json::Value::Object(ref mut m) = body { m.insert("temperature".to_string(), serde_json::json!(t)); } }
-
-  let client = reqwest::Client::new();
-  let resp = client
-    .post("https://api.openai.com/v1/chat/completions")
-    .bearer_auth(key)
-    .json(&body)
-    .send()
-    .await
-    .map_err(|e| format!("request failed: {e}"))?;
-
-  if !resp.status().is_success() {
-    let status = resp.status();
-    let body_text = resp.text().await.unwrap_or_default();
-    return Err(format!("OpenAI error: {status} {body_text}"));
-  }
-
-  let v: serde_json::Value = resp.json().await.map_err(|e| format!("json error: {e}"))?;
-  let text = v.get("choices")
-    .and_then(|c| c.get(0))
-    .and_then(|c| c.get("message"))
-    .and_then(|m| m.get("content"))
-    .and_then(|t| t.as_str())
-    .unwrap_or("")
-    .to_string();
-
-  let out = if text.trim().is_empty() { "No response received.".to_string() } else { text };
-
-  // Insert result into the active application: set clipboard -> Ctrl+V -> restore clipboard
-  let after_restore_before_paste = clipboard.get_text().ok();
-  let _ = clipboard.set_text(out);
-  {
-    let mut enigo = Enigo::new();
-    enigo.key_down(Key::Control);
-    enigo.key_click(Key::Layout('v'));
-    enigo.key_up(Key::Control);
-  }
-  thread::sleep(Duration::from_millis(120));
-  if let Some(prev) = after_restore_before_paste {
-    let _ = clipboard.set_text(prev);
-  }
-  Ok(())
+  quick_prompts::run_quick_prompt(app, index, safe_mode).await
 }
 
 fn quick_prompt_template(index: u8) -> &'static str {
