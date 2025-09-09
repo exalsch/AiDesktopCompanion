@@ -188,7 +188,86 @@ pub fn stream_cleanup_idle(ttl_seconds: u64) -> Result<usize, String> {
 }
 
 // ---------------------------
-// Local Windows TTS helpers
+// OpenAI direct streaming (speech and responses): shared state and helpers
+// ---------------------------
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use once_cell::sync::Lazy as GlobalLazy;
+use tokio::sync::oneshot;
+
+static STREAM_COUNTER: GlobalLazy<AtomicU64> = GlobalLazy::new(|| AtomicU64::new(0));
+static STREAM_STOPPERS: GlobalLazy<StdMutex<HashMap<u64, oneshot::Sender<()>>>> = GlobalLazy::new(|| StdMutex::new(HashMap::new()));
+
+pub fn openai_stream_start(
+  app: tauri::AppHandle,
+  key: String,
+  text: String,
+  voice: Option<String>,
+  model: Option<String>,
+  format: Option<String>,
+) -> Result<u64, String> {
+  let fmt = format.unwrap_or_else(|| "opus".to_string());
+  let (accept, body_format, mime): (&'static str, &'static str, &'static str) = match fmt.as_str() {
+    "mp3" => ("audio/mpeg", "mp3", "audio/mpeg"),
+    _ => ("audio/ogg", "opus", "audio/ogg; codecs=opus"),
+  };
+  let m = model.unwrap_or_else(|| "gpt-4o-mini-tts".to_string());
+  let v = voice.unwrap_or_else(|| "alloy".to_string());
+  let body = serde_json::json!({ "model": m, "input": text, "voice": v, "format": body_format });
+
+  let (tx, rx) = oneshot::channel::<()>();
+  let id = STREAM_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
+  {
+    let mut map = STREAM_STOPPERS.lock().map_err(|_| "Mutex poisoned")?;
+    map.insert(id, tx);
+  }
+  spawn_speech_stream(app, key, body, accept, mime, id, rx, move |rid| {
+    if let Ok(mut map) = STREAM_STOPPERS.lock() { map.remove(&rid); }
+  });
+  Ok(id)
+}
+
+pub fn openai_stream_stop(id: u64) -> Result<bool, String> {
+  let tx = {
+    let mut map = STREAM_STOPPERS.lock().map_err(|_| "Mutex poisoned")?;
+    map.remove(&id)
+  };
+  if let Some(tx) = tx { let _ = tx.send(()); Ok(true) } else { Ok(false) }
+}
+
+pub fn responses_stream_start(
+  app: tauri::AppHandle,
+  key: String,
+  text: String,
+  voice: Option<String>,
+  model: Option<String>,
+  format: Option<String>,
+) -> Result<u64, String> {
+  let fmt = format.unwrap_or_else(|| "opus".to_string());
+  let req_model = model.unwrap_or_else(|| "gpt-4o-mini-tts".to_string());
+  let m = if req_model.contains("tts") { "gpt-4o-realtime-preview".to_string() } else { req_model };
+  let v = voice.unwrap_or_else(|| "alloy".to_string());
+  let body = serde_json::json!({
+    "model": m,
+    "modalities": ["text", "audio"],
+    "audio": { "voice": v, "format": fmt },
+    "input": text,
+    "stream": true
+  });
+  let (tx, rx) = oneshot::channel::<()>();
+  let id = STREAM_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
+  {
+    let mut map = STREAM_STOPPERS.lock().map_err(|_| "Mutex poisoned")?;
+    map.insert(id, tx);
+  }
+  spawn_responses_stream(app, key, body, fmt, id, rx, move |rid| {
+    if let Ok(mut map) = STREAM_STOPPERS.lock() { map.remove(&rid); }
+  });
+  Ok(id)
+}
+
+// ---------------------------
+// Local TTS helpers
 // ---------------------------
 
 #[cfg(target_os = "windows")]
@@ -269,6 +348,44 @@ $names | ForEach-Object { $_ }
 
 #[cfg(not(target_os = "windows"))]
 pub fn local_tts_list_voices() -> Result<Vec<String>, String> { Ok(vec![]) }
+
+// Speak text synchronously using System.Speech (blocking) with explicit voice/rate/vol
+#[cfg(target_os = "windows")]
+pub fn local_speak_blocking(text: String, voice: String, rate: i32, vol: u8) -> Result<(), String> {
+  let v_escaped = ps_escape_single_quoted(&voice);
+  let ps = format!(
+    r#"
+Add-Type -AssemblyName System.Speech;
+$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;
+try {{
+  $s.Volume = {vol};
+  $s.Rate = {rate};
+  if ('{voice}' -ne '') {{ try {{ $s.SelectVoice('{voice}'); }} catch {{}} }}
+  [void]$s.Speak([Console]::In.ReadToEnd());
+}} finally {{ $s.Dispose(); }}
+"#,
+    vol = vol,
+    rate = rate.clamp(-10, 10),
+    voice = v_escaped,
+  );
+  let mut child = Command::new("powershell.exe")
+    .args(["-NoProfile", "-NonInteractive", "-Command", &ps])
+    .stdin(Stdio::piped())
+    .stdout(Stdio::null())
+    .stderr(Stdio::null())
+    .spawn()
+    .map_err(|e| format!("launch powershell failed: {e}"))?;
+  if let Some(stdin) = child.stdin.as_mut() { stdin.write_all(text.as_bytes()).map_err(|e| format!("stdin write failed: {e}"))?; }
+  drop(child.stdin.take());
+  let status = child.wait().map_err(|e| format!("powershell wait failed: {e}"))?;
+  if !status.success() { return Err(format!("powershell exited with status: {status}")); }
+  Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn local_speak_blocking(_text: String, _voice: String, _rate: i32, _vol: u8) -> Result<(), String> {
+  Err("TTS not implemented on this platform".into())
+}
 
 #[cfg(target_os = "windows")]
 pub fn local_tts_synthesize_wav(text: String, voice: Option<String>, rate: Option<i32>, volume: Option<u8>) -> Result<String, String> {

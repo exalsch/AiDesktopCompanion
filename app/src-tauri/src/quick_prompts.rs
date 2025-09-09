@@ -32,37 +32,9 @@ pub fn quick_prompts_config_path() -> Option<PathBuf> {
   }
 }
 
-// Open the main window prompt panel with provided text (used by STT flow).
-pub fn open_prompt_with_text(app: tauri::AppHandle, text: String) -> Result<(), String> {
-  if let Some(win) = app.get_webview_window("main") {
-    let _ = win.show();
-    let _ = win.set_focus();
-  }
-  let preview: String = text.chars().take(200).collect();
-  let payload = serde_json::json!({
-    "selection": text,
-    "preview": preview,
-    "length": preview.chars().count(),
-  });
-  let _ = app.emit("prompt:open", payload);
-  Ok(())
-}
-
-// Insert provided text directly into the prompt composer input (used by Quick Actions STT flow).
-pub fn insert_prompt_text(app: tauri::AppHandle, text: String) -> Result<(), String> {
-  // Intentionally do NOT show/focus the main window here.
-  let payload = serde_json::json!({ "text": text });
-  if let Some(win) = app.get_webview_window("main") {
-    let _ = win.emit("prompt:insert", payload);
-  } else {
-    // Fallback: app-wide emit if main is not available
-    let _ = app.emit("prompt:insert", serde_json::json!({ "text": text }));
-  }
-  Ok(())
-}
-
 // Runs a predefined quick prompt (1–9) on the current selection and opens the main window with the AI result.
 // Uses aggressive copy-restore by default unless safe_mode is true.
+#[tauri::command]
 pub async fn run_quick_prompt(app: tauri::AppHandle, index: u8, safe_mode: Option<bool>) -> Result<(), String> {
   let safe = safe_mode.unwrap_or(false);
 
@@ -88,7 +60,7 @@ pub async fn run_quick_prompt(app: tauri::AppHandle, index: u8, safe_mode: Optio
 
   // If empty selection, open main window with a friendly message.
   if selection.trim().is_empty() {
-    let _ = open_prompt_with_text(app, "No selection. Type your input or paste it here.".to_string());
+    let _ = crate::quick_actions::open_prompt_with_text(app, "No selection. Type your input or paste it here.".to_string());
     return Ok(());
   }
 
@@ -227,6 +199,9 @@ pub fn load_quick_prompt_template(index: u8) -> String {
   load_quick_prompt_template_with_notify(None, index)
 }
 
+// capture/file/screen commands moved to quick_actions.rs
+
+#[tauri::command]
 pub fn generate_default_quick_prompts() -> Result<String, String> {
   let path = quick_prompts_config_path().ok_or_else(|| "Unsupported platform for config path".to_string())?;
   if let Some(dir) = path.parent() {
@@ -250,6 +225,7 @@ pub fn generate_default_quick_prompts() -> Result<String, String> {
   Ok(path.to_string_lossy().to_string())
 }
 
+#[tauri::command]
 pub fn get_quick_prompts() -> Result<serde_json::Value, String> {
   // Return an object with keys "1".."9". Fill missing/invalid entries with defaults.
   let mut obj = serde_json::Map::new();
@@ -283,6 +259,7 @@ pub fn get_quick_prompts() -> Result<serde_json::Value, String> {
   Ok(serde_json::Value::Object(obj))
 }
 
+#[tauri::command]
 pub fn save_quick_prompts(map: serde_json::Value) -> Result<String, String> {
   // Accept either array or object; normalize to object of 1..9 with strings.
   let mut obj = serde_json::Map::new();
