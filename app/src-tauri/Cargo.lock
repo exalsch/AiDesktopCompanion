@@ -3,6 +3,37 @@
 version = 3
 
 [[package]]
+name = "AiDesktopCompanion"
+version = "0.1.2"
+dependencies = [
+ "arboard",
+ "base64 0.22.1",
+ "chrono",
+ "enigo",
+ "futures-util",
+ "hound",
+ "hyper 0.14.32",
+ "image 0.25.6",
+ "log",
+ "once_cell",
+ "reqwest",
+ "rmcp",
+ "screenshots",
+ "serde",
+ "serde_json",
+ "symphonia",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-global-shortcut",
+ "tauri-plugin-log",
+ "tokio",
+ "tokio-stream",
+ "uuid",
+ "windows 0.58.0",
+]
+
+[[package]]
 name = "addr2line"
 version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -98,37 +129,6 @@ name = "anyhow"
 version = "1.0.99"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b0674a1ddeecb70197781e945de4b3b8ffb61fa939a5597bcf48503737663100"
-
-[[package]]
-name = "app"
-version = "0.1.0"
-dependencies = [
- "arboard",
- "base64 0.22.1",
- "chrono",
- "enigo",
- "futures-util",
- "hound",
- "hyper 0.14.32",
- "image 0.25.6",
- "log",
- "once_cell",
- "reqwest",
- "rmcp",
- "screenshots",
- "serde",
- "serde_json",
- "symphonia",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-global-shortcut",
- "tauri-plugin-log",
- "tokio",
- "tokio-stream",
- "uuid",
- "windows 0.58.0",
-]
 
 [[package]]
 name = "arbitrary"

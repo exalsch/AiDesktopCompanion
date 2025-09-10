@@ -1,8 +1,8 @@
 [package]
-name = "app"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+name = "AiDesktopCompanion"
+version = "0.1.2"
+description = "AiDesktopCompanion"
+authors = ["Alexander Schick"]
 license = ""
 repository = ""
 edition = "2021"
