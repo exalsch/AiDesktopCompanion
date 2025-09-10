@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { emit as emitTauri } from '@tauri-apps/api/event'
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import { save as saveDialog } from '@tauri-apps/plugin-dialog'
@@ -7,19 +7,6 @@ import { useTtsPlayback } from '../composables/useTtsPlayback'
 
 const props = defineProps<{ notify?: (msg: string, kind?: 'error' | 'success', ms?: number) => void }>()
 const emit = defineEmits<{ (e: 'busy', v: boolean): void }>()
-
-const form = reactive({
-  text: '' as string,
-  voice: '' as string,
-  rate: -2 as number, // -10..10
-  volume: 100 as number, // 0..100
-  // OpenAI TTS fields
-  openaiVoice: 'alloy' as string,
-  openaiModel: 'gpt-4o-mini-tts' as string,
-  openaiFormat: 'wav' as 'wav' | 'mp3' | 'opus',
-  openaiStreaming: false as boolean,
-  openaiInstructions: '' as string,
-})
 
 const { engine, form: formFromComposable, speaking, busy, wavPath, wavSrc, lastPlayTempPath, playerRef, onPlay, onStop, onSynthesize, startProxyStreaming, stopProxyStreaming } = useTtsPlayback(props.notify)
 // Alias for local usage

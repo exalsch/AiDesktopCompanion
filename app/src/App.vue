@@ -2,20 +2,17 @@
 import QuickActions from './QuickActions.vue'
 import PromptPanel from './components/PromptPanel.vue'
 import CaptureOverlay from './components/CaptureOverlay.vue'
-import ConversationView from './components/ConversationView.vue'
 import ConversationHistory from './components/ConversationHistory.vue'
-import PromptComposer from './components/PromptComposer.vue'
+import PromptMain from './components/prompt/PromptMain.vue'
 import TTSPanel from './components/TTSPanel.vue'
 import STTPanel from './components/STTPanel.vue'
 import LoadingDots from './components/LoadingDots.vue'
 import SettingsGeneral from './components/settings/SettingsGeneral.vue'
 import SettingsMcpServers from './components/settings/SettingsMcpServers.vue'
 import SettingsQuickPrompts from './components/settings/SettingsQuickPrompts.vue'
-import conversation, { appendMessage, getPersistState, setPersistState, clearAllConversations, newConversation, updateMessage } from './state/conversation'
+import conversation, { appendMessage, clearAllConversations, newConversation, updateMessage, getPersistState } from './state/conversation'
 import { onMounted, onBeforeUnmount, reactive, ref, watch, computed } from 'vue'
-import { listen } from '@tauri-apps/api/event'
-import { invoke, convertFileSrc } from '@tauri-apps/api/core'
-import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
+import { invoke } from '@tauri-apps/api/core'
 import { applyGlobalHotkey, checkShortcutAvailable } from './hotkeys'
 import { useToast } from './composables/useToast'
 import { useQuickPrompts } from './composables/useQuickPrompts'
@@ -24,14 +21,12 @@ import { parseArgs, normalizeEnvInput, parseJsonObject } from './composables/uti
 import { useMcp } from './composables/useMcp'
 import { useTtsBackground } from './composables/useTtsBackground'
 import { useAppEvents } from './composables/useAppEvents'
-// Per-style CSS asset URLs (bundler-resolved)
-// Add new styles by importing their style.css with ?url and extending styleCssMap below
-import sidebarDarkStyleUrl from './styles/sidebar-dark/style.css?url'
-import sidebarLightStyleUrl from './styles/sidebar-light/style.css?url'
+import { useThemeStyle } from './composables/useThemeStyle'
+import { useWindowMode } from './composables/useWindowMode'
+import { useBusy } from './composables/useBusy'
+import { useConversationPersist } from './composables/useConversationPersist'
 
-const winParam = new URLSearchParams(window.location.search).get('window')
-const isQuickActions = winParam === 'quick-actions'
-const isCaptureOverlay = winParam === 'capture-overlay'
+const { isQuickActions, isCaptureOverlay, addBodyClass, removeBodyClass } = useWindowMode()
 
 // Reactive state for Prompt flow in the main window
 const prompt = reactive({
@@ -52,9 +47,8 @@ const ui = reactive({
 // Layout state for sidebar
 const layout = reactive({ sidebarOpen: true })
 
-// Aggregate busy state from child sections
-const busy = reactive({ prompt: false, tts: false, stt: false })
-const isBusy = () => busy.prompt || busy.tts || busy.stt || models.loading
+// Aggregate busy state from child sections (via composable)
+// Note: models is from useSettings below; we initialize busy after settings
 
 // Bindable input value for the PromptComposer so other sections can prefill it
 const composerInput = ref('')
@@ -63,59 +57,27 @@ const ttsRef = ref<InstanceType<typeof TTSPanel> | null>(null)
 // Hidden background TTS controller via composable
 const ttsBgRef = ref<InstanceType<typeof TTSPanel> | null>(null)
 const { ttsBg, registerBackgroundTtsEvents } = useTtsBackground(ttsBgRef as any)
-// Ref to PromptComposer to allow programmatic send
-const composerRef = ref<InstanceType<typeof PromptComposer> | null>(null)
+// Ref to PromptMain to allow programmatic focus on composer
+const composerRef = ref<InstanceType<typeof PromptMain> | null>(null)
 // (Quick Prompts editor now encapsulated in SettingsQuickPrompts)
 
 // Toast state via composable
 const { toast, showToast } = useToast()
 
-// ---------------------------
-// Persistence: load on startup and auto-save on changes
-// ---------------------------
-async function loadPersistedConversation() {
-  if (!settings.persist_conversations) return
-  try {
-    const v = await invoke<any>('load_conversation_state')
-    if (v && typeof v === 'object' && Object.keys(v).length > 0) {
-      const ok = setPersistState(v)
-      if (!ok) showToast('Failed to load conversation history.', 'error')
-    }
-  } catch (err) {
-    const msg = typeof err === 'string' ? err : (err && (err as any).message) ? (err as any).message : 'Unknown error'
-    showToast(`Failed to load conversation history: ${msg}`, 'error')
-  }
-}
-
-let saveDebounce: any = 0
-function schedulePersistSave() {
-  if (!settings.persist_conversations) return
-  if (saveDebounce) clearTimeout(saveDebounce)
-  saveDebounce = setTimeout(async () => {
-    try {
-      await invoke<string>('save_conversation_state', { state: getPersistState() })
-    } catch (e) {
-      console.warn('[persist] save failed', e)
-    }
-  }, 300)
-}
-
-watch(() => conversation.currentConversation.messages.length, () => schedulePersistSave())
-// persist when switching current conversation (so currentId is saved)
-watch(() => conversation.currentConversation.id, () => schedulePersistSave())
-// persist when conversations are added/removed
-watch(() => conversation.conversations.length, () => schedulePersistSave())
+// Persistence wiring via composable
 
 let unsubs: Array<() => void> = []
 
 onMounted(async () => {
   // For QuickActions popup, strip global app padding/min-width via body class
-  try { if (isQuickActions) document.body.classList.add('qa-window') } catch {}
+  try { addBodyClass() } catch {}
   try {
     const unsubApp = await registerAppEvents()
     const unsubTtsBg = await registerBackgroundTtsEvents()
+    const unsubPersist = registerConversationPersist()
     unsubs.push(unsubApp)
     unsubs.push(unsubTtsBg)
+    unsubs.push(unsubPersist)
   } catch (err) {
     console.error('[app] event listen failed', err)
   }
@@ -137,7 +99,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   try { unsubs.forEach(u => u()); } finally { unsubs = [] }
-  try { document.body.classList.remove('qa-window') } catch {}
+  try { removeBodyClass() } catch {}
 })
 
 // Removed legacy Quick Prompts helpers (now handled inside SettingsQuickPrompts)
@@ -155,6 +117,12 @@ const toggleQuickPrompt = qp.toggleQuickPrompt
 // Prompt Settings state & actions (via composable)
 // ---------------------------
 const { settings, models, loadSettings } = useSettings()
+// Aggregate busy state now that models is available
+const { busy, isBusy } = useBusy(computed(() => models.loading))
+// Conversation persistence via composable
+const { loadPersistedConversation, registerConversationPersist } = useConversationPersist(computed(() => settings.persist_conversations), showToast)
+// Theme/style loader via composable
+const { applyStyleCss } = useThemeStyle(computed(() => settings.ui_style))
 
 // MCP composable (provides server helpers and actions)
 const mcp = useMcp(settings, showToast)
@@ -377,40 +345,6 @@ async function autoConnectServers() {
   }
 }
 
-// ---------------------------
-// Per-style CSS loader
-// ---------------------------
-const themeCssLinkId = 'theme-style-css'
-const styleCssMap: Record<string, string> = {
-  'sidebar-dark': sidebarDarkStyleUrl,
-  'sidebar-light': sidebarLightStyleUrl,
-}
-function ensureThemeLinkEl(): HTMLLinkElement {
-  let el = document.getElementById(themeCssLinkId) as HTMLLinkElement | null
-  if (!el) {
-    el = document.createElement('link')
-    el.id = themeCssLinkId
-    el.rel = 'stylesheet'
-    document.head.appendChild(el)
-  }
-  return el
-}
-
-function applyStyleCss(styleName: string) {
-  const el = ensureThemeLinkEl()
-  const resolved = styleCssMap[String(styleName)]
-  if (resolved) {
-    el.href = resolved
-  } else {
-    // Unknown style: remove link to avoid 404s
-    try { el.remove() } catch {}
-  }
-}
-
-watch(() => settings.ui_style, (v) => {
-  try { applyStyleCss(v) } catch {}
-})
-
 </script>
 
 <template>
@@ -561,30 +495,22 @@ watch(() => settings.ui_style, (v) => {
               </div>
             </template>
             <template v-else>
-              <div class="prompt-layout">
-                <div class="main-content">
-                  <ConversationView
-                    :messages="conversation.currentConversation.messages"
-                    :hide-tool-details="settings.hide_tool_calls_in_chat"
-                    :mcp-servers="settings.mcp_servers"
-                    :tts-playing-id="ttsBg.currentMessageId"
-                    :tts-playing="ttsBg.playing"
-                    @list-tools="onListTools"
-                    @toggle-tool="onToggleTool"
-                  />
-                </div>
-                <div class="quick-prompt-bar">
-                  <button
-                    v-for="i in 9"
-                    :key="i"
-                    :class="['qp-btn', { active: activeQuickPrompt === i }]"
-                    :disabled="!quickPrompts[String(i)]"
-                    :title="quickPrompts[String(i)] || 'Empty'"
-                    @click="toggleQuickPrompt(i)"
-                  >{{ i }}</button>
-                </div>
-                <PromptComposer ref="composerRef" v-model="composerInput" :systemPromptText="selectedSystemPrompt" @busy="busy.prompt = $event" />
-              </div>
+              <PromptMain
+                ref="composerRef"
+                :messages="conversation.currentConversation.messages"
+                :hideToolCalls="settings.hide_tool_calls_in_chat"
+                :mcpServers="settings.mcp_servers"
+                :ttsPlayingId="ttsBg.currentMessageId"
+                :ttsPlaying="ttsBg.playing"
+                :quickPrompts="quickPrompts"
+                :activeQuickPrompt="activeQuickPrompt"
+                :systemPromptText="selectedSystemPrompt"
+                v-model:composerText="composerInput"
+                @list-tools="onListTools"
+                @toggle-tool="onToggleTool"
+                @toggle-quick-prompt="toggleQuickPrompt"
+                @busy="busy.prompt = $event"
+              />
             </template>
           </template>
 
@@ -707,24 +633,7 @@ watch(() => settings.ui_style, (v) => {
 .main-content { flex: 1; min-height: 0; overflow: auto; padding: 12px 12px; }
 
 /* Prompt layout with scrolling conversation */
-.prompt-layout { display: flex; flex-direction: column; gap: 5px; height: 95%; }
-.convo-wrap { flex: 1; min-height: 0; }
-
-/* Quick Prompt buttons above composer */
-.quick-prompt-bar { display: flex; gap: 3px; align-items: center; flex-wrap: wrap; padding: 0 12px; }
-.qp-btn {
-  padding: 4px 8px;
-  border-radius: 8px;
-  border: 1px solid var(--adc-border);
-  background: var(--adc-surface);
-  color: var(--adc-fg);
-  cursor: pointer;
-  font-size: 12px;
-  min-width: 28px;
-}
-.qp-btn:hover:not(:disabled) { background: var(--adc-accent); border-color: var(--adc-accent); color: #fff; }
-.qp-btn.active { background: var(--adc-accent); border-color: var(--adc-accent); color: #fff; }
-.qp-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+/* Prompt layout and quick prompt button styles moved to components/prompt/PromptMain.vue */
 </style>
 
 <!-- Global overrides for QuickActions window only -->
