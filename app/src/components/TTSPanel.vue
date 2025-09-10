@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { reactive, ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
-import { emit as emitTauri, listen } from '@tauri-apps/api/event'
+import { reactive, ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { emit as emitTauri } from '@tauri-apps/api/event'
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import { save as saveDialog } from '@tauri-apps/plugin-dialog'
+import { useTtsPlayback } from '../composables/useTtsPlayback'
 
 const props = defineProps<{ notify?: (msg: string, kind?: 'error' | 'success', ms?: number) => void }>()
 const emit = defineEmits<{ (e: 'busy', v: boolean): void }>()
@@ -20,21 +21,15 @@ const form = reactive({
   openaiInstructions: '' as string,
 })
 
-const speaking = ref(false)
-const busy = ref(false) // shows LoadingDots during synthesis (OpenAI play or any synth operation)
-const engine = ref<'local' | 'openai'>('local')
-const wavPath = ref('')
-const wavSrc = ref('')
+const { engine, form: formFromComposable, speaking, busy, wavPath, wavSrc, lastPlayTempPath, playerRef, onPlay, onStop, onSynthesize, startProxyStreaming, stopProxyStreaming } = useTtsPlayback(props.notify)
+// Alias for local usage
+const form = formFromComposable
 const voices = ref<string[]>([])
 const loadingVoices = ref(false)
 const err = ref('')
-const playerRef = ref<HTMLAudioElement | null>(null)
 let cleanupTimer: any = 0
-const lastPlayTempPath = ref('') // temp wav created by onPlay (OpenAI) only; safe to delete after playback/stop
 
-// Streaming state (OpenAI) - using local HTTP proxy (no MSE)
-let streamSessionUrl = ref('')
-let streamSessionId: string | null = null
+// Streaming handled in composable when engine === 'openai' and form.openaiStreaming
 
 // OpenAI voices (static list; API does not expose a public voices endpoint)
 const openaiVoiceOptions = ref<string[]>([
@@ -63,228 +58,19 @@ async function loadVoices() {
   }
 }
 
-async function onPlay() {
-  if (!form.text.trim()) {
-    props.notify?.('Enter some text to speak', 'error')
-    return
-  }
+async function onSynthesizeWithSave() {
+  if (!form.text.trim()) { props.notify?.('Enter some text to synthesize', 'error'); return }
   try {
-    if (engine.value === 'local') {
-      await invoke('tts_start', { text: form.text, voice: form.voice || null, rate: form.rate, volume: form.volume })
-      speaking.value = true
-    } else {
-      if (form.openaiStreaming) {
-        // Streaming via local HTTP proxy
-        await startProxyStreaming()
-      } else {
-        // Non-streaming synth-then-play
-        busy.value = true
-        const fmt = form.openaiFormat || 'wav'
-        const path = await invoke<string>('tts_openai_synthesize_file', { text: form.text, voice: form.openaiVoice || 'alloy', model: form.openaiModel || 'gpt-4o-mini-tts', format: fmt, rate: form.rate, volume: form.volume, instructions: form.openaiInstructions || null })
-        busy.value = false
-        wavPath.value = path
-        wavSrc.value = convertFileSrc(path)
-        lastPlayTempPath.value = path
-        // Auto-play
-        requestAnimationFrame(() => {
-          const a = playerRef.value
-          if (a) {
-            // Apply rate/volume locally for non-streaming path
-            const factor = Math.max(0.25, Math.min(4, Math.pow(2, (form.rate || 0) / 10)))
-            a.playbackRate = factor
-            a.volume = Math.max(0, Math.min(1, (form.volume || 100) / 100))
-            a.currentTime = 0
-            a.play().catch(() => {})
-            speaking.value = true
-            a.onended = async () => {
-              speaking.value = false
-              // Cleanup temp WAV only if it was created by Play (OpenAI)
-              const p = lastPlayTempPath.value
-              if (p) {
-                try { await invoke<boolean>('tts_delete_temp_wav', { path: p }) } catch {}
-                if (wavPath.value === p) { wavPath.value = ''; wavSrc.value = '' }
-                lastPlayTempPath.value = ''
-              }
-            }
-          }
-        })
-      }
-    }
-  } catch (e: any) {
-    const msg = e?.message || String(e) || 'TTS start failed'
-    props.notify?.(msg, 'error')
-    busy.value = false
-  }
-}
-
-async function onStop() {
-  try {
-    if (engine.value === 'local') {
-      await invoke('tts_stop')
-    } else {
-      // Stop streaming if active (proxy)
-      await stopProxyStreaming()
-      const a = playerRef.value
-      if (a) { a.pause(); a.currentTime = 0 }
-      // Cleanup temp WAV if stopping during OpenAI playback
-      const p = lastPlayTempPath.value
-      if (p) {
-        try { await invoke<boolean>('tts_delete_temp_wav', { path: p }) } catch {}
-        if (wavPath.value === p) { wavPath.value = ''; wavSrc.value = '' }
-        lastPlayTempPath.value = ''
-      }
-    }
-  } catch {}
-  finally {
-    speaking.value = false
-  }
-}
-
-async function startProxyStreaming() {
-  busy.value = true
-  await nextTick()
-  const a = playerRef.value
-  if (!a) { busy.value = false; props.notify?.('Audio element not ready', 'error'); return }
-  // Ask backend to create a streaming session and return a local URL
-  let url = ''
-  try {
-    // Verify the selected format is playable; if not, fallback to MP3 for progressive streaming
-    const desiredFmt = (form.openaiFormat || 'mp3') as 'wav'|'mp3'|'opus'
-    const fmtToMime: Record<string, string> = { wav: 'audio/wav', mp3: 'audio/mpeg', opus: 'audio/ogg' }
-    let chosenFmt: 'wav'|'mp3'|'opus' = desiredFmt
-    const mime = fmtToMime[desiredFmt] || 'audio/mpeg'
-    try {
-      const support = a.canPlayType(mime)
-      if (!support) chosenFmt = 'mp3'
-    } catch {
-      chosenFmt = 'mp3'
-    }
-    if (chosenFmt !== desiredFmt) {
-      props.notify?.(`Selected format ${desiredFmt.toUpperCase()} not supported for streaming. Falling back to MP3.`, 'error', 3000)
-    }
-    url = await invoke<string>('tts_create_stream_session', {
-      text: form.text,
-      voice: form.openaiVoice || 'alloy',
-      model: form.openaiModel || 'gpt-4o-mini-tts',
-      format: chosenFmt || 'mp3',
-      instructions: form.openaiInstructions || null,
-    })
-  } catch (e: any) {
-    busy.value = false
-    props.notify?.(e?.message || String(e) || 'Failed to start streaming session', 'error')
-    return
-  }
-  streamSessionUrl.value = url
-  streamSessionId = (url.split('/').pop() || '').trim() || null
-  // Apply rate/volume and begin playback
-  const factor = Math.max(0.25, Math.min(4, Math.pow(2, (form.rate || 0) / 10)))
-  a.playbackRate = factor
-  a.volume = Math.max(0, Math.min(1, (form.volume || 100) / 100))
-  a.src = url
-  a.currentTime = 0
-  a.play().then(() => {
-    speaking.value = true
-    busy.value = false
-  }).catch(err => {
-    busy.value = false
-    props.notify?.(String(err) || 'Failed to start playback', 'error')
-  })
-  // Auto-fallback if the audio element reports a playback error (e.g., unsupported container or non-audio response)
-  a.onerror = async () => {
-    try { await stopProxyStreaming() } catch {}
-    // Fallback to non-streaming MP3 synth to maximize compatibility
-    try {
-      busy.value = true
-      const path = await invoke<string>('tts_openai_synthesize_file', {
-        text: form.text,
-        voice: form.openaiVoice || 'alloy',
-        model: form.openaiModel || 'gpt-4o-mini-tts',
-        format: 'mp3',
-        rate: form.rate,
-        volume: form.volume,
-        instructions: form.openaiInstructions || null,
-      })
-      busy.value = false
-      wavPath.value = path
-      wavSrc.value = convertFileSrc(path)
-      lastPlayTempPath.value = path
-      requestAnimationFrame(() => {
-        const el = playerRef.value
-        if (el) {
-          const factor2 = Math.max(0.25, Math.min(4, Math.pow(2, (form.rate || 0) / 10)))
-          el.playbackRate = factor2
-          el.volume = Math.max(0, Math.min(1, (form.volume || 100) / 100))
-          el.currentTime = 0
-          el.play().catch(() => {})
-          speaking.value = true
-        }
-      })
-    } catch (e: any) {
-      busy.value = false
-      props.notify?.(e?.message || String(e) || 'Fallback playback failed', 'error')
-    }
-  }
-  a.onended = () => {
-    speaking.value = false
-    // Best-effort: stop session to free memory
-    if (streamSessionId) {
-      invoke('tts_stop_stream_session', { session_id: streamSessionId }).catch(() => {})
-    }
-    streamSessionId = null
-    streamSessionUrl.value = ''
-  }
-}
-
-async function stopProxyStreaming() {
-  const a = playerRef.value
-  if (a) {
-    try { a.pause() } catch {}
-    if (streamSessionUrl.value && a.src === streamSessionUrl.value) {
-      a.src = ''
-    }
-  }
-  if (streamSessionId) {
-    try { await invoke('tts_stop_stream_session', { session_id: streamSessionId }) } catch {}
-  }
-  streamSessionId = null
-  streamSessionUrl.value = ''
-  speaking.value = false
-  busy.value = false
-}
-
-async function onSynthesize() {
-  if (!form.text.trim()) {
-    props.notify?.('Enter some text to synthesize', 'error')
-    return
-  }
-  try {
-    busy.value = true
-    const path = engine.value === 'local'
-      ? await invoke<string>('tts_synthesize_wav', { text: form.text, voice: form.voice || null, rate: form.rate, volume: form.volume })
-      : await invoke<string>('tts_openai_synthesize_file', { text: form.text, voice: (form.openaiVoice || 'alloy'), model: (form.openaiModel || 'gpt-4o-mini-tts'), format: (form.openaiFormat || 'wav'), rate: form.rate, volume: form.volume, instructions: form.openaiInstructions || null })
-    busy.value = false
-    wavPath.value = path
-    wavSrc.value = convertFileSrc(path)
-
+    await onSynthesize()
     // Prompt Save As... dialog
     const suggested = `speech.${engine.value === 'openai' ? form.openaiFormat : 'wav'}`
     const filters = engine.value === 'openai'
-      ? (
-        form.openaiFormat === 'mp3'
-          ? [{ name: 'MP3 audio', extensions: ['mp3'] }]
-          : form.openaiFormat === 'opus'
-            ? [{ name: 'OPUS audio', extensions: ['opus', 'ogg'] }]
-            : [{ name: 'WAV audio', extensions: ['wav'] }]
-      )
+      ? (form.openaiFormat === 'mp3' ? [{ name: 'MP3 audio', extensions: ['mp3'] }] : form.openaiFormat === 'opus' ? [{ name: 'OPUS audio', extensions: ['opus', 'ogg'] }] : [{ name: 'WAV audio', extensions: ['wav'] }])
       : [{ name: 'WAV audio', extensions: ['wav'] }]
-    const dest = await saveDialog({
-      defaultPath: suggested,
-      filters,
-      title: 'Save synthesized audio as...'
-    } as any)
+    const dest = await saveDialog({ defaultPath: suggested, filters, title: 'Save synthesized audio as...' } as any)
     if (dest && typeof dest === 'string') {
       try {
-        const out = await invoke<string>('copy_file_to_path', { src: path, dest, overwrite: true })
+        const out = await invoke<string>('copy_file_to_path', { src: wavPath.value, dest, overwrite: true })
         props.notify?.(`Saved to:\n${out}`, 'success')
         wavPath.value = out
         wavSrc.value = convertFileSrc(out)
@@ -292,14 +78,9 @@ async function onSynthesize() {
         props.notify?.(e?.message || String(e) || 'Copy failed', 'error')
       }
     } else {
-      props.notify?.(`File instead created in temp folder:\n${path}` , 'success')
+      props.notify?.(`File instead created in temp folder:\n${wavPath.value}` , 'success')
     }
-  } catch (e: any) {
-    const msg = e?.message || String(e) || 'Synthesize failed'
-    props.notify?.(msg, 'error')
-  } finally {
-    busy.value = false
-  }
+  } catch {}
 }
 
 // Persist/restore TTS selections via settings
@@ -371,7 +152,6 @@ watch(() => form.openaiStreaming, scheduleSaveTtsSettings)
 onMounted(() => {
   loadVoices().catch(() => {})
   ensureTtsSettingsLoaded().catch(() => {})
-  loadOpenAIModels().catch(() => {})
   // Kick off stale cleanup now and periodically (every 30 minutes)
   invoke('cleanup_stale_tts_wavs', { maxAgeMinutes: 240 }).catch(() => {})
   cleanupTimer = setInterval(() => { invoke('cleanup_stale_tts_wavs', { maxAgeMinutes: 240 }).catch(() => {}) }, 30 * 60 * 1000)
@@ -388,21 +168,6 @@ watch(speaking, (v) => {
   try { emitTauri('tts:speaking', { speaking: !!v }) } catch {}
 })
 
-async function loadOpenAIModels() {
-  try {
-    const models = await invoke<string[]>('list_openai_models')
-    // Keep only likely TTS-capable models
-    const filtered = (models || []).filter(m => m.includes('tts') || m.includes('4o') || m.includes('audio'))
-    if (filtered.length) {
-      openaiModelOptions.value = Array.from(new Set([...filtered, ...openaiModelOptions.value]))
-      if (!openaiModelOptions.value.includes(form.openaiModel)) {
-        form.openaiModel = 'gpt-4o-mini-tts'
-      }
-    }
-  } catch {}
-}
-
-// Expose programmatic API for parent (App.vue)
 defineExpose({
   setText(text: string) { form.text = text || '' },
   async play() { await ensureTtsSettingsLoaded(); await onPlay() },
@@ -489,7 +254,7 @@ defineExpose({
     <div class="row inline">
       <button class="btn" :disabled="speaking || busy" @click="onPlay">{{ busy && engine === 'openai' ? 'Synthesizing…' : 'Play' }}</button>
       <button class="btn danger" :disabled="!speaking" @click="onStop">Stop</button>
-      <button class="btn" @click="onSynthesize">Save</button>
+      <button class="btn" @click="onSynthesizeWithSave">Save</button>
     </div>
 
     <div v-if="wavPath || (engine === 'openai' && form.openaiStreaming)" class="row">
