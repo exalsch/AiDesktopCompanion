@@ -6,10 +6,8 @@ import ConversationHistory from './components/ConversationHistory.vue'
 import PromptMain from './components/prompt/PromptMain.vue'
 import TTSPanel from './components/TTSPanel.vue'
 import STTPanel from './components/STTPanel.vue'
-import LoadingDots from './components/LoadingDots.vue'
-import SettingsGeneral from './components/settings/SettingsGeneral.vue'
-import SettingsMcpServers from './components/settings/SettingsMcpServers.vue'
-import SettingsQuickPrompts from './components/settings/SettingsQuickPrompts.vue'
+import SidebarNav from './components/sidebar/SidebarNav.vue'
+import SettingsMain from './components/settings/SettingsMain.vue'
 import conversation, { appendMessage, clearAllConversations, newConversation, updateMessage, getPersistState } from './state/conversation'
 import { onMounted, onBeforeUnmount, reactive, ref, watch, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
@@ -361,128 +359,18 @@ async function autoConnectServers() {
 
     <!-- Sidebar layout (dark/light) -->
     <div v-if="settings.ui_style === 'sidebar-dark' || settings.ui_style === 'sidebar-light'" class="shell">
-      <aside class="sidebar" :class="{ collapsed: !layout.sidebarOpen }">
-        <button class="burger" title="Toggle menu" @click="layout.sidebarOpen = !layout.sidebarOpen">☰</button>
-        <template v-for="s in ui.sections" :key="s">
-          <button
-            class="side-tab"
-            :class="{ active: ui.activeSection === s }"
-            @click="setSection(s)"
-            :title="s"
-          >
-            <!-- Icon -->
-            <template v-if="s === 'Prompt'">
-              <!-- Pen Tool -->
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="m12 19 7-7 3 3-7 7-3-3z"/>
-                <path d="m18 13-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/>
-                <path d="m2 2 7.586 7.586"/>
-                <circle cx="11" cy="11" r="2"/>
-              </svg>
-            </template>
-            <template v-else-if="s === 'TTS'">
-              <!-- Volume 2 -->
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-                <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
-                <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
-              </svg>
-            </template>
-            <template v-else-if="s === 'STT'">
-              <!-- Mic -->
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
-                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-                <line x1="12" x2="12" y1="19" y2="22"/>
-              </svg>
-            </template>
-            <template v-else>
-              <!-- Settings (cog) -->
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <circle cx="12" cy="12" r="3"/>
-                <rect x="11" y="0" width="2" height="4" rx="1"/>
-                <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(60 12 12)"/>
-                <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(120 12 12)"/>
-                <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(180 12 12)"/>
-                <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(240 12 12)"/>
-                <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(300 12 12)"/>
-              </svg>
-            </template>
-            <!-- Label -->
-            <span v-if="layout.sidebarOpen">{{ s }}</span>
-          </button>
-          <!-- Sublink under Prompt: History -->
-          <button
-            v-if="s === 'Prompt'"
-            class="side-subtab"
-            :class="{ active: ui.activeSection === 'Prompt' && ui.promptSubview === 'History' }"
-            @click="ui.activeSection = 'Prompt'; ui.promptSubview = 'History'"
-            title="Conversation History"
-          >
-            <!-- History icon -->
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="8"/>
-              <path d="M12 8v4l3 3"/>
-              <path d="M3 12a9 9 0 1 0 9-9"/>
-              <polyline points="3 12 3 7 8 7"/>
-            </svg>
-            <span v-if="layout.sidebarOpen">History</span>
-          </button>
-          <!-- Sublinks under Settings: submenus -->
-          <button
-            v-if="s === 'Settings'"
-            class="side-subtab"
-            :class="{ active: ui.activeSection === 'Settings' && ui.settingsSubview === 'General' }"
-            @click="ui.activeSection = 'Settings'; ui.settingsSubview = 'General'"
-            title="General Settings"
-          >
-            <!-- Sliders icon for General -->
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <line x1="4" y1="21" x2="4" y2="14"/>
-              <line x1="4" y1="10" x2="4" y2="3"/>
-              <line x1="12" y1="21" x2="12" y2="12"/>
-              <line x1="12" y1="8" x2="12" y2="3"/>
-              <line x1="20" y1="21" x2="20" y2="16"/>
-              <line x1="20" y1="12" x2="20" y2="3"/>
-              <line x1="2" y1="14" x2="6" y2="14"/>
-              <line x1="10" y1="8" x2="14" y2="8"/>
-              <line x1="18" y1="16" x2="22" y2="16"/>
-            </svg>
-            <span v-if="layout.sidebarOpen">General</span>
-          </button>
-          <button
-            v-if="s === 'Settings'"
-            class="side-subtab"
-            :class="{ active: ui.activeSection === 'Settings' && ui.settingsSubview === 'Quick Prompts' }"
-            @click="ui.activeSection = 'Settings'; ui.settingsSubview = 'Quick Prompts'"
-            title="Quick Prompts"
-          >
-            <!-- Zap icon for Quick Prompts -->
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-            </svg>
-            <span v-if="layout.sidebarOpen">Quick Prompts</span>
-          </button>
-          <button
-            v-if="s === 'Settings'"
-            class="side-subtab"
-            :class="{ active: ui.activeSection === 'Settings' && ui.settingsSubview === 'MCP Servers' }"
-            @click="ui.activeSection = 'Settings'; ui.settingsSubview = 'MCP Servers'"
-            title="MCP Servers"
-          >
-            <!-- Server icon for MCP Servers -->
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <rect x="2" y="2" width="20" height="8" rx="2"/>
-              <rect x="2" y="14" width="20" height="8" rx="2"/>
-              <line x1="6" y1="6" x2="6.01" y2="6"/>
-              <line x1="6" y1="18" x2="6.01" y2="18"/>
-            </svg>
-            <span v-if="layout.sidebarOpen">MCP Servers</span>
-          </button>
-        </template>
-        <div class="side-spacer"></div>
-        <div class="side-status"><LoadingDots v-if="isBusy()" text="Working" /></div>
-      </aside>
+      <SidebarNav
+        :sections="ui.sections as any"
+        :active-section="ui.activeSection"
+        :prompt-subview="ui.promptSubview"
+        :settings-subview="ui.settingsSubview"
+        :sidebar-open="layout.sidebarOpen"
+        :busy="isBusy()"
+        @toggle-sidebar="layout.sidebarOpen = !layout.sidebarOpen"
+        @set-section="setSection($event)"
+        @open-history="ui.activeSection = 'Prompt'; ui.promptSubview = 'History'"
+        @set-settings-subview="(s) => { ui.activeSection = 'Settings'; ui.settingsSubview = s }"
+      />
 
       <div class="main">
         <div class="main-content">
@@ -525,38 +413,24 @@ async function autoConnectServers() {
           </div>
 
           <div v-else-if="ui.activeSection === 'Settings'" class="section">
-            <div class="settings">
-            <div class="section-title">Settings</div>
-              <!-- Settings subview: General -->
-              <SettingsGeneral
-                v-if="ui.settingsSubview === 'General'"
-                :settings="settings"
-                :models="models"
-                :onSave="saveSettings"
-                :onRefreshModels="refreshModels"
-                :onClearConversations="onClearConversations"
-              />
-
-              <!-- Settings subview: Quick Prompts -->
-              <SettingsQuickPrompts v-else-if="ui.settingsSubview === 'Quick Prompts'" :notify="showToast" />
-
-              <!-- Settings subview: MCP Servers -->
-              <SettingsMcpServers
-                v-else
-                :settings="settings"
-                :onAdd="addMcpServer"
-                :onRemove="removeMcpServer"
-                :onSave="saveSettings"
-                :onConnect="connectServer"
-                :onDisconnect="disconnectServer"
-                :onPing="pingServer"
-                :onListTools="listTools"
-                :onFillArgsTemplate="fillArgsTemplate"
-                :onValidateEnvJsonInput="validateEnvJsonInput"
-                :onCallTool="callTool"
-                :selectedToolObj="selectedToolObj"
-              />
-            </div>
+            <SettingsMain
+              :settings="settings"
+              :models="models"
+              :settings-subview="ui.settingsSubview"
+              :onSave="saveSettings"
+              :onRefreshModels="refreshModels"
+              :onClearConversations="onClearConversations"
+              :onAdd="addMcpServer"
+              :onRemove="removeMcpServer"
+              :onConnect="connectServer"
+              :onDisconnect="disconnectServer"
+              :onPing="pingServer"
+              :onListTools="listTools"
+              :onFillArgsTemplate="fillArgsTemplate"
+              :onValidateEnvJsonInput="validateEnvJsonInput"
+              :onCallTool="callTool"
+              :selectedToolObj="selectedToolObj"
+            />
           </div>
         </div>
       </div>
