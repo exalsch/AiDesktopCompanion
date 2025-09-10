@@ -143,7 +143,11 @@ mod utils;
 mod config;
 mod quick_prompts;
 mod mcp;
-pub mod tts;
+mod tts_openai;
+mod tts_win_native;
+mod tts_utils;
+pub mod tts_mod;
+pub use tts_mod as tts;
 mod stt;
 mod capture;
 mod chat;
@@ -167,7 +171,7 @@ use rmcp::{
 #[tauri::command]
 async fn tts_openai_responses_stream_start(app: tauri::AppHandle, text: String, voice: Option<String>, model: Option<String>, format: Option<String>) -> Result<u64, String> {
   let key = settings::get_api_key_from_settings_or_env()?;
-  tts::responses_stream_start(app, key, text, voice, model, format)
+  tts_openai::responses_stream_start(app, key, text, voice, model, format)
 }
 
 // Helpers to parse SSE lines from a raw byte buffer (moved to tts module)
@@ -176,25 +180,25 @@ async fn tts_openai_responses_stream_start(app: tauri::AppHandle, text: String, 
 #[tauri::command]
 async fn tts_create_stream_session(text: String, voice: Option<String>, model: Option<String>, format: Option<String>, instructions: Option<String>) -> Result<String, String> {
   let api_key = settings::get_api_key_from_settings_or_env()?;
-  tts::create_stream_session(text, voice, model, format, instructions, api_key).await
+  tts_openai::create_stream_session(text, voice, model, format, instructions, api_key).await
 }
 
 /// Stop a TTS streaming session
 #[tauri::command]
 fn tts_stop_stream_session(session_id: String) -> Result<bool, String> {
-  tts::stop_stream_session(session_id)
+  tts_openai::stop_stream_session(session_id)
 }
 
 /// QA: get active TTS streaming sessions count
 #[tauri::command]
 fn tts_stream_session_count() -> Result<usize, String> {
-  tts::stream_session_count()
+  tts_openai::stream_session_count()
 }
 
 /// QA: cleanup idle TTS sessions older than ttl_seconds (that have not started)
 #[tauri::command]
 fn tts_stream_cleanup_idle(ttl_seconds: u64) -> Result<usize, String> {
-  tts::stream_cleanup_idle(ttl_seconds)
+  tts_openai::stream_cleanup_idle(ttl_seconds)
 }
 
 // Path for persisted conversation state (single-thread for now)
@@ -275,8 +279,6 @@ async fn mcp_ping(server_id: String) -> Result<String, String> {
   mcp::ping(&MCP_CLIENTS, &server_id).await
 }
 
-fn load_settings_json() -> serde_json::Value { config::load_settings_json() }
-
 // get_disabled_tools_map local helper removed; use config::get_disabled_tools_map()
 
 // settings helpers moved to settings.rs
@@ -345,32 +347,36 @@ fn tts_open_with_selection(app: tauri::AppHandle, safe_mode: Option<bool>, autop
 
 #[tauri::command]
 fn tts_start(text: String, voice: Option<String>, rate: Option<i32>, volume: Option<u8>) -> Result<(), String> {
-  tts::local_tts_start(text, voice, rate, volume)
+  tts_win_native::local_tts_start(text, voice, rate, volume)
 }
 
 #[tauri::command]
-fn tts_stop() -> Result<(), String> { tts::local_tts_stop() }
+fn tts_stop() -> Result<(), String> { 
+  tts_win_native::local_tts_stop() 
+}
 
 #[tauri::command]
-fn tts_list_voices() -> Result<Vec<String>, String> { tts::local_tts_list_voices() }
+fn tts_list_voices() -> Result<Vec<String>, String> { 
+  tts_win_native::local_tts_list_voices() 
+}
 
 #[tauri::command]
 fn tts_synthesize_wav(text: String, voice: Option<String>, rate: Option<i32>, volume: Option<u8>) -> Result<String, String> {
-  tts::local_tts_synthesize_wav(text, voice, rate, volume)
+  tts_win_native::local_tts_synthesize_wav(text, voice, rate, volume)
 }
 
 /// Back-compat wrapper: synthesize WAV via OpenAI and return a temp file path.
 #[tauri::command]
 async fn tts_openai_synthesize_wav(text: String, voice: Option<String>, model: Option<String>, rate: Option<i32>, volume: Option<u8>) -> Result<String, String> {
   let key = settings::get_api_key_from_settings_or_env()?;
-  tts::openai_synthesize_wav(key, text, voice, model, rate, volume).await
+  tts_openai::openai_synthesize_wav(key, text, voice, model, rate, volume).await
 }
 
 /// Synthesize speech via OpenAI and return a temp file path. Supports wav/mp3/opus.
 #[tauri::command]
 async fn tts_openai_synthesize_file(text: String, voice: Option<String>, model: Option<String>, format: Option<String>, rate: Option<i32>, volume: Option<u8>) -> Result<String, String> {
   let key = settings::get_api_key_from_settings_or_env()?;
-  tts::openai_synthesize_file(key, text, voice, model, format, rate, volume).await
+  tts_openai::openai_synthesize_file(key, text, voice, model, format, rate, volume).await
 }
 
 /// Start a chunked download stream from OpenAI audio/speech and emit chunks to the frontend.
@@ -378,12 +384,12 @@ async fn tts_openai_synthesize_file(text: String, voice: Option<String>, model: 
 #[tauri::command]
 async fn tts_openai_stream_start(app: tauri::AppHandle, text: String, voice: Option<String>, model: Option<String>, format: Option<String>) -> Result<u64, String> {
   let key = settings::get_api_key_from_settings_or_env()?;
-  tts::openai_stream_start(app, key, text, voice, model, format)
+  tts_openai::openai_stream_start(app, key, text, voice, model, format)
 }
 
 #[tauri::command]
 fn tts_openai_stream_stop(id: u64) -> Result<bool, String> {
-  tts::openai_stream_stop(id)
+  tts_openai::openai_stream_stop(id)
 }
 
 // Transcribe audio bytes using OpenAI Whisper API (expects WEBM/Opus by default).
