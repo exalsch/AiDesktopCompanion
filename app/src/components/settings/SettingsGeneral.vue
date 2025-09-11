@@ -146,7 +146,6 @@ async function cleanupIdleTtsProxy() {
 <template>
   <div class="settings-section">
     <div class="settings-title">General Settings</div>  
-    <button class="btn" @click="props.onSave">Save</button>        
 
     <div class="settings-row col">
       <label class="label">Global Hotkey</label>
@@ -221,26 +220,7 @@ async function cleanupIdleTtsProxy() {
       <label class="checkbox"><input type="checkbox" v-model="props.settings.hide_tool_calls_in_chat"/> Hide tool call details in chat</label>
     </div>
 
-    <div class="settings-title">Text-to-Speech Defaults</div>
-    <div class="settings-row col">
-      <label class="label">Streaming enabled by default</label>
-      <label class="checkbox"><input type="checkbox" v-model="props.settings.tts_openai_streaming"/> Enable streaming for OpenAI TTS</label>
-      <div class="settings-hint">When enabled, the TTS panel and background playback will prefer streaming.</div>
-    </div>
-    <div class="settings-row col">
-      <label class="label">Default streaming format</label>
-      <select v-model="props.settings.tts_openai_format" class="input" style="max-width: 180px;">
-        <option value="mp3">MP3</option>
-        <option value="wav">WAV</option>
-        <option value="opus">OPUS</option>
-      </select>
-      <div class="settings-hint">MP3 offers broad compatibility for progressive playback. WAV is larger. OPUS is smaller but may not be supported everywhere.</div>
-    </div>
-    <div class="settings-row col">
-      <label class="label">Default instructions</label>
-      <input v-model="props.settings.tts_openai_instructions" class="input" placeholder="e.g. Cheerful and positive tone" />
-      <div class="settings-hint">Optional style/delivery hint sent with TTS requests.</div>
-    </div>
+    
 
     <div class="settings-title">TTS Proxy QA</div>
     <div class="settings-row col">

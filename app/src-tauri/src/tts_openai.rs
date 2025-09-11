@@ -300,12 +300,24 @@ pub async fn openai_synthesize_file(
   format: Option<String>,
   rate: Option<i32>,
   volume: Option<u8>,
+  instructions: Option<String>,
 ) -> Result<String, String> {
   let fmt_in = format.unwrap_or_else(|| "wav".to_string());
   let (accept, body_format) = match fmt_in.as_str() { "mp3" => ("audio/mpeg", "mp3"), "opus" => ("audio/ogg", "opus"), _ => ("audio/wav", "wav") };
   let m = model.unwrap_or_else(|| "gpt-4o-mini-tts".to_string());
   let v = voice.unwrap_or_else(|| "alloy".to_string());
-  let body = serde_json::json!({ "model": m, "input": text, "voice": v, "format": body_format });
+  // Build JSON body; include instructions if provided & non-empty
+  let mut body_obj = serde_json::Map::new();
+  body_obj.insert("model".to_string(), serde_json::Value::String(m));
+  body_obj.insert("input".to_string(), serde_json::Value::String(text));
+  body_obj.insert("voice".to_string(), serde_json::Value::String(v));
+  body_obj.insert("format".to_string(), serde_json::Value::String(body_format.to_string()));
+  if let Some(instr) = instructions {
+    if !instr.trim().is_empty() {
+      body_obj.insert("instructions".to_string(), serde_json::Value::String(instr));
+    }
+  }
+  let body = serde_json::Value::Object(body_obj);
   let client = reqwest::Client::new();
   let resp = client
     .post("https://api.openai.com/v1/audio/speech")
@@ -326,7 +338,7 @@ pub async fn openai_synthesize_file(
 }
 
 pub async fn openai_synthesize_wav(key: String, text: String, voice: Option<String>, model: Option<String>, rate: Option<i32>, volume: Option<u8>) -> Result<String, String> {
-  openai_synthesize_file(key, text, voice, model, Some("wav".to_string()), rate, volume).await
+  openai_synthesize_file(key, text, voice, model, Some("wav".to_string()), rate, volume, None).await
 }
 
 // Temp file cleanup moved to tts_utils

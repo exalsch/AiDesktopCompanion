@@ -23,6 +23,8 @@ import { useThemeStyle } from './composables/useThemeStyle'
 import { useWindowMode } from './composables/useWindowMode'
 import { useBusy } from './composables/useBusy'
 import { useConversationPersist } from './composables/useConversationPersist'
+import { useSettingsAutosave } from './composables/useSettingsAutosave'
+import { useSettingsSave } from './composables/useSettingsSave'
 
 const { isQuickActions, isCaptureOverlay, addBodyClass, removeBodyClass } = useWindowMode()
 
@@ -80,7 +82,7 @@ onMounted(async () => {
     console.error('[app] event listen failed', err)
   }
   // Load prompt settings on mount
-  try { await loadSettings() } catch {}
+  try { await loadSettings() } catch {} finally { setSettingsLoaded(true) }
   // Apply style-specific CSS after loading settings (all windows)
   try { applyStyleCss(settings.ui_style) } catch {}
 
@@ -122,6 +124,11 @@ const { loadPersistedConversation, registerConversationPersist } = useConversati
 // Theme/style loader via composable
 const { applyStyleCss } = useThemeStyle(computed(() => settings.ui_style))
 
+// Initialize settings auto-save (silent on success)
+const { setLoaded: setSettingsLoaded } = useSettingsAutosave(settings as any, showToast)
+// Manual save helper (with success toast)
+const { saveSettingsNow } = useSettingsSave(settings as any, showToast)
+
 // MCP composable (provides server helpers and actions)
 const mcp = useMcp(settings, showToast)
 
@@ -140,65 +147,7 @@ const { registerAppEvents } = useAppEvents({
   setSection: (s: 'Prompt' | 'TTS' | 'STT' | 'Settings') => { ui.activeSection = s; if (s === 'Prompt') ui.promptSubview = 'Chat' },
 })
 
-async function saveSettings() {
-  try {
-    // Validate global hotkey availability before saving & applying
-    if (settings.global_hotkey && settings.global_hotkey.trim()) {
-      const ok = await checkShortcutAvailable(settings.global_hotkey)
-      if (!ok) {
-        showToast('Global hotkey is unavailable or already in use. Please choose another.', 'error')
-        return
-      }
-    }
-    // Prepare clean MCP servers array for persistence (strip UI-only fields)
-    const cleanServers = settings.mcp_servers.map((s: any) => {
-      // Robust args/env parsing
-      let args: string[] = []
-      if (typeof s.argsText === 'string' && s.argsText.trim()) {
-        args = parseArgs(s.argsText)
-      } else if (Array.isArray(s.args)) {
-        args = s.args.filter((x: any) => typeof x === 'string')
-      }
-
-      const env = normalizeEnvInput(typeof s.envJson === 'string' ? s.envJson : s.env)
-      return {
-        id: String(s.id || ''),
-        // Persist only 'stdio' or 'http'; map legacy 'sse' to 'http'
-        transport: (s.transport === 'http' || s.transport === 'sse') ? 'http' : 'stdio',
-        command: String(s.command || ''),
-        args,
-        cwd: typeof s.cwd === 'string' ? s.cwd : '',
-        env,
-        disabled_tools: Array.isArray(s.disabled_tools) ? s.disabled_tools.filter((x: any) => typeof x === 'string') : [],
-        auto_connect: s.auto_connect === true,
-      }
-    })
-
-    const mapToSave: any = { ...settings, mcp_servers: cleanServers }
-    // Remove UI-only fields that may be present on root settings
-    delete mapToSave.mcp_servers[0]?.argsText // harmless if undefined
-    delete mapToSave.mcp_servers[0]?.envJson
-    const path = await invoke<string>('save_settings', { map: mapToSave })
-    showToast(`Settings saved:\n${path}`, 'success')
-    // Re-apply global hotkey immediately when changed
-    try { await applyGlobalHotkey(settings.global_hotkey) } catch {}
-    // Persist/clear conversations immediately according to toggle for privacy
-    try {
-      if (settings.persist_conversations) {
-        const p = await invoke<string>('save_conversation_state', { state: getPersistState() })
-        console.info('[persist] conversation saved to', p)
-      } else {
-        await invoke<string>('clear_conversations')
-        console.info('[persist] conversations cleared')
-      }
-    } catch (e) {
-      console.warn('[persist] post-save action failed', e)
-    }
-  } catch (err) {
-    const msg = typeof err === 'string' ? err : (err && (err as any).message) ? (err as any).message : 'Unknown error'
-    showToast(`Failed to save settings: ${msg}`, 'error')
-  }
-}
+async function saveSettings() { try { await saveSettingsNow() } catch {} }
 
 async function connectServer(s: any) { await mcp.connectServer(s) }
 
@@ -316,13 +265,12 @@ function setSection(s: 'Prompt' | 'TTS' | 'STT' | 'Settings') {
   if (s === 'Prompt') ui.promptSubview = 'Chat'
 }
 
-// Attempt auto-connecting MCP servers based on global/per-server flags
+// Attempt auto-connecting MCP servers based on per-server flag only
 // Non-blocking: kick off connects concurrently and add a timeout guard per server
 async function autoConnectServers() {
   try {
-    const wantGlobal = settings.auto_connect === true
     for (const s of settings.mcp_servers) {
-      const want = wantGlobal || s.auto_connect === true
+      const want = s.auto_connect === true
       if (!want) continue
       if (s.connecting || s.status === 'connected') continue
       if (!s || !s.id || !s.command) continue
@@ -402,17 +350,17 @@ async function autoConnectServers() {
             </template>
           </template>
 
-          <div v-else-if="ui.activeSection === 'TTS'" class="section">
-            <div class="section-title">TTS</div>
+          <div v-show="ui.activeSection === 'TTS'" class="section">
+            <div class="section-title">Text To Speech</div>
             <TTSPanel ref="ttsRef" :notify="showToast" @busy="busy.tts = $event" />
           </div>
 
-          <div v-else-if="ui.activeSection === 'STT'" class="section">
-            <div class="section-title">STT</div>
+          <div v-if="ui.activeSection === 'STT'" class="section">
+            <div class="section-title">Speech To Text</div>
             <STTPanel :notify="showToast" @use-as-prompt="handleUseAsPrompt" @busy="busy.stt = $event" />
           </div>
 
-          <div v-else-if="ui.activeSection === 'Settings'" class="section">
+          <div v-if="ui.activeSection === 'Settings'" class="section">
             <SettingsMain
               :settings="settings"
               :models="models"
@@ -440,7 +388,7 @@ async function autoConnectServers() {
 
     <!-- Hidden background TTS controller (non-disruptive) -->
     <div style="position: fixed; width: 0; height: 0; overflow: hidden; opacity: 0; pointer-events: none;">
-      <TTSPanel ref="ttsBgRef" />
+      <TTSPanel ref="ttsBgRef" :lightMount="true" />
     </div>
 
     <!-- Toast -->

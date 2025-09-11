@@ -186,6 +186,9 @@ export function useTtsPlayback(notify?: NotifyFn) {
     const a = playerRef.value
     if (a) {
       try { a.pause() } catch {}
+      // Prevent error handler from firing fallback synth after manual stop
+      try { (a as any).onerror = null } catch {}
+      try { (a as any).onended = null } catch {}
       if (streamSessionUrl.value && a.src === streamSessionUrl.value) { a.src = '' }
     }
     if (streamSessionId) { try { await invoke('tts_stop_stream_session', { session_id: streamSessionId }) } catch {} }

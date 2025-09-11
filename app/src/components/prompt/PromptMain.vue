@@ -30,8 +30,30 @@ const composerTextModel = computed({
 
 const innerComposerRef = ref<InstanceType<typeof PromptComposer> | null>(null)
 
+// Pending image attachments to be sent with the next user prompt
+const pendingImages = ref<Array<{ path: string; src: string }>>([])
+
+function addImage(path: string, src: string) {
+  if (!path || !src) return
+  // Avoid duplicates by path
+  if (pendingImages.value.some(i => i.path === path)) return
+  pendingImages.value.push({ path, src })
+}
+
+function removeImage(idx: number) {
+  if (idx >= 0 && idx < pendingImages.value.length) pendingImages.value.splice(idx, 1)
+}
+
+function clearImages() {
+  pendingImages.value = []
+}
+
 defineExpose({
-  focus() { try { (innerComposerRef.value as any)?.focus?.() } catch {} }
+  focus() { try { (innerComposerRef.value as any)?.focus?.() } catch {} },
+  // Allow external event handlers (e.g., image capture) to add images
+  addImage,
+  removeImage,
+  clearImages,
 })
 </script>
 
@@ -49,20 +71,34 @@ defineExpose({
       />
     </div>
     <div class="quick-prompt-bar">
-      <button
-        v-for="i in 9"
-        :key="i"
-        :class="['qp-btn', { active: activeQuickPrompt === i }]"
-        :disabled="!quickPrompts[String(i)]"
-        :title="quickPrompts[String(i)] || 'Empty'"
-        @click="$emit('toggle-quick-prompt', i)"
-      >{{ i }}</button>
+      <div class="qp-left">
+        <button
+          v-for="i in 9"
+          :key="i"
+          :class="['qp-btn', { active: activeQuickPrompt === i }]"
+          :disabled="!quickPrompts[String(i)]"
+          :title="quickPrompts[String(i)] || 'Empty'"
+          @click="$emit('toggle-quick-prompt', i)"
+        >{{ i }}</button>
+      </div>
+      <div class="attachments" v-if="pendingImages.length">
+        <div
+          v-for="(img, idx) in pendingImages"
+          :key="img.path"
+          class="thumb"
+        >
+          <img :src="img.src" alt="attachment" />
+          <button class="remove" title="Remove" @click="removeImage(idx)">×</button>
+        </div>
+      </div>
     </div>
     <PromptComposer
       ref="innerComposerRef"
       v-model="composerTextModel"
       :systemPromptText="systemPromptText"
+      :pendingImages="pendingImages"
       @busy="$emit('busy', $event)"
+      @clear-attachments="clearImages()"
     />
   </div>
 </template>
@@ -76,10 +112,18 @@ defineExpose({
 :deep(.convo-wrap) { min-height: 160px; }
 
 /* Quick Prompt buttons above composer */
-.quick-prompt-bar { display: flex; gap: 3px; align-items: center; flex-wrap: wrap; padding: 0 12px; }
+.quick-prompt-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: nowrap; padding: 0 12px; }
+.qp-left { display: flex; gap: 3px; align-items: center; flex-wrap: wrap; }
 /* Make numeric buttons compact and consistent */
 .qp-btn { padding: 2px 6px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); cursor: pointer; font-size: 12px; width: 26px; text-align: center; }
 .qp-btn:hover:not(:disabled) { background: var(--adc-accent); border-color: var(--adc-accent); color: #fff; }
 .qp-btn.active { background: var(--adc-accent); border-color: var(--adc-accent); color: #fff; }
 .qp-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Attachment thumbnails (right aligned) */
+.attachments { display: flex; gap: 6px; align-items: center; margin-left: auto; }
+.thumb { position: relative; width: 36px; height: 36px; border: 1px solid var(--adc-border); border-radius: 6px; overflow: hidden; }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb .remove { position: absolute; top: -6px; right: -6px; width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); cursor: pointer; line-height: 12px; font-size: 12px; padding: 0; display: flex; align-items: center; justify-content: center; }
+.thumb .remove:hover { background: var(--adc-danger); color: #fff; border-color: var(--adc-danger); }
 </style>

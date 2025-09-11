@@ -374,9 +374,9 @@ async fn tts_openai_synthesize_wav(text: String, voice: Option<String>, model: O
 
 /// Synthesize speech via OpenAI and return a temp file path. Supports wav/mp3/opus.
 #[tauri::command]
-async fn tts_openai_synthesize_file(text: String, voice: Option<String>, model: Option<String>, format: Option<String>, rate: Option<i32>, volume: Option<u8>) -> Result<String, String> {
+async fn tts_openai_synthesize_file(text: String, voice: Option<String>, model: Option<String>, format: Option<String>, rate: Option<i32>, volume: Option<u8>, instructions: Option<String>) -> Result<String, String> {
   let key = settings::get_api_key_from_settings_or_env()?;
-  tts_openai::openai_synthesize_file(key, text, voice, model, format, rate, volume).await
+  tts_openai::openai_synthesize_file(key, text, voice, model, format, rate, volume, instructions).await
 }
 
 /// Start a chunked download stream from OpenAI audio/speech and emit chunks to the frontend.

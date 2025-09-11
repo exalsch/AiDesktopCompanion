@@ -56,7 +56,7 @@ export function useAppEvents(deps: UseAppEventsDeps) {
     })
     unsubs.push(u2)
 
-    // Image capture -> add to conversation and switch to Prompt
+    // Image capture -> add as pending attachment (thumbnail) near composer; do not add to conversation yet
     const u3 = await listen<{ path: string }>('image:capture', async (e) => {
       const p = (e?.payload as any) || {}
       if (!p.path) return
@@ -67,8 +67,9 @@ export function useAppEvents(deps: UseAppEventsDeps) {
       } catch {}
       try {
         const src = convertFileSrc(p.path)
-        appendMessage({ role: 'user', type: 'image', images: [{ path: p.path, src }] })
+        // Route to composer attachments UI
         ui.activeSection = 'Prompt'
+        try { (composerRef.value as any)?.addImage?.(p.path, src) } catch {}
       } catch {}
     })
     unsubs.push(u3)

@@ -3,8 +3,8 @@ import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import conversation, { appendMessage } from '../state/conversation'
 
-const props = defineProps<{ modelValue: string; systemPromptText?: string }>()
-const emit = defineEmits<{ (e: 'update:modelValue', v: string): void; (e: 'busy', v: boolean): void }>()
+const props = defineProps<{ modelValue: string; systemPromptText?: string; pendingImages?: Array<{ path: string; src: string }> }>()
+const emit = defineEmits<{ (e: 'update:modelValue', v: string): void; (e: 'busy', v: boolean): void; (e: 'clear-attachments'): void }>()
 
 const input = computed({
   get: () => props.modelValue,
@@ -53,10 +53,21 @@ function buildChatMessages(): Array<{ role: string; content: string | ContentPar
 
 async function onSend() {
   const text = input.value.trim()
-  if (!text || sending.value) return
+  const imgs = Array.isArray(props.pendingImages) ? props.pendingImages : []
+  if ((text.length === 0 && imgs.length === 0) || sending.value) return
 
-  // append user message
-  appendMessage({ role: 'user', type: 'text', text })
+  // If there are pending image attachments, append them first as a separate user image message
+  try {
+    if (imgs.length) {
+      appendMessage({ role: 'user', type: 'image', images: imgs.map(i => ({ path: i.path, src: i.src })) })
+      emit('clear-attachments')
+    }
+  } catch {}
+
+  // append user text message
+  if (text.length > 0) {
+    appendMessage({ role: 'user', type: 'text', text })
+  }
   input.value = ''
 
   // call backend

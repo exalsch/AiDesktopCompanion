@@ -1,4 +1,4 @@
-import { computed, reactive } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import type { Ref } from 'vue'
 
 export function useQuickPrompts(composerInput: Ref<string>, composerRef: Ref<any>) {
@@ -36,7 +36,7 @@ export function useQuickPrompts(composerInput: Ref<string>, composerRef: Ref<any
     }
   }
 
-  const activeQuickPrompt = reactive<{ value: number | null }>({ value: null })
+  const activeQuickPrompt = ref<number | null>(null)
 
   const selectedSystemPrompt = computed(() => {
     const i = activeQuickPrompt.value
@@ -62,7 +62,7 @@ export function useQuickPrompts(composerInput: Ref<string>, composerRef: Ref<any
     quickPrompts,
     loadQuickPrompts,
     insertQuickPrompt,
-    activeQuickPrompt: activeQuickPrompt as unknown as Ref<number | null>,
+    activeQuickPrompt,
     selectedSystemPrompt,
     toggleQuickPrompt,
   }

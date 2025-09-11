@@ -13,7 +13,6 @@ export function useSettings() {
     hide_tool_calls_in_chat: false as boolean,
     ui_style: 'sidebar-dark' as UIStyle,
     global_hotkey: '' as string,
-    auto_connect: false as boolean,
     mcp_servers: [] as Array<any>,
   })
 
@@ -35,7 +34,6 @@ export function useSettings() {
         if (ui === 'tabs') ui = 'sidebar-dark'
         if (ui === 'sidebar-dark' || ui === 'sidebar-light') settings.ui_style = ui
       }
-      if (typeof (v as any).auto_connect === 'boolean') settings.auto_connect = (v as any).auto_connect
       if (Array.isArray(v.mcp_servers)) {
         settings.mcp_servers = v.mcp_servers.map((s: any) => {
           const envObj = normalizeEnvInput(s?.env)

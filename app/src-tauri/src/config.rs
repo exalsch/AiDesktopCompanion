@@ -111,8 +111,8 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   if let Some(hide) = map.get("hide_tool_calls_in_chat").and_then(|x| x.as_bool()) { obj.insert("hide_tool_calls_in_chat".to_string(), serde_json::Value::Bool(hide)); }
   // Persist global hotkey
   if let Some(hk) = map.get("global_hotkey").and_then(|x| x.as_str()) { obj.insert("global_hotkey".to_string(), serde_json::Value::String(hk.to_string())); }
-  // New global MCP auto-connect flag
-  if let Some(ac) = map.get("auto_connect").and_then(|x| x.as_bool()) { obj.insert("auto_connect".to_string(), serde_json::Value::Bool(ac)); }
+  // Remove deprecated global MCP auto_connect flag if present
+  obj.remove("auto_connect");
   // Pass-through for MCP servers configuration when provided
   if let Some(ms) = map.get("mcp_servers") { obj.insert("mcp_servers".to_string(), ms.clone()); }
 

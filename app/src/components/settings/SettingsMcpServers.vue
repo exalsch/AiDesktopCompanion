@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { defineProps } from 'vue'
-
 const props = defineProps<{
   settings: any
   onAdd: () => void
@@ -23,11 +21,8 @@ const props = defineProps<{
     <div class="settings-hint">Configure MCP servers. Supports stdio and http transports.</div>
 
     <div class="settings-row">
-      <label class="checkbox"><input type="checkbox" v-model="props.settings.auto_connect"/> Auto-connect on startup</label>
-    </div>
-    <div class="settings-row">
       <button class="btn" @click="props.onAdd">Add Server</button>
-      <button class="btn" @click="props.onSave">Save MCP Servers</button>
+      <span class="settings-hint">Changes auto-save.</span>
     </div>
 
     <div v-if="props.settings.mcp_servers.length === 0" class="settings-hint">No servers configured.</div>
@@ -89,8 +84,9 @@ const props = defineProps<{
           <span v-if="s.error" class="settings-hint error" style="margin-left:10px;">{{ s.error }}</span>
         </div>
         <div style="display:flow; gap:8px;">
-          <button class="btn" :disabled="s.connecting" @click="props.onConnect(s)">{{ s.connecting ? 'Connecting…' : 'Connect' }}</button>
-          <button class="btn" @click="props.onDisconnect(s)">Disconnect</button>
+          <button class="btn" :disabled="s.connecting" @click="(s.status === 'connected') ? props.onDisconnect(s) : props.onConnect(s)">
+            {{ s.connecting ? 'Connecting…' : (s.status === 'connected' ? 'Disconnect' : 'Connect') }}
+          </button>
           <button class="btn" @click="props.onPing(s)">Ping</button>
           <button class="btn" @click="s.toolsOpen ? (s.toolsOpen = false) : props.onListTools(s)">{{ s.toolsOpen ? 'Hide Tools' : 'List Tools' }}</button>
           <button class="btn danger" @click="props.onRemove(i)">Remove</button>
