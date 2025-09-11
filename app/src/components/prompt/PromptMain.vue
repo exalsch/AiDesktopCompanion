@@ -124,6 +124,6 @@ defineExpose({
 .attachments { display: flex; gap: 6px; align-items: center; margin-left: auto; }
 .thumb { position: relative; width: 36px; height: 36px; border: 1px solid var(--adc-border); border-radius: 6px; overflow: hidden; }
 .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.thumb .remove { position: absolute; top: -6px; right: -6px; width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); cursor: pointer; line-height: 12px; font-size: 12px; padding: 0; display: flex; align-items: center; justify-content: center; }
+.thumb .remove { position: absolute; top: -2px; right: -2px; width: 16px; height: 16px; border-radius: 20%; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); cursor: pointer; line-height: 12px; font-size: 12px; padding: 0; display: flex; align-items: center; justify-content: center; }
 .thumb .remove:hover { background: var(--adc-danger); color: #fff; border-color: var(--adc-danger); }
 </style>

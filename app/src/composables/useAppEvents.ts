@@ -60,7 +60,6 @@ export function useAppEvents(deps: UseAppEventsDeps) {
     const u3 = await listen<{ path: string }>('image:capture', async (e) => {
       const p = (e?.payload as any) || {}
       if (!p.path) return
-      showToast(`Image captured:\n${p.path}`, 'success')
       try {
         const ow = await WebviewWindow.getByLabel('capture-overlay')
         if (ow) await ow.close()
@@ -69,7 +68,10 @@ export function useAppEvents(deps: UseAppEventsDeps) {
         const src = convertFileSrc(p.path)
         // Route to composer attachments UI
         ui.activeSection = 'Prompt'
-        try { (composerRef.value as any)?.addImage?.(p.path, src) } catch {}
+        try { (composerRef.value as any)?.addImage?.(p.path, src) } catch (err) {
+          // Only show an error toast if adding the image fails
+          try { showToast('Failed to attach captured image to prompt.', 'error') } catch {}
+        }
       } catch {}
     })
     unsubs.push(u3)
