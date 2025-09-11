@@ -111,6 +111,18 @@ const loadQuickPrompts = qp.loadQuickPrompts
 const insertQuickPrompt = qp.insertQuickPrompt
 const activeQuickPrompt = qp.activeQuickPrompt
 const selectedSystemPrompt = qp.selectedSystemPrompt
+// Combine system prompt for chat: when a quick prompt is active, prefer the
+// Quick Prompts specific system prompt (if set), otherwise fall back to global.
+// Always append the active quick prompt template when active.
+const combinedSystemPrompt = computed(() => {
+  const qpText = (selectedSystemPrompt.value || '').trim()
+  const hasQuick = !!qpText
+  const baseCandidate = hasQuick
+    ? (settings.quick_prompt_system_prompt || settings.system_prompt || '')
+    : (settings.system_prompt || '')
+  const base = (baseCandidate || '').trim()
+  return [base, qpText].filter(Boolean).join('\n\n')
+})
 const toggleQuickPrompt = qp.toggleQuickPrompt
 
 // ---------------------------
@@ -340,7 +352,7 @@ async function autoConnectServers() {
                 :ttsPlaying="ttsBg.playing"
                 :quickPrompts="quickPrompts"
                 :activeQuickPrompt="activeQuickPrompt"
-                :systemPromptText="selectedSystemPrompt"
+                :systemPromptText="combinedSystemPrompt"
                 v-model:composerText="composerInput"
                 @list-tools="onListTools"
                 @toggle-tool="onToggleTool"

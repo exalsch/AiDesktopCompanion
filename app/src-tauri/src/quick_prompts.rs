@@ -64,9 +64,33 @@ pub async fn run_quick_prompt(app: tauri::AppHandle, index: u8, safe_mode: Optio
     return Ok(());
   }
 
-  // Build messages: system carries instruction + template; user is raw selection
+  // Build messages: global system prompt + quick template; user is raw selection
   let template = load_quick_prompt_template_with_notify(Some(&app), index);
-  let system_content = format!("Reply only with the result and nothing else. {template}");
+  let settings = crate::config::load_settings_json();
+  // Prefer a dedicated quick prompts system prompt when provided; fall back to global
+  let base_candidate = {
+    let qp = settings
+      .get("quick_prompt_system_prompt")
+      .and_then(|x| x.as_str())
+      .unwrap_or("")
+      .trim();
+    if qp.is_empty() {
+      settings
+        .get("system_prompt")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string()
+    } else {
+      qp.to_string()
+    }
+  };
+  let base = base_candidate;
+  let system_content = if base.is_empty() {
+    template.clone()
+  } else {
+    format!("{base}\n\n{template}")
+  };
   let user_content = selection.clone();
 
   // Call OpenAI Chat Completions (respect settings overrides)

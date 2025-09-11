@@ -201,6 +201,22 @@ async function cleanupIdleTtsProxy() {
       <input type="range" min="0" max="2" step="0.05" v-model.number="props.settings.temperature" />
       <div class="settings-hint">Lower = deterministic, Higher = creative. Default 1.0</div>
     </div>
+
+    <div class="settings-row col">
+      <label class="label">System Prompt</label>
+      <textarea
+        v-model="props.settings.system_prompt"
+        class="input"
+        rows="6"
+        placeholder="Write global instructions for the assistant. This text is sent as a system message for every chat and Quick Prompt."
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <div class="settings-hint">
+        Used as the global system instruction for chat. When a Quick Prompt is active, its text is appended to the end of this system prompt.
+      </div>
+    </div>
+
     <div class="settings-title">UI</div>
     <div class="settings-row col">
       <label class="label">UI Style</label>
@@ -235,3 +251,16 @@ async function cleanupIdleTtsProxy() {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* Constrain the System Prompt textarea within the settings card */
+.settings-section :deep(textarea.input) {
+  display: block;
+  width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box;
+  flex: 0 0 auto !important; /* override global flex:1 on .input */
+  align-self: stretch;
+  overflow-x: hidden;
+}
+</style>

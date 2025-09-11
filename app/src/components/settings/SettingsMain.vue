@@ -35,7 +35,7 @@ const props = defineProps<{
       :onClearConversations="props.onClearConversations"
     />
 
-    <SettingsQuickPrompts v-else-if="props.settingsSubview === 'Quick Prompts'" />
+    <SettingsQuickPrompts v-else-if="props.settingsSubview === 'Quick Prompts'" :settings="props.settings" />
 
     <SettingsMcpServers
       v-else

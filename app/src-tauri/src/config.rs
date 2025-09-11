@@ -111,6 +111,10 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   if let Some(hide) = map.get("hide_tool_calls_in_chat").and_then(|x| x.as_bool()) { obj.insert("hide_tool_calls_in_chat".to_string(), serde_json::Value::Bool(hide)); }
   // Persist global hotkey
   if let Some(hk) = map.get("global_hotkey").and_then(|x| x.as_str()) { obj.insert("global_hotkey".to_string(), serde_json::Value::String(hk.to_string())); }
+  // Persist global system prompt
+  if let Some(sp) = map.get("system_prompt").and_then(|x| x.as_str()) { obj.insert("system_prompt".to_string(), serde_json::Value::String(sp.to_string())); }
+  // Persist Quick Prompts specific system prompt
+  if let Some(qpsp) = map.get("quick_prompt_system_prompt").and_then(|x| x.as_str()) { obj.insert("quick_prompt_system_prompt".to_string(), serde_json::Value::String(qpsp.to_string())); }
   // Remove deprecated global MCP auto_connect flag if present
   obj.remove("auto_connect");
   // Pass-through for MCP servers configuration when provided

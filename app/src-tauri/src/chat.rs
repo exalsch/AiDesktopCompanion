@@ -55,19 +55,47 @@ pub async fn chat_complete_with_mcp(
   };
 
   let client = reqwest::Client::new();
-  let sys_tool_guidance = serde_json::json!({
-    "role": "system",
-    "content": "You can use MCP tools. When you call a tool, ALWAYS provide all required parameters per its JSON Schema, with correct types. Do not call tools with empty arguments."
-  });
+  // Determine whether tools are allowed by scanning system messages for a no-tools directive
+  let mut allow_tools = true;
+  for m in norm_msgs.iter() {
+    if m.get("role").and_then(|x| x.as_str()).unwrap_or("") == "system" {
+      let c = m.get("content").cloned().unwrap_or(serde_json::Value::Null);
+      let mut texts: Vec<String> = Vec::new();
+      match c {
+        serde_json::Value::String(s) => texts.push(s),
+        serde_json::Value::Array(arr) => {
+          for p in arr.into_iter() {
+            let typ = p.get("type").and_then(|x| x.as_str()).unwrap_or("");
+            if typ == "text" {
+              if let Some(t) = p.get("text").and_then(|x| x.as_str()) { texts.push(t.to_string()); }
+            }
+          }
+        }
+        _ => {}
+      }
+      let joined = texts.join("\n").to_ascii_lowercase();
+      if joined.contains("do not use any tools") || joined.contains("no tools") || joined.contains("without using tools") || joined.contains("do not call tools") {
+        allow_tools = false;
+        break;
+      }
+    }
+  }
+
   let mut msgs_for_oai: Vec<serde_json::Value> = Vec::new();
-  msgs_for_oai.push(sys_tool_guidance);
+  if allow_tools {
+    let sys_tool_guidance = serde_json::json!({
+      "role": "system",
+      "content": "You can use MCP tools. When you call a tool, ALWAYS provide all required parameters per its JSON Schema, with correct types. Do not call tools with empty arguments."
+    });
+    msgs_for_oai.push(sys_tool_guidance);
+  }
   msgs_for_oai.extend(norm_msgs.clone());
   let mut final_text: Option<String> = None;
 
   for _ in 0..6u8 {
     let mut body = serde_json::json!({ "model": &model, "messages": msgs_for_oai });
     if let Some(t) = temp { if let serde_json::Value::Object(ref mut m) = body { m.insert("temperature".to_string(), serde_json::json!(t)); } }
-    if !tools.is_empty() {
+    if allow_tools && !tools.is_empty() {
       if let serde_json::Value::Object(ref mut m) = body {
         m.insert("tools".to_string(), serde_json::Value::Array(tools.clone()));
         m.insert("tool_choice".to_string(), serde_json::Value::String("auto".to_string()));
@@ -95,7 +123,8 @@ pub async fn chat_complete_with_mcp(
     let tool_calls_opt = msg.get("tool_calls").and_then(|x| x.as_array()).cloned();
     let content_str_opt = msg.get("content").and_then(|t| t.as_str()).map(|s| s.to_string());
 
-    if let Some(tool_calls) = tool_calls_opt {
+    if allow_tools && tool_calls_opt.is_some() {
+      let tool_calls = tool_calls_opt.unwrap();
       // Append assistant message with tool_calls to history
       let mut assistant_msg = serde_json::Map::new();
       assistant_msg.insert("role".to_string(), serde_json::Value::String("assistant".to_string()));

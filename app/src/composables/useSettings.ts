@@ -5,6 +5,16 @@ import { normalizeEnvInput } from './utils'
 export type UIStyle = 'sidebar-dark' | 'sidebar-light'
 
 export function useSettings() {
+  const DEFAULT_SYSTEM_PROMPT = (
+    'For every user prompt, follow these steps internally before responding:\n' +
+    '1. Analyze Intent: What is the user\'s core question or need?\n' +
+    '2. Assess Knowledge: Can I answer this accurately and completely using my existing training data?\n' +
+    '3. Evaluate Tools: If my knowledge is insufficient, review the available tools. Is there a tool that is a perfect match for the user\'s need?\n' +
+    '4. Decide Action:\n' +
+    '   - If a tool is necessary, select it and call it with the correct parameters.\n' +
+    '   - If no tool is necessary, formulate a direct answer using your internal knowledge.'
+  )
+
   const settings = reactive({
     openai_api_key: '',
     openai_chat_model: 'gpt-4o-mini',
@@ -14,6 +24,8 @@ export function useSettings() {
     ui_style: 'sidebar-dark' as UIStyle,
     global_hotkey: '' as string,
     mcp_servers: [] as Array<any>,
+    system_prompt: '' as string,
+    quick_prompt_system_prompt: 'Give the direct response to the task.' as string,
   })
 
   const models = reactive<{ list: string[]; loading: boolean; error: string | null }>({ list: [], loading: false, error: null })
@@ -33,6 +45,18 @@ export function useSettings() {
         if (ui === 'light') ui = 'sidebar-light'
         if (ui === 'tabs') ui = 'sidebar-dark'
         if (ui === 'sidebar-dark' || ui === 'sidebar-light') settings.ui_style = ui
+      }
+      // System prompt: default to sensible instructions when missing
+      if (typeof (v as any).system_prompt === 'string') {
+        settings.system_prompt = (v as any).system_prompt
+      } else {
+        settings.system_prompt = DEFAULT_SYSTEM_PROMPT
+      }
+      // Optional override for Quick Prompts system prompt
+      if (typeof (v as any).quick_prompt_system_prompt === 'string') {
+        settings.quick_prompt_system_prompt = (v as any).quick_prompt_system_prompt
+      } else {
+        settings.quick_prompt_system_prompt = 'Give the direct response to the task.'
       }
       if (Array.isArray(v.mcp_servers)) {
         settings.mcp_servers = v.mcp_servers.map((s: any) => {
@@ -67,3 +91,4 @@ export function useSettings() {
 
   return { settings, models, loadSettings }
 }
+
