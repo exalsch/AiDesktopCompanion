@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, ref } from 'vue'
 import { getCurrentWebviewWindow, WebviewWindow } from '@tauri-apps/api/webviewWindow'
-import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi'
+import { LogicalSize } from '@tauri-apps/api/dpi'
 import { invoke } from '@tauri-apps/api/core'
 import { startRecording as sttStart, stopRecording as sttStop, isRecording as sttIsRecording } from './stt'
 
 // Debug helper (enable by setting sessionStorage.setItem('qa_debug', '1'))
+const isDev = (import.meta as any)?.env?.DEV === true
 function dbg(...args: any[]) {
-  try { if (sessionStorage.getItem('qa_debug') === '1') console.log('[QA]', ...args) } catch {}
+  try {
+    if (isDev && sessionStorage.getItem('qa_debug') === '1') console.debug('[QA]', ...args)
+  } catch {}
 }
 
 // Encapsulated hide logic so we can call it from multiple places
@@ -83,59 +86,6 @@ const skipResetUntil = ref(0)
 let unlistenBlur: null | (() => void) = null
 let unlistenFocus: null | (() => void) = null
 let blurCloseTimer: number | null = null
-let busyWin: WebviewWindow | null = null
-
-async function showBusyWindow(posHint?: { x: number, y: number }): Promise<void> {
-  try {
-    const label = 'qa-busy'
-    const base = `${window.location.origin}${window.location.pathname}`
-    const url = `${base}?window=qa-busy`
-    busyWin = await WebviewWindow.getByLabel(label)
-    if (!busyWin) {
-      busyWin = new WebviewWindow(label, {
-        url,
-        visible: false,
-        width: 160,
-        height: 48,
-        decorations: false,
-        alwaysOnTop: true,
-        resizable: false,
-        skipTaskbar: true,
-        focus: false,
-      })
-    }
-    // Try to place the busy window where the QA window was
-    try {
-      // Add a small offset so it doesn't overlap exactly (looks nicer)
-      const dx = 8, dy = 8
-      if (posHint && typeof posHint.x === 'number' && typeof posHint.y === 'number') {
-        try { await busyWin?.setPosition(new PhysicalPosition(Math.max(0, posHint.x + dx), Math.max(0, posHint.y + dy))) } catch {}
-      } else {
-        const qa = getCurrentWebviewWindow()
-        let pos: any = null
-        try { pos = await (qa as any).outerPosition?.() } catch {}
-        if (!pos) { try { pos = await (qa as any).innerPosition?.() } catch {} }
-        if (pos && typeof pos.x === 'number' && typeof pos.y === 'number') {
-          try { await busyWin?.setPosition(new PhysicalPosition(Math.max(0, pos.x + dx), Math.max(0, pos.y + dy))) } catch {}
-        } else {
-          // Fallback: center if we cannot read position
-          try { await busyWin?.center() } catch {}
-        }
-      }
-    } catch {}
-    try { await busyWin?.show() } catch {}
-    try { await busyWin?.setAlwaysOnTop(true) } catch {}
-  } catch {}
-}
-
-async function hideBusyWindow(): Promise<void> {
-  try {
-    if (busyWin) {
-      try { await busyWin.hide() } catch {}
-      // Do not close permanently to speed up subsequent uses
-    }
-  } catch {}
-}
 
 async function handleAction(action: 'prompt' | 'tts' | 'stt' | 'image'): Promise<void> {
   dbg('handleAction', action)
@@ -622,9 +572,8 @@ async function onInsert(): Promise<void> {
 
 <style scoped>
 .qa-root {
-  width: max-content; /* shrink-wrap */
   height: max-content; /* shrink-wrap */
-  display: flex;
+  display: grid;
   flex-direction: column;
   align-items: center;
   justify-content: center;
