@@ -1,8 +1,19 @@
 use std::{thread, time::Duration};
+use std::sync::Mutex;
+use once_cell::sync::Lazy;
 
 use arboard::Clipboard;
 use enigo::{Enigo, Key, KeyboardControllable};
 use tauri::{Emitter, Manager, PhysicalPosition};
+#[cfg(target_os = "windows")]
+use std::ffi::c_void;
+#[cfg(target_os = "windows")]
+use windows::Win32::Foundation::HWND;
+
+// Store the last foreground window handle (Windows) as a raw isize so we can
+// briefly return focus to it to capture selection without hiding the QA window.
+#[cfg(target_os = "windows")]
+static LAST_FOREGROUND: Lazy<Mutex<Option<isize>>> = Lazy::new(|| Mutex::new(None));
 
 // UI actions and quick insertions
 
@@ -39,6 +50,67 @@ pub fn prompt_action(app: tauri::AppHandle, safe_mode: Option<bool>) -> Result<S
   let payload = serde_json::json!({ "text": selection });
   let _ = app.emit("prompt:new-conversation", payload);
   Ok("ok".to_string())
+}
+
+/// Called before showing the Quick Actions popup. Stores the current foreground
+/// native window so we can refocus it during selection capture without hiding
+/// the QA window.
+#[tauri::command]
+pub fn prepare_quick_actions() -> Result<(), String> {
+  #[cfg(target_os = "windows")]
+  unsafe {
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    let h = GetForegroundWindow();
+    let mut guard = LAST_FOREGROUND.lock().map_err(|_| "lock poisoned".to_string())?;
+    *guard = Some(h.0 as isize);
+  }
+  Ok(())
+}
+
+/// Refocus the previously active native window (if available) and copy the current
+/// selection using Ctrl+C, then restore focus to the Quick Actions window. Returns
+/// the copied text. When safe_mode is true, this just returns the current clipboard.
+#[tauri::command]
+pub fn focus_prev_then_copy_selection(app: tauri::AppHandle, safe_mode: Option<bool>) -> Result<String, String> {
+  let safe = safe_mode.unwrap_or(false);
+  let mut clipboard = Clipboard::new().map_err(|e| format!("clipboard init failed: {e}"))?;
+  let previous_text = if !safe { clipboard.get_text().ok() } else { None };
+
+  if !safe {
+    #[cfg(target_os = "windows")]
+    unsafe {
+      use windows::Win32::UI::WindowsAndMessaging::{SetForegroundWindow, ShowWindow, SW_RESTORE};
+      if let Ok(guard) = LAST_FOREGROUND.lock() {
+        if let Some(hraw) = *guard {
+          let hwnd = HWND(hraw as *mut c_void);
+          // Best-effort: restore if minimized then bring to foreground
+          let _ = ShowWindow(hwnd, SW_RESTORE);
+          let _ = SetForegroundWindow(hwnd);
+          thread::sleep(Duration::from_millis(80));
+        }
+      }
+    }
+
+    let mut enigo = Enigo::new();
+    enigo.key_down(Key::Control);
+    enigo.key_click(Key::Layout('c'));
+    enigo.key_up(Key::Control);
+    thread::sleep(Duration::from_millis(140));
+  }
+
+  let selection = clipboard.get_text().unwrap_or_default();
+
+  if !safe {
+    if let Some(prev) = previous_text { let _ = clipboard.set_text(prev); }
+  }
+
+  // Restore focus to quick-actions so the user sees the preview update
+  if let Some(qa) = app.get_webview_window("quick-actions") {
+    let _ = qa.show();
+    let _ = qa.set_focus();
+  }
+
+  Ok(selection)
 }
 
 /// Set clipboard text directly. Used by Quick Actions result preview 'Copy' action.

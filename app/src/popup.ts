@@ -51,6 +51,8 @@ export async function toggleQuickActionsWindow(): Promise<void> {
     if (visible) {
       await w.hide()
     } else {
+      // Prepare backend to remember the currently focused native window
+      try { await invoke('prepare_quick_actions') } catch (e) { console.warn('[popup] prepare_quick_actions failed', e) }
       // Ask backend to place the window near the current cursor before showing
       try { await invoke('position_quick_actions') } catch (e) { console.warn('[popup] position_quick_actions failed', e) }
       await w.show()

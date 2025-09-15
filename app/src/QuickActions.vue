@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, ref } from 'vue'
 import { getCurrentWebviewWindow, WebviewWindow } from '@tauri-apps/api/webviewWindow'
-import { LogicalSize } from '@tauri-apps/api/dpi'
+import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi'
 import { invoke } from '@tauri-apps/api/core'
 import { startRecording as sttStart, stopRecording as sttStop, isRecording as sttIsRecording } from './stt'
 
@@ -41,6 +41,15 @@ async function hidePopup(reason?: string, force: boolean = false): Promise<void>
   }
 }
 
+async function onClosePreview(): Promise<void> {
+  try {
+    clearPreviewState()
+    await hidePopup('close', true)
+  } catch (err) {
+    console.error('[quick-actions] close failed', err)
+  }
+}
+
 const sttRecording = ref(false)
 const sttPending = ref(false) // true while requesting mic permission / starting
 const rootRef = ref<HTMLElement | null>(null)
@@ -74,6 +83,59 @@ const skipResetUntil = ref(0)
 let unlistenBlur: null | (() => void) = null
 let unlistenFocus: null | (() => void) = null
 let blurCloseTimer: number | null = null
+let busyWin: WebviewWindow | null = null
+
+async function showBusyWindow(posHint?: { x: number, y: number }): Promise<void> {
+  try {
+    const label = 'qa-busy'
+    const base = `${window.location.origin}${window.location.pathname}`
+    const url = `${base}?window=qa-busy`
+    busyWin = await WebviewWindow.getByLabel(label)
+    if (!busyWin) {
+      busyWin = new WebviewWindow(label, {
+        url,
+        visible: false,
+        width: 160,
+        height: 48,
+        decorations: false,
+        alwaysOnTop: true,
+        resizable: false,
+        skipTaskbar: true,
+        focus: false,
+      })
+    }
+    // Try to place the busy window where the QA window was
+    try {
+      // Add a small offset so it doesn't overlap exactly (looks nicer)
+      const dx = 8, dy = 8
+      if (posHint && typeof posHint.x === 'number' && typeof posHint.y === 'number') {
+        try { await busyWin?.setPosition(new PhysicalPosition(Math.max(0, posHint.x + dx), Math.max(0, posHint.y + dy))) } catch {}
+      } else {
+        const qa = getCurrentWebviewWindow()
+        let pos: any = null
+        try { pos = await (qa as any).outerPosition?.() } catch {}
+        if (!pos) { try { pos = await (qa as any).innerPosition?.() } catch {} }
+        if (pos && typeof pos.x === 'number' && typeof pos.y === 'number') {
+          try { await busyWin?.setPosition(new PhysicalPosition(Math.max(0, pos.x + dx), Math.max(0, pos.y + dy))) } catch {}
+        } else {
+          // Fallback: center if we cannot read position
+          try { await busyWin?.center() } catch {}
+        }
+      }
+    } catch {}
+    try { await busyWin?.show() } catch {}
+    try { await busyWin?.setAlwaysOnTop(true) } catch {}
+  } catch {}
+}
+
+async function hideBusyWindow(): Promise<void> {
+  try {
+    if (busyWin) {
+      try { await busyWin.hide() } catch {}
+      // Do not close permanently to speed up subsequent uses
+    }
+  } catch {}
+}
 
 async function handleAction(action: 'prompt' | 'tts' | 'stt' | 'image'): Promise<void> {
   dbg('handleAction', action)
@@ -176,7 +238,7 @@ function onKeydown(e: KeyboardEvent): void {
     const index = Number(key)
     dbg('number key pressed', index, { showPreviewInPopup: showPreviewInPopup.value })
     if (showPreviewInPopup.value) {
-      // Show preview UI, but first hide to give focus back to previous app so selection copy works
+      // Show preview UI and keep this window visible; backend briefly refocuses previous app to copy selection
       uiMode.value = 'preview'
       previewText.value = ''
       previewBusy.value = true
@@ -185,16 +247,17 @@ function onKeydown(e: KeyboardEvent): void {
       skipResetUntil.value = Date.now() + 5000
       ;(async () => {
         try {
-          // Full guarded cycle: hide (force) -> let focus return -> fetch with selection -> re-show
-          suppressCloseUntil.value = Date.now() + 5000
+          // Same-window flow: briefly refocus previous app to copy selection,
+          // then compute preview using the captured selection. No hide/show.
+          suppressCloseUntil.value = Date.now() + 2500
           captureInProgress.value = true
           try { sessionStorage.setItem('qa_preview_pending', '1') } catch {}
-          dbg('preview capture: hide (force)')
-          await hidePopup('capture', true)
-          await new Promise((r) => setTimeout(r, 240))
-          dbg('invoke run_quick_prompt_result start', { index })
-          const text = await invoke<string>('run_quick_prompt_result', { index, safe_mode: false })
-          dbg('invoke run_quick_prompt_result done')
+          dbg('invoke focus_prev_then_copy_selection start')
+          const selection = await invoke<string>('focus_prev_then_copy_selection', { safe_mode: false })
+          dbg('invoke focus_prev_then_copy_selection done')
+          dbg('invoke run_quick_prompt_with_selection start', { index })
+          const text = await invoke<string>('run_quick_prompt_with_selection', { index, selection })
+          dbg('invoke run_quick_prompt_with_selection done')
           previewText.value = text || ''
           try {
             sessionStorage.setItem('qa_preview_text', previewText.value)
@@ -204,7 +267,7 @@ function onKeydown(e: KeyboardEvent): void {
         } catch (err) {
           console.error('[quick-actions] quick prompt result failed', err)
           previewText.value = String(err)
-          dbg('invoke run_quick_prompt_result error', err)
+          dbg('preview error', err)
           try {
             sessionStorage.setItem('qa_preview_text', previewText.value)
             sessionStorage.setItem('qa_show_preview', '1')
@@ -214,13 +277,6 @@ function onKeydown(e: KeyboardEvent): void {
           dbg('preview flow finally', { uiMode: uiMode.value })
           previewBusy.value = false
           captureInProgress.value = false
-          // Re-show the popup and focus it to present the preview
-          try {
-            const w = getCurrentWebviewWindow()
-            await w.show()
-            try { await w.setAlwaysOnTop(true) } catch {}
-            try { await w.setFocus() } catch {}
-          } catch {}
           // Keep a short guard after finishing
           const now = Date.now()
           if (suppressCloseUntil.value < now + 800) {
@@ -458,6 +514,7 @@ onMounted(() => {
 
     // When the window is hidden via global toggle, mark next show as a fresh session.
     w.listen('tauri://hide', () => {
+      if (captureInProgress.value) { dbg('tauri://hide during capture -> skip fresh mark'); return }
       dbg('tauri://hide -> mark fresh session')
       try { sessionStorage.removeItem('qa_show_preview') } catch {}
       try { sessionStorage.removeItem('qa_preview_text') } catch {}
@@ -547,9 +604,12 @@ async function onInsert(): Promise<void> {
 
     <template v-else>
       <div class="qa-result">
-        <div v-if="!previewBusy" class="qa-result-actions">
-          <button class="icon-btn" :title="'Copy (c)'" aria-label="Copy (c)" @click="onCopy">📋</button>
-          <button class="icon-btn" :title="'Insert (v)'" aria-label="Insert (v)" @click="onInsert">⎘</button>
+        <div class="qa-result-actions">
+          <button class="icon-btn" :title="'Close (Esc)'" aria-label="Close (Esc)" @click="onClosePreview">✕</button>
+          <template v-if="!previewBusy">
+            <button class="icon-btn" :title="'Copy (c)'" aria-label="Copy (c)" @click="onCopy">📋</button>
+            <button class="icon-btn" :title="'Insert (v)'" aria-label="Insert (v)" @click="onInsert">⎘</button>
+          </template>
         </div>
         <div class="qa-result-body">
           <div v-if="previewBusy" class="qa-hint">Generating…</div>

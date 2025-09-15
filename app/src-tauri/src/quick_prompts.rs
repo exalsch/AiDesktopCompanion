@@ -249,6 +249,83 @@ pub async fn run_quick_prompt_result(app: tauri::AppHandle, index: u8, safe_mode
   Ok(out)
 }
 
+/// Same as `run_quick_prompt_result` but uses the provided selection string directly,
+/// avoiding clipboard operations and window focus changes. This is intended for
+/// inline preview flows when the frontend has already captured the selection.
+#[tauri::command]
+pub async fn run_quick_prompt_with_selection(app: tauri::AppHandle, index: u8, selection: String) -> Result<String, String> {
+  // If empty selection, return a friendly message for the preview UI.
+  if selection.trim().is_empty() {
+    return Ok("No selection. Type your input or paste it here.".to_string());
+  }
+
+  // Build messages: global system prompt + quick template; user is raw selection
+  let template = load_quick_prompt_template_with_notify(Some(&app), index);
+  let settings = crate::config::load_settings_json();
+  // Prefer a dedicated quick prompts system prompt when provided; fall back to global
+  let base_candidate = {
+    let qp = settings
+      .get("quick_prompt_system_prompt")
+      .and_then(|x| x.as_str())
+      .unwrap_or("")
+      .trim();
+    if qp.is_empty() {
+      settings
+        .get("system_prompt")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string()
+    } else {
+      qp.to_string()
+    }
+  };
+  let base = base_candidate;
+  let system_content = if base.is_empty() { template.clone() } else { format!("{base}\n\n{template}") };
+  let user_content = selection.clone();
+
+  // Call OpenAI Chat Completions (respect settings overrides)
+  let key = get_api_key_from_settings_or_env()?;
+  let model = get_model_from_settings_or_env();
+  let temp = get_temperature_from_settings_or_env();
+
+  let mut body = serde_json::json!({
+    "model": model,
+    "messages": [
+      { "role": "system", "content": system_content },
+      { "role": "user", "content": user_content }
+    ]
+  });
+  if let Some(t) = temp { if let serde_json::Value::Object(ref mut m) = body { m.insert("temperature".to_string(), serde_json::json!(t)); } }
+
+  let client = reqwest::Client::new();
+  let resp = client
+    .post("https://api.openai.com/v1/chat/completions")
+    .bearer_auth(key)
+    .json(&body)
+    .send()
+    .await
+    .map_err(|e| format!("request failed: {e}"))?;
+
+  if !resp.status().is_success() {
+    let status = resp.status();
+    let body_text = resp.text().await.unwrap_or_default();
+    return Err(format!("OpenAI error: {status} {body_text}"));
+  }
+
+  let v: serde_json::Value = resp.json().await.map_err(|e| format!("json error: {e}"))?;
+  let text = v.get("choices")
+    .and_then(|c| c.get(0))
+    .and_then(|c| c.get("message"))
+    .and_then(|m| m.get("content"))
+    .and_then(|t| t.as_str())
+    .unwrap_or("")
+    .to_string();
+
+  let out = if text.trim().is_empty() { "No response received.".to_string() } else { text };
+  Ok(out)
+}
+
 pub fn quick_prompt_template(index: u8) -> &'static str {
   match index {
     1 => "Summarize the following text in 3-5 bullet points.",
