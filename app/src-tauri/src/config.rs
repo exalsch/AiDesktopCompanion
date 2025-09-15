@@ -115,6 +115,8 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   if let Some(sp) = map.get("system_prompt").and_then(|x| x.as_str()) { obj.insert("system_prompt".to_string(), serde_json::Value::String(sp.to_string())); }
   // Persist Quick Prompts specific system prompt
   if let Some(qpsp) = map.get("quick_prompt_system_prompt").and_then(|x| x.as_str()) { obj.insert("quick_prompt_system_prompt".to_string(), serde_json::Value::String(qpsp.to_string())); }
+  // Persist Quick Actions preview toggle for quick prompts
+  if let Some(flag) = map.get("show_quick_prompt_result_in_popup").and_then(|x| x.as_bool()) { obj.insert("show_quick_prompt_result_in_popup".to_string(), serde_json::Value::Bool(flag)); }
   // Remove deprecated global MCP auto_connect flag if present
   obj.remove("auto_connect");
   // Pass-through for MCP servers configuration when provided

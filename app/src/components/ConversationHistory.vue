@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import convoState, { getConversationsSorted, setCurrentConversation } from '../state/conversation'
+import convoState, { getConversationsSorted, setCurrentConversation, deleteConversation } from '../state/conversation'
 const emit = defineEmits<{ (e: 'open', id: string): void }>()
 
 interface ItemVM {
@@ -48,6 +48,13 @@ function openConversation(id: string) {
   emit('open', id)
 }
 
+function removeConversation(id: string) {
+  // Confirm to avoid accidental deletion
+  const ok = window.confirm('Delete this conversation? This action cannot be undone.')
+  if (!ok) return
+  deleteConversation(id)
+}
+
 // Format timestamp for history: show time if today, else date + short time
 function formatHistoryTimestamp(ts: number): string {
   try {
@@ -83,6 +90,16 @@ function formatHistoryTimestamp(ts: number): string {
         <div class="title-line">
           <span class="title">{{ it.title }}</span>
           <span class="time">{{ formatHistoryTimestamp(it.updatedAt) }}</span>
+          <button
+            class="icon-btn delete-btn"
+            title="Delete conversation"
+            aria-label="Delete conversation"
+            @click.stop="removeConversation(it.id)"
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path fill="currentColor" d="M9 3h6a1 1 0 0 1 1 1v2h4v2h-1v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8H3V6h4V4a1 1 0 0 1 1-1zm6 4V5h-6v2h6zM6 8v11h12V8H6zm3 2h2v7H9v-7zm4 0h2v7h-2v-7z"/>
+            </svg>
+          </button>
         </div>
         <div v-if="it.subtitle" class="subtitle">{{ it.subtitle }}</div>
       </div>
@@ -100,4 +117,9 @@ function formatHistoryTimestamp(ts: number): string {
 .title { font-weight: 600; color: var(--adc-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .time { margin-left: auto; font-size: 11px; color: var(--adc-fg-muted); }
 .subtitle { margin-top: 4px; font-size: 12px; color: var(--adc-fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Small icon button to the far right */
+.icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: none; border-radius: 6px; background: transparent; color: var(--adc-fg-muted); cursor: pointer; }
+.icon-btn:hover { background: var(--adc-hover); color: var(--adc-fg); }
+.icon-btn:focus { outline: 2px solid var(--adc-focus-ring); outline-offset: 2px; }
+.delete-btn { margin-left: 4px; }
 </style>

@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import conversation, { appendMessage } from '../state/conversation'
+import { useSettings } from '../composables/useSettings'
+import { estimateTextTokens, estimateImageTokensFromMeta, formatTokenInfo } from '../composables/useTokenEstimate'
+import { useImageMeta } from '../composables/useImageMeta'
+import { tokenizerReady } from '../composables/useTokenizer'
 
 const props = defineProps<{ modelValue: string; systemPromptText?: string; pendingImages?: Array<{ path: string; src: string }> }>()
 const emit = defineEmits<{ (e: 'update:modelValue', v: string): void; (e: 'busy', v: boolean): void; (e: 'clear-attachments'): void }>()
@@ -12,6 +16,12 @@ const input = computed({
 })
 const sending = ref(false)
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
+
+// Token estimate model source
+const { settings } = useSettings()
+const modelName = computed(() => settings.openai_chat_model)
+const tokenizerMode = computed(() => settings.tokenizer_mode)
+const { getMany } = useImageMeta()
 
 type ContentPart =
   | { type: 'input_text'; text: string }
@@ -50,6 +60,27 @@ function buildChatMessages(): Array<{ role: string; content: string | ContentPar
   }
   return msgs
 }
+
+// Live token estimate for unsent input and pending images
+const pendingImageCount = computed(() => Array.isArray(props.pendingImages) ? props.pendingImages.length : 0)
+const inputTextTokens = computed(() => {
+  // depend on readiness so we recompute when tokenizer finishes loading
+  const _ready = tokenizerReady.value
+  return estimateTextTokens(input.value || '', modelName.value, tokenizerMode.value).tokens
+})
+const pendingImageMetas = computed(() => {
+  const imgs = Array.isArray(props.pendingImages) ? props.pendingImages : []
+  return getMany(imgs.map(i => i.src))
+})
+const imageTokens = computed(() => estimateImageTokensFromMeta(pendingImageMetas.value))
+const tokenHint = computed(() => {
+  return formatTokenInfo([
+    { label: 'text', tokens: inputTextTokens.value },
+    { label: pendingImageCount.value ? `images×${pendingImageCount.value}` : 'images', tokens: imageTokens.value },
+  ])
+})
+
+// (Removed user-facing tokenization mode badge)
 
 async function onSend() {
   const text = input.value.trim()
@@ -110,6 +141,7 @@ defineExpose({
       rows="3"
       @keydown.enter.exact.prevent="onSend"
     />
+    <div class="hint" :title="tokenHint">{{ tokenHint }}</div>
     <div class="row">
       <div class="hint">Press Enter to send</div>
       <button class="send" :disabled="sending || !input.trim()" @click="onSend">

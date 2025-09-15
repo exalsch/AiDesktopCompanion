@@ -11,6 +11,7 @@ import SettingsMain from './components/settings/SettingsMain.vue'
 import conversation, { appendMessage, clearAllConversations, newConversation, updateMessage, getPersistState } from './state/conversation'
 import { onMounted, onBeforeUnmount, reactive, ref, watch, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { getVersion } from '@tauri-apps/api/app'
 import { applyGlobalHotkey, checkShortcutAvailable } from './hotkeys'
 import { useToast } from './composables/useToast'
 import { useQuickPrompts } from './composables/useQuickPrompts'
@@ -25,6 +26,7 @@ import { useBusy } from './composables/useBusy'
 import { useConversationPersist } from './composables/useConversationPersist'
 import { useSettingsAutosave } from './composables/useSettingsAutosave'
 import { useSettingsSave } from './composables/useSettingsSave'
+import { preloadTokenizer } from './composables/useTokenizer'
 
 const { isQuickActions, isCaptureOverlay, addBodyClass, removeBodyClass } = useWindowMode()
 
@@ -60,6 +62,7 @@ const { ttsBg, registerBackgroundTtsEvents } = useTtsBackground(ttsBgRef as any)
 // Ref to PromptMain to allow programmatic focus on composer
 const composerRef = ref<InstanceType<typeof PromptMain> | null>(null)
 // (Quick Prompts editor now encapsulated in SettingsQuickPrompts)
+const appVersion = ref('')
 
 // Toast state via composable
 const { toast, showToast } = useToast()
@@ -83,6 +86,13 @@ onMounted(async () => {
   }
   // Load prompt settings on mount
   try { await loadSettings() } catch {} finally { setSettingsLoaded(true) }
+  // Preload tokenizer if requested by settings; show hint if unavailable
+  try {
+    if (settings.tokenizer_mode === 'tiktoken') {
+      const ok = await preloadTokenizer()
+      if (!ok) showToast('Tokenizer library not installed. Run "npm install" in app/ to enable accurate token counts.', 'error', 3200)
+    }
+  } catch {}
   // Apply style-specific CSS after loading settings (all windows)
   try { applyStyleCss(settings.ui_style) } catch {}
 
@@ -95,6 +105,8 @@ onMounted(async () => {
   try {
     await autoConnectServers()
   } catch {}
+  // App version for footer
+  try { appVersion.value = await getVersion() } catch {}
 })
 
 onBeforeUnmount(() => {
@@ -168,6 +180,16 @@ async function disconnectServer(s: any) { await mcp.disconnectServer(s) }
 async function pingServer(s: any) { await mcp.pingServer(s) }
 
 async function listTools(s: any) { await mcp.listTools(s) }
+
+// If user switches tokenizer mode at runtime, preload tokenizer
+watch(() => settings.tokenizer_mode, async (mode) => {
+  if (mode === 'tiktoken') {
+    try {
+      const ok = await preloadTokenizer()
+      if (!ok) showToast('Tokenizer library not installed. Run "npm install" in app/ to enable accurate token counts.', 'error', 3200)
+    } catch {}
+  }
+})
 
 // ConversationView event handlers
 function onListTools(serverId: string) {
@@ -387,15 +409,16 @@ async function autoConnectServers() {
               :onPing="pingServer"
               :onListTools="listTools"
               :onFillArgsTemplate="fillArgsTemplate"
-              :onValidateEnvJsonInput="validateEnvJsonInput"
-              :onCallTool="callTool"
-              :selectedToolObj="selectedToolObj"
+              :onValidateEnvJsonInput="mcp.validateEnvJsonInput"
+              :onCallTool="mcp.callTool"
+              :selectedToolObj="mcp.selectedToolObj"
             />
           </div>
         </div>
       </div>
     </div>
     
+    <div class="version-badge" v-if="appVersion">v{{ appVersion }}</div>
     </div>
 
     <!-- Hidden background TTS controller (non-disruptive) -->
@@ -447,6 +470,9 @@ async function autoConnectServers() {
 .settings :deep(.input) { flex: 1; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); }
 .settings :deep(.checkbox) { display: flex; gap: 8px; align-items: center; }
 .settings :deep(.settings-hint.error) { color: #f2b8b8; }
+
+/* Version badge bottom-right */
+.version-badge { position: fixed; left: 12px; bottom: 12px; font-size: 12px; color: var(--adc-fg-muted); background: var(--adc-surface); border: 1px solid var(--adc-border); border-radius: 8px; padding: 4px 8px; opacity: 0.95; z-index: 1000; }
 
 .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 10px 14px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); white-space: pre-line; box-shadow: 0 6px 24px rgba(0,0,0,0.3); }
 .toast.success { border-color: #285c2a; background: #1e3b21; }

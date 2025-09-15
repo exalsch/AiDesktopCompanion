@@ -4,32 +4,35 @@ import { normalizeEnvInput } from './utils'
 
 export type UIStyle = 'sidebar-dark' | 'sidebar-light'
 
+// Module-singleton state to ensure all components share the same settings instance
+const DEFAULT_SYSTEM_PROMPT = (
+  'For every user prompt, follow these steps internally before responding:\n' +
+  '1. Analyze Intent: What is the user\'s core question or need?\n' +
+  '2. Assess Knowledge: Can I answer this accurately and completely using my existing training data?\n' +
+  '3. Evaluate Tools: If my knowledge is insufficient, review the available tools. Is there a tool that is a perfect match for the user\'s need?\n' +
+  '4. Decide Action:\n' +
+  '   - If a tool is necessary, select it and call it with the correct parameters.\n' +
+  '   - If no tool is necessary, formulate a direct answer using your internal knowledge.'
+)
+
+const settings = reactive({
+  openai_api_key: '',
+  openai_chat_model: 'gpt-4o-mini',
+  temperature: 1.0 as number,
+  persist_conversations: false as boolean,
+  hide_tool_calls_in_chat: false as boolean,
+  ui_style: 'sidebar-dark' as UIStyle,
+  global_hotkey: '' as string,
+  mcp_servers: [] as Array<any>,
+  system_prompt: '' as string,
+  quick_prompt_system_prompt: 'Give the direct response to the task.' as string,
+  show_quick_prompt_result_in_popup: false as boolean,
+  tokenizer_mode: 'approx' as 'approx' | 'tiktoken',
+})
+
+const models = reactive<{ list: string[]; loading: boolean; error: string | null }>({ list: [], loading: false, error: null })
+
 export function useSettings() {
-  const DEFAULT_SYSTEM_PROMPT = (
-    'For every user prompt, follow these steps internally before responding:\n' +
-    '1. Analyze Intent: What is the user\'s core question or need?\n' +
-    '2. Assess Knowledge: Can I answer this accurately and completely using my existing training data?\n' +
-    '3. Evaluate Tools: If my knowledge is insufficient, review the available tools. Is there a tool that is a perfect match for the user\'s need?\n' +
-    '4. Decide Action:\n' +
-    '   - If a tool is necessary, select it and call it with the correct parameters.\n' +
-    '   - If no tool is necessary, formulate a direct answer using your internal knowledge.'
-  )
-
-  const settings = reactive({
-    openai_api_key: '',
-    openai_chat_model: 'gpt-4o-mini',
-    temperature: 1.0 as number,
-    persist_conversations: false as boolean,
-    hide_tool_calls_in_chat: false as boolean,
-    ui_style: 'sidebar-dark' as UIStyle,
-    global_hotkey: '' as string,
-    mcp_servers: [] as Array<any>,
-    system_prompt: '' as string,
-    quick_prompt_system_prompt: 'Give the direct response to the task.' as string,
-  })
-
-  const models = reactive<{ list: string[]; loading: boolean; error: string | null }>({ list: [], loading: false, error: null })
-
   async function loadSettings() {
     const v = await invoke<any>('get_settings')
     if (v && typeof v === 'object') {
@@ -57,6 +60,17 @@ export function useSettings() {
         settings.quick_prompt_system_prompt = (v as any).quick_prompt_system_prompt
       } else {
         settings.quick_prompt_system_prompt = 'Give the direct response to the task.'
+      }
+      // Show Quick Prompt result in Quick Actions popup (optional; default false)
+      if (typeof (v as any).show_quick_prompt_result_in_popup === 'boolean') {
+        settings.show_quick_prompt_result_in_popup = (v as any).show_quick_prompt_result_in_popup
+      } else {
+        settings.show_quick_prompt_result_in_popup = false
+      }
+      // Tokenizer mode (optional; defaults to approximate)
+      if (typeof (v as any).tokenizer_mode === 'string') {
+        const tm = String((v as any).tokenizer_mode).toLowerCase()
+        settings.tokenizer_mode = (tm === 'tiktoken') ? 'tiktoken' : 'approx'
       }
       if (Array.isArray(v.mcp_servers)) {
         settings.mcp_servers = v.mcp_servers.map((s: any) => {

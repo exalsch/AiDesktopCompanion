@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
 import { emit as emitTauri } from '@tauri-apps/api/event'
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import { save as saveDialog } from '@tauri-apps/plugin-dialog'
 import { useTtsPlayback } from '../composables/useTtsPlayback'
+import { useSettings } from '../composables/useSettings'
+import { estimateTextTokens, formatTokenInfo } from '../composables/useTokenEstimate'
+import { tokenizerReady } from '../composables/useTokenizer'
 
 const props = defineProps<{ notify?: (msg: string, kind?: 'error' | 'success', ms?: number) => void; lightMount?: boolean }>()
 const emit = defineEmits<{ (e: 'busy', v: boolean): void }>()
@@ -165,6 +168,16 @@ defineExpose({
   async setTextAndPlay(text: string) { form.text = text || ''; await ensureTtsSettingsLoaded(); await onPlay() },
 })
 
+// Token hint for unsent TTS text (approximate or tokenizer-based)
+const { settings } = useSettings()
+const ttsModelName = computed(() => engine.value === 'openai' ? form.openaiModel : settings.openai_chat_model)
+const tokenizerMode = computed(() => settings.tokenizer_mode)
+const ttsTextTokens = computed(() => {
+  const _ready = tokenizerReady.value
+  return estimateTextTokens(form.text || '', ttsModelName.value, tokenizerMode.value).tokens
+})
+const ttsTokenHint = computed(() => formatTokenInfo([{ label: 'text', tokens: ttsTextTokens.value }]))
+
 </script>
 
 <template>
@@ -182,6 +195,7 @@ defineExpose({
     <div class="row">
       <label class="label">Text</label>
       <textarea v-model="form.text" rows="4" class="input" placeholder="Type something to speak…" @keydown.enter.exact.prevent="onPlay" />
+      <div class="hint">{{ ttsTokenHint }}</div>
     </div>
 
     <!-- Controls: Play/Stop + Save (just below text input) -->

@@ -3,6 +3,9 @@ import { ref, computed, onMounted } from 'vue'
 import type { Message } from '../state/conversation'
 import 'highlight.js/styles/github-dark.css'
 import { emit as emitTauri } from '@tauri-apps/api/event'
+import { useSettings } from '../composables/useSettings'
+import { estimateTextTokens, estimateImageTokensFromMeta } from '../composables/useTokenEstimate'
+import { useImageMeta } from '../composables/useImageMeta'
 
 const props = defineProps<{ message: Message; hideToolDetails?: boolean; isPlaying?: boolean }>()
 const emit = defineEmits<{
@@ -12,6 +15,30 @@ const emit = defineEmits<{
 // Markdown renderer function ref. It is initialized dynamically to avoid
 // hard dependency on external libraries at build time.
 const renderMarkdown = ref<(src: string) => string>(() => basicMarkdownFallback(''))
+
+// Token tooltip per message (approximate or tokenizer-based)
+const { settings } = useSettings()
+const modelName = computed(() => settings.openai_chat_model)
+const tokenizerMode = computed(() => settings.tokenizer_mode)
+const { getMany } = useImageMeta()
+const messageTokenTitle = computed(() => {
+  try {
+    const m = props.message
+    if (!m) return ''
+    if (m.type === 'text') {
+      const t = estimateTextTokens(String(m.text || ''), modelName.value, tokenizerMode.value).tokens
+      return t > 0 ? `≈ ${t} tokens` : ''
+    }
+    if (m.type === 'image') {
+      const metas = getMany((m.images || []).map(i => i.src))
+      const t = estimateImageTokensFromMeta(metas)
+      return t > 0 ? `≈ ${t} tokens` : ''
+    }
+    return ''
+  } catch {
+    return ''
+  }
+})
 
 onMounted(async () => {
   try {
@@ -204,7 +231,7 @@ function formatMessageTimestamp(ts: number): string {
 
 <template>
   <div class="row" :class="props.message.role">
-    <div class="bubble" :data-type="props.message.type">
+    <div class="bubble" :data-type="props.message.type" :title="messageTokenTitle">
       <div v-if="props.message.type === 'text'" class="bubble-actions">
         <button class="bubble-action-btn" :title="copied ? 'Copied' : 'Copy'" @click="copyMessage" aria-label="Copy message">
           <span v-if="!copied">📋</span>

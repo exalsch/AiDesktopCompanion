@@ -10,6 +10,13 @@ const props = defineProps<{
 <template>
   <div class="settings-section">
     <div class="settings-title">Quick Prompts</div>    
+    <div class="settings-row">
+      <label class="checkbox">
+        <input type="checkbox" v-model="props.settings.show_quick_prompt_result_in_popup" />
+        <span>Show result in Quick Actions popup instead of inserting</span>
+      </label>
+    </div>
+    <div class="settings-hint">When enabled, pressing 1–9 in the Quick Actions popup will show the AI result in-place with Copy (c) and Insert (v) controls. Inserting will briefly return focus to the previous app, paste the text, and close the popup.</div>
     <div class="settings-row col">
       <label class="label">Quick Prompts System Prompt (optional)</label>
       <textarea

@@ -41,6 +41,14 @@ pub fn prompt_action(app: tauri::AppHandle, safe_mode: Option<bool>) -> Result<S
   Ok("ok".to_string())
 }
 
+/// Set clipboard text directly. Used by Quick Actions result preview 'Copy' action.
+#[tauri::command]
+pub fn copy_text_to_clipboard(text: String) -> Result<(), String> {
+  let mut clipboard = Clipboard::new().map_err(|e| format!("clipboard init failed: {e}"))?;
+  let _ = clipboard.set_text(text);
+  Ok(())
+}
+
 #[tauri::command]
 pub fn open_prompt_with_text(app: tauri::AppHandle, text: String) -> Result<(), String> {
   if let Some(win) = app.get_webview_window("main") { let _ = win.show(); let _ = win.set_focus(); }

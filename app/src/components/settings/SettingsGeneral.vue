@@ -197,6 +197,17 @@ async function cleanupIdleTtsProxy() {
     </div>
 
     <div class="settings-row col">
+      <label class="label">Tokenizer</label>
+      <div class="row-inline">
+        <select v-model="props.settings.tokenizer_mode" class="input" style="max-width: 220px;">
+          <option value="approx">Approximate (fast, lightweight)</option>
+          <option value="tiktoken">Tokenizer (more accurate)</option>
+        </select>
+      </div>
+      <div class="settings-hint">Approx uses a character heuristic. Tokenizer uses a library for higher accuracy and may add slight overhead.</div>
+    </div>
+
+    <div class="settings-row col">
       <label class="label">Temperature: {{ props.settings.temperature.toFixed(2) }}</label>
       <input type="range" min="0" max="2" step="0.05" v-model.number="props.settings.temperature" />
       <div class="settings-hint">Lower = deterministic, Higher = creative. Default 1.0</div>
