@@ -10,6 +10,10 @@ jobs:
   build-windows:
     name: Build Windows installer
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [default, local-stt]
 
     steps:
       - name: Checkout repository
@@ -37,6 +41,18 @@ jobs:
       - name: Install WiX Toolset (for MSI bundling)
         run: choco install wixtoolset -y --no-progress
 
+      # Local STT (Whisper) requires LLVM/Clang for bindgen on Windows. Install only for that variant.
+      - name: Install LLVM (libclang) for local-stt
+        if: matrix.variant == 'local-stt'
+        shell: pwsh
+        run: |
+          choco install llvm -y --no-progress
+          echo "LIBCLANG_PATH=C:\\Program Files\\LLVM\\bin" | Out-File -FilePath $env:GITHUB_ENV -Append
+      # (Optional) CMake is commonly needed for audio dependencies; add if missing on the runner.
+      - name: Ensure CMake (for local-stt)
+        if: matrix.variant == 'local-stt'
+        run: choco install cmake -y --no-progress
+
       - name: Import Windows code signing cert (optional)
         if: ${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' && secrets.WINDOWS_CERT_PASSWORD != '' }}
         shell: pwsh
@@ -50,8 +66,14 @@ jobs:
         run: npm install
 
       - name: Build Tauri app (Windows release)
+        if: matrix.variant == 'default'
         working-directory: app
         run: npm run tauri build
+
+      - name: Build Tauri app (Windows release, local-stt)
+        if: matrix.variant == 'local-stt'
+        working-directory: app
+        run: npm run tauri -- build --features local-stt
 
       - name: Code-sign Windows artifacts (optional)
         if: env.CERT_PATH != ''
@@ -70,7 +92,7 @@ jobs:
       - name: Upload Windows bundle artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: AiDesktopCompanion-windows
+          name: AiDesktopCompanion-windows-${{ matrix.variant }}
           path: |
             app/src-tauri/target/release/bundle/**
             app/src-tauri/target/*/release/bundle/**
