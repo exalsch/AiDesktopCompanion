@@ -86,6 +86,16 @@ pub fn get_temperature_from_settings_or_env() -> Option<f32> {
   v.get("temperature").and_then(|x| x.as_f64()).map(|f| f as f32)
 }
 
+// Speech-To-Text engine selection: "openai" (default) or "local"
+pub fn get_stt_engine_from_settings_or_env() -> String {
+  let v = load_settings_json();
+  if let Some(s) = v.get("stt_engine").and_then(|x| x.as_str()) {
+    let t = s.trim().to_lowercase();
+    if t == "local" || t == "openai" { return t; }
+  }
+  std::env::var("AIDC_STT_ENGINE").ok().map(|s| s.to_lowercase()).filter(|t| t == "local" || t == "openai").unwrap_or_else(|| "openai".to_string())
+}
+
 pub fn get_settings() -> Result<serde_json::Value, String> {
   let v = load_settings_json();
   Ok(v)
@@ -103,6 +113,8 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   // Existing keys
   if let Some(k) = map.get("openai_api_key").and_then(|x| x.as_str()) { obj.insert("openai_api_key".to_string(), serde_json::Value::String(k.to_string())); }
   if let Some(m) = map.get("openai_chat_model").and_then(|x| x.as_str()) { obj.insert("openai_chat_model".to_string(), serde_json::Value::String(m.to_string())); }
+  // Dedicated model for Quick Actions quick prompts (optional; empty string means fallback to global)
+  if let Some(qpm) = map.get("quick_prompt_model").and_then(|x| x.as_str()) { obj.insert("quick_prompt_model".to_string(), serde_json::Value::String(qpm.to_string())); }
   if let Some(t) = map.get("temperature").and_then(|x| x.as_f64()) { obj.insert("temperature".to_string(), serde_json::Value::Number(serde_json::Number::from_f64(t).unwrap_or_else(|| serde_json::Number::from_f64(1.0).unwrap()))); }
   if let Some(p) = map.get("persist_conversations").and_then(|x| x.as_bool()) { obj.insert("persist_conversations".to_string(), serde_json::Value::Bool(p)); }
   // Persist UI style selection
@@ -131,6 +143,12 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   if let Some(om) = map.get("tts_openai_model").and_then(|x| x.as_str()) { obj.insert("tts_openai_model".to_string(), serde_json::Value::String(om.to_string())); }
   if let Some(of) = map.get("tts_openai_format").and_then(|x| x.as_str()) { obj.insert("tts_openai_format".to_string(), serde_json::Value::String(of.to_string())); }
   if let Some(os) = map.get("tts_openai_streaming").and_then(|x| x.as_bool()) { obj.insert("tts_openai_streaming".to_string(), serde_json::Value::Bool(os)); }
+
+  // New STT preference keys
+  if let Some(se) = map.get("stt_engine").and_then(|x| x.as_str()) { obj.insert("stt_engine".to_string(), serde_json::Value::String(se.to_string())); }
+  // Whisper (local STT) model selection
+  if let Some(u) = map.get("stt_whisper_model_url").and_then(|x| x.as_str()) { obj.insert("stt_whisper_model_url".to_string(), serde_json::Value::String(u.to_string())); }
+  if let Some(preset) = map.get("stt_whisper_model_preset").and_then(|x| x.as_str()) { obj.insert("stt_whisper_model_preset".to_string(), serde_json::Value::String(preset.to_string())); }
 
   let pretty = serde_json::to_string_pretty(&serde_json::Value::Object(obj)).map_err(|e| format!("Serialize settings failed: {e}"))?;
   fs::write(&path, pretty).map_err(|e| format!("Write settings failed: {e}"))?;

@@ -165,7 +165,7 @@ const { registerAppEvents } = useAppEvents({
   composerRef,
   appendMessage,
   newConversation,
-  updateMessage,
+  updateMessage: (id: string, patch: any) => { try { return !!updateMessage(id as any, patch) } catch { return false } },
   findServerById: (id: string) => mcp.findServerById(id),
   showToast,
   setSection: (s: 'Prompt' | 'TTS' | 'STT' | 'Settings') => { ui.activeSection = s; if (s === 'Prompt') ui.promptSubview = 'Chat' },
@@ -222,7 +222,7 @@ function makeArgsTemplateFromSchema(schema: any): any {
 
 function fillArgsTemplate(s: any) {
   try {
-    const t = selectedToolObj(s)
+    const t = mcp.selectedToolObj(s)
     const schema = t?.inputSchema ?? t?.input_schema ?? t?.schema
     const tmpl = makeArgsTemplateFromSchema(schema || {})
     s.toolArgsJson = JSON.stringify(tmpl, null, 2)
@@ -472,7 +472,7 @@ async function autoConnectServers() {
 .settings :deep(.settings-hint.error) { color: #f2b8b8; }
 
 /* Version badge bottom-right */
-.version-badge { position: fixed; left: 12px; bottom: 12px; font-size: 12px; color: var(--adc-fg-muted); background: var(--adc-surface); border: 1px solid var(--adc-border); border-radius: 8px; padding: 4px 8px; opacity: 0.95; z-index: 1000; }
+.version-badge { position: fixed; left: 5px; bottom: 30px; font-size: 12px; color: var(--adc-fg-muted); background: var(--adc-surface); border: 1px solid var(--adc-border); border-radius: 8px; padding: 4px 8px; opacity: 0.95; z-index: 1000; }
 
 .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 10px 14px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); white-space: pre-line; box-shadow: 0 6px 24px rgba(0,0,0,0.3); }
 .toast.success { border-color: #285c2a; background: #1e3b21; }

@@ -1,4 +1,12 @@
 # AiDesktopCompanion
+### Local STT (Whisper)
+
+- Select Local (Whisper) in Settings → Speech To Text.
+- Choose a model preset or paste a custom URL to a `ggml-*.bin` file.
+- Click “Prefetch Whisper model” to download with a progress indicator.
+- Models are stored at `%APPDATA%/AiDesktopCompanion/models/whisper/` using the file name derived from the URL, allowing multiple models to co‑exist.
+- The app transcodes microphone recordings to WAV 16 kHz mono on the frontend to maximize backend compatibility.
+
 
 A Windows-first desktop companion built with Vue 3 + Vite and Tauri 2. It provides fast "Quick Actions" for Prompting, Text‑to‑Speech (TTS), Speech‑to‑Text (STT), and an Image capture overlay.
 
@@ -21,6 +29,16 @@ A Windows-first desktop companion built with Vue 3 + Vite and Tauri 2. It provid
 - Microsoft Edge WebView2 Runtime (usually preinstalled)
 - Tauri prerequisites for Windows: https://tauri.app/start/prerequisites/
 
+Optional for Local STT (Whisper):
+
+- CMake (needed by some audio crates)
+- LLVM/Clang for bindgen (required to build whisper-rs on Windows)
+  - Install: `winget install -e --id LLVM.LLVM`
+  - Then set `LIBCLANG_PATH` so bindgen can find `clang.dll`:
+    - PowerShell: `setx LIBCLANG_PATH "C:\\Program Files\\LLVM\\bin"`
+  - Open a new terminal after setting the environment variable.
+  - Tip: run `Test-Path "C:\\Program Files\\LLVM\\bin\\clang.dll"` to verify.
+
 
 ## Setup
 
@@ -40,6 +58,18 @@ npm ci   # or: npm install
 ```powershell
 npm run tauri dev
 ```
+
+- Run with Local STT (Whisper) enabled:
+
+```powershell
+npm run tauri -- dev --features local-stt
+```
+
+Notes (Local STT):
+
+- On first transcription, the app downloads the selected Whisper model (`ggml-*.bin`) into `%APPDATA%/AiDesktopCompanion/models/whisper/`.
+- In Settings → Speech To Text, you can pick a preset (e.g., `base.en`, `small`, `medium`, `large-v3`) and use the “Prefetch Whisper model” button to download in advance with a progress indicator.
+- You can override the model URL via `settings.stt_whisper_model_url` or environment `AIDC_WHISPER_MODEL_URL`.
 
 - Run only the web dev server (for UI-only iteration):
 
@@ -63,6 +93,14 @@ npm run tauri build
 ```
 
 Artifacts are produced under `app/src-tauri/target/` (e.g. `release/`).
+
+- Build the packaged desktop app with Local STT (Whisper):
+
+```powershell
+npm run tauri -- build --features local-stt
+```
+
+When shipping Local STT, ensure your users meet the Windows prerequisites (LLVM/Clang etc.) noted above.
 
 
 ## CI/CD
@@ -144,7 +182,7 @@ Release notes:
 - Quick Actions popup with keyboard/mouse interactions:
   - Prompt (selection capture + action)
   - TTS (open TTS panel with selection)
-  - STT push‑to‑talk (hold S / mouse, release to transcribe)
+  - Speech-to-Text push‑to‑talk (hold S / mouse, release to transcribe)
   - Image capture overlay
 - Aggressive clipboard copy‑restore for reliable text insertion
 - Auto‑sizing popup and robust window focus management
@@ -162,6 +200,17 @@ Release notes:
   - Run the build from `app/` and check the reported file paths (`.vue`, `.ts`).
 - Path issues in PowerShell:
   - Use quotes around paths with spaces and prefer running from the project root + `cd app`.
+
+Local STT (Whisper) tips:
+
+- Bindgen/Clang errors while compiling `whisper-rs`:
+  - Install LLVM via `winget install -e --id LLVM.LLVM` and set `LIBCLANG_PATH` to `C:\\Program Files\\LLVM\\bin`.
+  - Open a new terminal, then try `cargo clean` under `app/src-tauri/` followed by the dev/build command with `--features local-stt`.
+- Wrong platform bindings / struct size mismatch errors:
+  - Ensure you are not forcing “do not generate bindings”. On Windows, bindings must be generated to match the platform.
+  - Clean the target dir: `cargo clean` under `app/src-tauri/`.
+- Audio decode errors for WebM/Opus captures:
+  - The frontend transcodes to WAV 16 kHz mono before sending to the backend when `stt_engine = local`. If you customized this, restore the default behavior in `app/src/components/STTPanel.vue`.
 
 
 ## Security notes

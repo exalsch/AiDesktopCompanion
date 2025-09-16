@@ -92,6 +92,7 @@ pub fn run() {
       tts_stream_session_count,
       tts_stream_cleanup_idle,
       stt_transcribe,
+      stt_prefetch_whisper_model,
       chat_complete,
       quick_actions::insert_text_into_focused_app,
       quick_actions::insert_prompt_text,
@@ -154,6 +155,7 @@ mod tts_utils;
 pub mod tts_mod;
 pub use tts_mod as tts;
 mod stt;
+mod stt_whisper;
 mod capture;
 mod chat;
 mod settings;
@@ -397,12 +399,34 @@ fn tts_openai_stream_stop(id: u64) -> Result<bool, String> {
   tts_openai::openai_stream_stop(id)
 }
 
-// Transcribe audio bytes using OpenAI Whisper API (expects WEBM/Opus by default).
-// Returns the transcribed text on success.
+// Local STT wrapper with feature gating to avoid referencing missing symbols
+#[cfg(feature = "local-stt")]
+async fn transcribe_local_wrapper(audio: Vec<u8>, mime: String) -> Result<String, String> {
+  stt_whisper::transcribe_local(audio, mime).await
+}
+
+#[cfg(not(feature = "local-stt"))]
+async fn transcribe_local_wrapper(_audio: Vec<u8>, _mime: String) -> Result<String, String> {
+  Err("Local STT is not available: app built without 'local-stt' feature.".into())
+}
+
+/// Transcribe audio bytes. Engine is selected via settings (`stt_engine`: "openai" | "local").
+/// Local engine uses whisper-rs with an auto-downloaded ggml model.
 #[tauri::command]
 async fn stt_transcribe(audio: Vec<u8>, mime: String) -> Result<String, String> {
-  let key = settings::get_api_key_from_settings_or_env()?;
-  stt::transcribe(key, audio, mime).await
+  let engine = config::get_stt_engine_from_settings_or_env();
+  if engine == "local" {
+    transcribe_local_wrapper(audio, mime).await
+  } else {
+    let key = settings::get_api_key_from_settings_or_env()?;
+    stt::transcribe(key, audio, mime).await
+  }
+}
+
+/// Prefetch Whisper model to the local models folder and emit progress via `stt-model-download` events.
+#[tauri::command]
+async fn stt_prefetch_whisper_model(app: tauri::AppHandle, url: Option<String>) -> Result<String, String> {
+  stt_whisper::prefetch_model_with_progress(app, url).await
 }
 
 // ---------------------------

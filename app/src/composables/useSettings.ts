@@ -18,6 +18,7 @@ const DEFAULT_SYSTEM_PROMPT = (
 const settings = reactive({
   openai_api_key: '',
   openai_chat_model: 'gpt-4o-mini',
+  quick_prompt_model: '' as string,
   temperature: 1.0 as number,
   persist_conversations: false as boolean,
   hide_tool_calls_in_chat: false as boolean,
@@ -28,6 +29,10 @@ const settings = reactive({
   quick_prompt_system_prompt: 'Give the direct response to the task.' as string,
   show_quick_prompt_result_in_popup: false as boolean,
   tokenizer_mode: 'approx' as 'approx' | 'tiktoken',
+  stt_engine: 'openai' as 'openai' | 'local',
+  // Local Whisper (STT) model config
+  stt_whisper_model_preset: 'base' as string,
+  stt_whisper_model_url: '' as string,
 })
 
 const models = reactive<{ list: string[]; loading: boolean; error: string | null }>({ list: [], loading: false, error: null })
@@ -38,6 +43,12 @@ export function useSettings() {
     if (v && typeof v === 'object') {
       if (typeof v.openai_api_key === 'string') settings.openai_api_key = v.openai_api_key
       if (typeof v.openai_chat_model === 'string' && v.openai_chat_model.trim()) settings.openai_chat_model = v.openai_chat_model
+      // Optional dedicated model for quick prompts via Quick Actions; empty means fallback to global
+      if (typeof (v as any).quick_prompt_model === 'string') {
+        settings.quick_prompt_model = (v as any).quick_prompt_model
+      } else {
+        settings.quick_prompt_model = ''
+      }
       if (typeof v.temperature === 'number') settings.temperature = v.temperature
       if (typeof v.persist_conversations === 'boolean') settings.persist_conversations = v.persist_conversations
       if (typeof (v as any).hide_tool_calls_in_chat === 'boolean') settings.hide_tool_calls_in_chat = (v as any).hide_tool_calls_in_chat
@@ -99,6 +110,18 @@ export function useSettings() {
             envError: null as string | null,
           }
         })
+      }
+      // STT engine selection (optional; default openai)
+      if (typeof (v as any).stt_engine === 'string') {
+        const se = String((v as any).stt_engine).toLowerCase()
+        settings.stt_engine = (se === 'local') ? 'local' : 'openai'
+      }
+      // Whisper model selection (optional)
+      if (typeof (v as any).stt_whisper_model_preset === 'string') {
+        settings.stt_whisper_model_preset = (v as any).stt_whisper_model_preset
+      }
+      if (typeof (v as any).stt_whisper_model_url === 'string') {
+        settings.stt_whisper_model_url = (v as any).stt_whisper_model_url
       }
     }
   }

@@ -95,7 +95,16 @@ pub async fn run_quick_prompt(app: tauri::AppHandle, index: u8, safe_mode: Optio
 
   // Call OpenAI Chat Completions (respect settings overrides)
   let key = get_api_key_from_settings_or_env()?;
-  let model = get_model_from_settings_or_env();
+  // Prefer dedicated quick_prompt_model; fallback to global chat model
+  let model = {
+    let s = settings
+      .get("quick_prompt_model")
+      .and_then(|x| x.as_str())
+      .unwrap_or("")
+      .trim()
+      .to_string();
+    if s.is_empty() { get_model_from_settings_or_env() } else { s }
+  };
   let temp = get_temperature_from_settings_or_env();
 
   let mut body = serde_json::json!({
@@ -209,7 +218,16 @@ pub async fn run_quick_prompt_result(app: tauri::AppHandle, index: u8, safe_mode
 
   // Call OpenAI Chat Completions (respect settings overrides)
   let key = get_api_key_from_settings_or_env()?;
-  let model = get_model_from_settings_or_env();
+  // Prefer dedicated quick_prompt_model; fallback to global chat model
+  let model = {
+    let s = settings
+      .get("quick_prompt_model")
+      .and_then(|x| x.as_str())
+      .unwrap_or("")
+      .trim()
+      .to_string();
+    if s.is_empty() { get_model_from_settings_or_env() } else { s }
+  };
   let temp = get_temperature_from_settings_or_env();
 
   let mut body = serde_json::json!({
@@ -286,7 +304,16 @@ pub async fn run_quick_prompt_with_selection(app: tauri::AppHandle, index: u8, s
 
   // Call OpenAI Chat Completions (respect settings overrides)
   let key = get_api_key_from_settings_or_env()?;
-  let model = get_model_from_settings_or_env();
+  // Prefer dedicated quick_prompt_model; fallback to global chat model
+  let model = {
+    let s = settings
+      .get("quick_prompt_model")
+      .and_then(|x| x.as_str())
+      .unwrap_or("")
+      .trim()
+      .to_string();
+    if s.is_empty() { get_model_from_settings_or_env() } else { s }
+  };
   let temp = get_temperature_from_settings_or_env();
 
   let mut body = serde_json::json!({

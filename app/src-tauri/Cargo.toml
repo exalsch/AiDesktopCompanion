@@ -44,7 +44,8 @@ symphonia = { version = "0.5", features = [
   "vorbis",
   "isomp4",
   "wav",
-  "ogg"
+  "ogg",
+  "mkv"
 ] }
 base64 = "0.22"
 rmcp = { version = "0.2", features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client", "transport-sse-client"] }
@@ -53,3 +54,9 @@ futures-util = "0.3"
 hyper = { version = "0.14", features = ["full"] }
 uuid = { version = "1.0", features = ["v4"] }
 tokio-stream = "0.1"
+whisper-rs = { version = "0.15", optional = true }
+num_cpus = "1.16"
+
+[features]
+default = []
+local-stt = ["whisper-rs"]

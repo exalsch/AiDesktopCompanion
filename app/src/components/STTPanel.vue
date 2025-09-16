@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { reactive, watch, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { startRecording, stopRecording } from '../stt'
+import { startRecording, stopRecording, transcodeToWav16kMono } from '../stt'
 import { useSettings } from '../composables/useSettings'
 import { estimateTextTokens, formatTokenInfo } from '../composables/useTokenEstimate'
 import { tokenizerReady } from '../composables/useTokenizer'
@@ -48,9 +48,18 @@ async function transcribeBlob(blob: Blob, mime: string) {
   state.busy = true
   state.error = ''
   try {
-    const arrayBuffer = await blob.arrayBuffer()
-    const bytes = Array.from(new Uint8Array(arrayBuffer))
-    const text: string = await invoke('stt_transcribe', { audio: bytes, mime })
+    // For local STT, transcode to WAV 16kHz mono on the frontend to ensure broad compatibility.
+    let payloadBytes: Uint8Array
+    let payloadMime: string = mime
+    if ((settings as any).stt_engine === 'local') {
+      payloadBytes = await transcodeToWav16kMono(blob)
+      payloadMime = 'audio/wav'
+    } else {
+      const arrayBuffer = await blob.arrayBuffer()
+      payloadBytes = new Uint8Array(arrayBuffer)
+    }
+    const bytes = Array.from(payloadBytes)
+    const text: string = await invoke('stt_transcribe', { audio: bytes, mime: payloadMime })
     state.transcript = (text || '').trim()
     if (!state.transcript) props.notify?.('No transcription returned', 'error')
   } catch (e: any) {

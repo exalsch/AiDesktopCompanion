@@ -3,6 +3,8 @@ import QuickPromptsEditor from '../QuickPromptsEditor.vue'
 
 const props = defineProps<{
   settings: any
+  models?: { list: string[]; loading: boolean; error: string | null }
+  onRefreshModels?: () => any
   notify?: (msg: string, kind?: 'error' | 'success', ms?: number) => void
 }>()
 </script>
@@ -10,6 +12,19 @@ const props = defineProps<{
 <template>
   <div class="settings-section">
     <div class="settings-title">Quick Prompts</div>    
+    <div class="settings-row col">
+      <label class="label">Model for Quick Actions Quick Prompts</label>
+      <div class="row-inline">
+        <select v-model="props.settings.quick_prompt_model" class="input">
+          <option :value="''">Use Global ({{ props.settings.openai_chat_model }})</option>
+          <option v-for="m in (props.models?.list || [])" :key="m" :value="m">{{ m }}</option>
+          <option v-if="props.settings.quick_prompt_model && !(props.models?.list || []).includes(props.settings.quick_prompt_model)" :value="props.settings.quick_prompt_model">{{ props.settings.quick_prompt_model }} (current)</option>
+        </select>
+        <button v-if="props.onRefreshModels" class="btn" :disabled="props.models?.loading" @click="props.onRefreshModels">{{ props.models?.loading ? 'Fetching…' : 'Fetch Models' }}</button>
+      </div>
+      <div v-if="props.models?.error" class="settings-hint error">{{ props.models?.error }}</div>
+      <div class="settings-hint">Leave empty to use the global chat model.</div>
+    </div>
     <div class="settings-row">
       <label class="checkbox">
         <input type="checkbox" v-model="props.settings.show_quick_prompt_result_in_popup" />

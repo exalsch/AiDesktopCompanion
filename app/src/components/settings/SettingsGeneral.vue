@@ -2,6 +2,7 @@
 import { ref, defineProps, watch, computed } from 'vue'
 import { checkShortcutAvailable } from '../../hotkeys'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 
 const props = defineProps<{
   settings: any
@@ -70,6 +71,65 @@ function parseHotkeyToFields(hk: string) {
     }
     ghkKey.value = key
   } catch { ghkMod1.value = ''; ghkMod2.value = ''; ghkKey.value = ''; }
+}
+
+// ----- Local Whisper (STT) model selection + prefetch
+const whisperPresets = [
+  { label: 'base (multi)', value: 'base', url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin' },
+  { label: 'base.en (English)', value: 'base.en', url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin' },
+  { label: 'small (multi)', value: 'small', url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin' },
+  { label: 'small.en (English)', value: 'small.en', url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin' },
+  { label: 'medium (multi)', value: 'medium', url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin' },
+  { label: 'medium.en (English)', value: 'medium.en', url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en.bin' },
+  { label: 'large-v3', value: 'large-v3', url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin' },
+  { label: 'large-v3-turbo', value: 'large-v3-turbo', url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin' },
+]
+
+function urlForPreset(preset: string): string {
+  const p = whisperPresets.find(p => p.value === preset)
+  return p ? p.url : 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin'
+}
+
+watch(() => props.settings.stt_whisper_model_preset, (v: string) => {
+  try {
+    props.settings.stt_whisper_model_url = urlForPreset(String(v || 'base'))
+  } catch {}
+})
+
+const prefetchBusy = ref(false)
+const prefetchReceived = ref(0)
+const prefetchTotal = ref(0)
+const prefetchDonePath = ref('')
+const prefetchError = ref('')
+
+async function prefetchWhisperModel() {
+  prefetchBusy.value = true
+  prefetchReceived.value = 0
+  prefetchTotal.value = 0
+  prefetchDonePath.value = ''
+  prefetchError.value = ''
+  let unlisten: null | (() => void) = null
+  try {
+    unlisten = await listen('stt-model-download', (e: any) => {
+      try {
+        const p = e?.payload || {}
+        if (p.kind === 'progress') {
+          prefetchReceived.value = Number(p.received || 0)
+          prefetchTotal.value = Number(p.total || 0)
+        } else if (p.kind === 'done') {
+          prefetchDonePath.value = String(p.path || '')
+        }
+      } catch {}
+    })
+    const url = (props.settings.stt_whisper_model_url || '').trim() || undefined
+    const path = await invoke<string>('stt_prefetch_whisper_model', { url })
+    if (path) prefetchDonePath.value = path
+  } catch (e: any) {
+    prefetchError.value = e?.message || String(e) || 'Download failed'
+  } finally {
+    if (unlisten) { try { unlisten() } catch {} }
+    prefetchBusy.value = false
+  }
 }
 
 function composeHotkey(): string {
@@ -164,6 +224,7 @@ async function cleanupIdleTtsProxy() {
           spellcheck="false"
         />
       </div>
+
       <div class="settings-hint">Example: Alt + Shift + A. Leave all empty to disable. Current: <code>{{ props.settings.global_hotkey || 'disabled' }}</code></div>
       <div v-if="ghkError" class="settings-hint error">{{ ghkError }}</div>
     </div>
@@ -226,6 +287,36 @@ async function cleanupIdleTtsProxy() {
       <div class="settings-hint">
         Used as the global system instruction for chat. When a Quick Prompt is active, its text is appended to the end of this system prompt.
       </div>
+    </div>
+    <div class="settings-title">Speech To Text</div>
+    <div class="settings-row col">
+      <label class="label">Engine</label>
+      <div class="row-inline">
+        <select v-model="props.settings.stt_engine" class="input" style="max-width: 220px;">
+          <option value="openai">OpenAI (cloud)</option>
+          <option value="local">Local (Whisper)</option>
+        </select>
+      </div>
+      <div class="settings-hint">
+        Local uses Whisper (CPU) via whisper-rs. On first use it auto-downloads <code>ggml-base.bin</code> from Hugging Face into your app data folder.
+        Set env <code>AIDC_WHISPER_MODEL_URL</code> to override the model URL.
+      </div>
+    </div>
+    <div v-if="props.settings.stt_engine === 'local'" class="settings-row col">
+      <label class="label">Local Whisper Model</label>
+      <div class="row-inline" style="gap: 10px; align-items: center; flex-wrap: wrap;">
+        <select v-model="props.settings.stt_whisper_model_preset" class="input" style="max-width: 260px;">
+          <option v-for="p in whisperPresets" :key="p.value" :value="p.value">{{ p.label }}</option>
+        </select>
+        <input v-model="props.settings.stt_whisper_model_url" class="input" style="min-width: 360px;" placeholder="Model URL (ggml-*.bin)" />
+        <button class="btn" :disabled="prefetchBusy" @click="prefetchWhisperModel">{{ prefetchBusy ? prefetchTotal ? (`Prefetching… ${Math.floor((prefetchReceived / Math.max(1, prefetchTotal)) * 100)}%`) : 'Prefetching…' : 'Prefetch Whisper model' }}</button>
+      </div>
+      <div class="settings-hint">
+        Default folder: <code>%APPDATA%/AiDesktopCompanion/models/whisper</code>
+      </div>
+      <div v-if="prefetchError" class="settings-hint error">{{ prefetchError }}</div>
+      <div v-else-if="prefetchBusy && prefetchTotal" class="settings-hint">Downloading: {{ (prefetchReceived/1024/1024).toFixed(1) }} / {{ (prefetchTotal/1024/1024).toFixed(1) }} MB</div>
+      <div v-else-if="prefetchDonePath" class="settings-hint">Downloaded to: <code>{{ prefetchDonePath }}</code></div>
     </div>
 
     <div class="settings-title">UI</div>

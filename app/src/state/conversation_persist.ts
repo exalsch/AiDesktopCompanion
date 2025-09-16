@@ -1,5 +1,6 @@
 import { state } from './conversation_state'
 import type { Conversation, Message, PersistedState } from './conversation_types'
+import { uid } from './conversation_types'
 
 export function getPersistState(): PersistedState {
   return {
