@@ -29,8 +29,10 @@
     ],
     "security": {
       "csp": {
-        "default-src": ["'self'", "asset:"],
-        "connect-src": ["ipc:", "http://ipc.localhost", "https://api.openai.com"],
+        "default-src": ["'self'", "asset:", "http://asset.localhost"],
+        "script-src": ["'self'", "'wasm-unsafe-eval'"],
+        "script-src-elem": ["'self'", "'wasm-unsafe-eval'"],
+        "connect-src": ["'self'", "ipc:", "http://ipc.localhost", "https://api.openai.com", "asset:", "http://asset.localhost"],
         "img-src": ["'self'", "asset:", "http://asset.localhost", "blob:", "data:"],
         "media-src": ["'self'", "asset:", "http://asset.localhost", "blob:", "data:"],
         "font-src": ["'self'", "data:"],
@@ -43,7 +45,8 @@
       },
       "devCsp": {
         "default-src": ["'self'", "asset:"],
-        "connect-src": ["ipc:", "http://ipc.localhost", "https://api.openai.com", "http://localhost:5173", "ws://localhost:5173"],
+        "script-src": ["'self'", "'wasm-unsafe-eval'"],
+        "connect-src": ["'self'", "ipc:", "http://ipc.localhost", "https://api.openai.com", "http://localhost:5173", "ws://localhost:5173", "asset:", "http://asset.localhost"],
         "img-src": ["'self'", "asset:", "http://asset.localhost", "blob:", "data:"],
         "media-src": ["'self'", "asset:", "http://asset.localhost", "blob:", "data:"],
         "font-src": ["'self'", "data:"],
@@ -58,6 +61,7 @@
         "enable": true,
         "scope": [
           "$RESOURCE/**",
+          "$ASSET/**",
           "$APP/**",
           "$TEMP/**"
         ]

@@ -26,7 +26,7 @@ import { useBusy } from './composables/useBusy'
 import { useConversationPersist } from './composables/useConversationPersist'
 import { useSettingsAutosave } from './composables/useSettingsAutosave'
 import { useSettingsSave } from './composables/useSettingsSave'
-import { preloadTokenizer } from './composables/useTokenizer'
+import { preloadTokenizer, tokenizerLastError } from './composables/useTokenizer'
 
 const { isQuickActions, isCaptureOverlay, addBodyClass, removeBodyClass } = useWindowMode()
 
@@ -90,7 +90,10 @@ onMounted(async () => {
   try {
     if (settings.tokenizer_mode === 'tiktoken') {
       const ok = await preloadTokenizer()
-      if (!ok) showToast('Tokenizer library not installed. Run "npm install" in app/ to enable accurate token counts.', 'error', 3200)
+      if (!ok) {
+        try { console.warn('[tokenizer] init failed; using approximate counts', tokenizerLastError?.value) } catch {}
+        showToast('Accurate tokenizer unavailable; using approximate counts.', 'error', 4200)
+      }
     }
   } catch {}
   // Apply style-specific CSS after loading settings (all windows)
@@ -186,7 +189,10 @@ watch(() => settings.tokenizer_mode, async (mode) => {
   if (mode === 'tiktoken') {
     try {
       const ok = await preloadTokenizer()
-      if (!ok) showToast('Tokenizer library not installed. Run "npm install" in app/ to enable accurate token counts.', 'error', 3200)
+      if (!ok) {
+        try { console.warn('[tokenizer] init failed; using approximate counts', tokenizerLastError?.value) } catch {}
+        showToast('Accurate tokenizer unavailable; using approximate counts.', 'warning', 4200)
+      }
     } catch {}
   }
 })
