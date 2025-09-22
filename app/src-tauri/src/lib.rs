@@ -64,6 +64,12 @@ pub fn run() {
         tray_builder = tray_builder.icon(icon.clone());
       }
       let _tray = tray_builder.build(app)?;
+      // Ensure default quick_prompts.json exists on first run to avoid errors when loading quick prompts
+      if let Some(p) = quick_prompts_config_path() {
+        if !p.exists() {
+          let _ = generate_default_quick_prompts();
+        }
+      }
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
