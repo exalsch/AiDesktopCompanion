@@ -4,6 +4,9 @@ import MessageItem from './MessageItem.vue'
 import ImageViewer from './ImageViewer.vue'
 import type { Message } from '../state/conversation'
 import { newConversation } from '../state/conversation'
+import { useSettings } from '../composables/useSettings'
+import { estimateTextTokens, estimateImageTokensFromMeta } from '../composables/useTokenEstimate'
+import { useImageMeta } from '../composables/useImageMeta'
 
 const props = defineProps<{
   messages: Message[]
@@ -78,6 +81,28 @@ onMounted(async () => {
   const el = listRef.value
   if (el) el.scrollTop = el.scrollHeight
 })
+
+// Conversation token summary
+const { settings } = useSettings()
+const modelName = computed(() => settings.openai_chat_model)
+const tokenizerMode = computed(() => settings.tokenizer_mode)
+const { getMany } = useImageMeta()
+const conversationTokenSummary = computed(() => {
+  try {
+    let total = 0
+    for (const m of (props.messages || [])) {
+      if (m.type === 'text') {
+        total += estimateTextTokens(String(m.text || ''), modelName.value, tokenizerMode.value).tokens
+      } else if (m.type === 'image') {
+        const metas = getMany((m.images || []).map(i => i.src))
+        total += estimateImageTokensFromMeta(metas)
+      }
+    }
+    return `≈ ${total} tokens in conversation`
+  } catch {
+    return ''
+  }
+})
 </script>
 
 <template>
@@ -97,6 +122,9 @@ onMounted(async () => {
 
     <div ref="listRef" class="list convo-wrap">
       <MessageItem v-for="m in messages" :key="m.id" :message="m" :hide-tool-details="props.hideToolDetails" :is-playing="!!props.ttsPlaying && props.ttsPlayingId === m.id" @image-click="onImageClick" />
+    </div>
+    <div class="convo-footer">
+      <div class="hint">{{ conversationTokenSummary }}</div>
     </div>
   </div>
   <!-- MCP Tool Selection Modal -->
@@ -155,6 +183,9 @@ onMounted(async () => {
 .btn.secondary { background: transparent; color: var(--adc-accent); }
 .btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .list { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--adc-border); border-radius: 10px; background: var(--adc-surface); }
+
+.convo-footer { padding: 6px 4px 0 4px; display: flex; justify-content: flex-end; }
+.hint { font-size: 12px; color: var(--adc-fg-muted); }
 
 /* Modal */
 .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 50; }

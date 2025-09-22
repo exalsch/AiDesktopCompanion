@@ -1,33 +1,25 @@
 <script setup lang="ts">
-import { reactive, ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
 import { emit as emitTauri } from '@tauri-apps/api/event'
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import { save as saveDialog } from '@tauri-apps/plugin-dialog'
+import { useTtsPlayback } from '../composables/useTtsPlayback'
+import { useSettings } from '../composables/useSettings'
+import { estimateTextTokens, formatTokenInfo } from '../composables/useTokenEstimate'
+import { tokenizerReady } from '../composables/useTokenizer'
 
-const props = defineProps<{ notify?: (msg: string, kind?: 'error' | 'success', ms?: number) => void }>()
+const props = defineProps<{ notify?: (msg: string, kind?: 'error' | 'success', ms?: number) => void; lightMount?: boolean }>()
 const emit = defineEmits<{ (e: 'busy', v: boolean): void }>()
 
-const form = reactive({
-  text: '' as string,
-  voice: '' as string,
-  rate: -2 as number, // -10..10
-  volume: 100 as number, // 0..100
-  // OpenAI TTS fields
-  openaiVoice: 'alloy' as string,
-  openaiModel: 'gpt-4o-mini-tts' as string,
-})
-
-const speaking = ref(false)
-const busy = ref(false) // shows LoadingDots during synthesis (OpenAI play or any synth operation)
-const engine = ref<'local' | 'openai'>('local')
-const wavPath = ref('')
-const wavSrc = ref('')
+const { engine, form: formFromComposable, speaking, busy, wavPath, wavSrc, lastPlayTempPath, playerRef, onPlay, onStop, onSynthesize, startProxyStreaming, stopProxyStreaming } = useTtsPlayback(props.notify)
+// Alias for local usage
+const form = formFromComposable
 const voices = ref<string[]>([])
 const loadingVoices = ref(false)
 const err = ref('')
-const playerRef = ref<HTMLAudioElement | null>(null)
 let cleanupTimer: any = 0
-const lastPlayTempPath = ref('') // temp wav created by onPlay (OpenAI) only; safe to delete after playback/stop
+
+// Streaming handled in composable when engine === 'openai' and form.openaiStreaming
 
 // OpenAI voices (static list; API does not expose a public voices endpoint)
 const openaiVoiceOptions = ref<string[]>([
@@ -35,6 +27,7 @@ const openaiVoiceOptions = ref<string[]>([
 ])
 // OpenAI models (load from backend; fallback defaults)
 const openaiModelOptions = ref<string[]>(['gpt-4o-mini-tts', 'tts-1', 'tts-1-hd'])
+const openaiFormatOptions = ref<Array<'wav'|'mp3'|'opus'>>(['wav','mp3','opus'])
 
 // OpenAI rate/volume are applied server-side into the saved WAV to keep playback and export consistent.
 
@@ -55,110 +48,30 @@ async function loadVoices() {
   }
 }
 
-async function onPlay() {
-  if (!form.text.trim()) {
-    props.notify?.('Enter some text to speak', 'error')
+async function onSynthesizeWithSave() {
+  // Save only if we already have a synthesized file
+  if (!wavPath.value || !String(wavPath.value).trim()) {
+    props.notify?.('No output to save yet. Press Play or Synthesize first.', 'error')
     return
   }
   try {
-    if (engine.value === 'local') {
-      await invoke('tts_start', { text: form.text, voice: form.voice || null, rate: form.rate, volume: form.volume })
-      speaking.value = true
-    } else {
-      // OpenAI: synthesize to WAV then play via HTML audio
-      busy.value = true
-      const path = await invoke<string>('tts_openai_synthesize_wav', { text: form.text, voice: form.openaiVoice || 'alloy', model: form.openaiModel || 'gpt-4o-mini-tts', rate: form.rate, volume: form.volume })
-      busy.value = false
-      wavPath.value = path
-      wavSrc.value = convertFileSrc(path)
-      lastPlayTempPath.value = path
-      // Auto-play
-      requestAnimationFrame(() => {
-        const a = playerRef.value
-        if (a) {
-          a.currentTime = 0
-          a.play().catch(() => {})
-          speaking.value = true
-          a.onended = async () => {
-            speaking.value = false
-            // Cleanup temp WAV only if it was created by Play (OpenAI)
-            const p = lastPlayTempPath.value
-            if (p) {
-              try { await invoke<boolean>('tts_delete_temp_wav', { path: p }) } catch {}
-              if (wavPath.value === p) { wavPath.value = ''; wavSrc.value = '' }
-              lastPlayTempPath.value = ''
-            }
-          }
-        }
-      })
-    }
-  } catch (e: any) {
-    const msg = e?.message || String(e) || 'TTS start failed'
-    props.notify?.(msg, 'error')
-    busy.value = false
-  }
-}
-
-async function onStop() {
-  try {
-    if (engine.value === 'local') {
-      await invoke('tts_stop')
-    } else {
-      const a = playerRef.value
-      if (a) { a.pause(); a.currentTime = 0 }
-      // Cleanup temp WAV if stopping during OpenAI playback
-      const p = lastPlayTempPath.value
-      if (p) {
-        try { await invoke<boolean>('tts_delete_temp_wav', { path: p }) } catch {}
-        if (wavPath.value === p) { wavPath.value = ''; wavSrc.value = '' }
-        lastPlayTempPath.value = ''
-      }
-    }
-  } catch {}
-  finally {
-    speaking.value = false
-  }
-}
-
-async function onSynthesize() {
-  if (!form.text.trim()) {
-    props.notify?.('Enter some text to synthesize', 'error')
-    return
-  }
-  try {
-    busy.value = true
-    const path = engine.value === 'local'
-      ? await invoke<string>('tts_synthesize_wav', { text: form.text, voice: form.voice || null, rate: form.rate, volume: form.volume })
-      : await invoke<string>('tts_openai_synthesize_wav', { text: form.text, voice: (form.openaiVoice || 'alloy'), model: (form.openaiModel || 'gpt-4o-mini-tts'), rate: form.rate, volume: form.volume })
-    busy.value = false
-    wavPath.value = path
-    wavSrc.value = convertFileSrc(path)
-
-    // Prompt Save As... dialog
-    const suggested = 'speech.wav'
-    const dest = await saveDialog({
-      defaultPath: suggested,
-      filters: [{ name: 'WAV audio', extensions: ['wav'] }],
-      title: 'Save synthesized audio as...'
-    } as any)
+    const fmt = engine.value === 'openai' ? form.openaiFormat : 'wav'
+    const suggested = `speech.${fmt}`
+    const filters = engine.value === 'openai'
+      ? (form.openaiFormat === 'mp3' ? [{ name: 'MP3 audio', extensions: ['mp3'] }] : form.openaiFormat === 'opus' ? [{ name: 'OPUS audio', extensions: ['opus', 'ogg'] }] : [{ name: 'WAV audio', extensions: ['wav'] }])
+      : [{ name: 'WAV audio', extensions: ['wav'] }]
+    const dest = await saveDialog({ defaultPath: suggested, filters, title: 'Save synthesized audio as...' } as any)
     if (dest && typeof dest === 'string') {
       try {
-        const out = await invoke<string>('copy_file_to_path', { src: path, dest, overwrite: true })
+        const out = await invoke<string>('copy_file_to_path', { src: wavPath.value, dest, overwrite: true })
         props.notify?.(`Saved to:\n${out}`, 'success')
         wavPath.value = out
         wavSrc.value = convertFileSrc(out)
       } catch (e: any) {
         props.notify?.(e?.message || String(e) || 'Copy failed', 'error')
       }
-    } else {
-      props.notify?.(`WAV created in temp folder:\n${path}`, 'success')
     }
-  } catch (e: any) {
-    const msg = e?.message || String(e) || 'Synthesize failed'
-    props.notify?.(msg, 'error')
-  } finally {
-    busy.value = false
-  }
+  } catch {}
 }
 
 // Persist/restore TTS selections via settings
@@ -173,6 +86,11 @@ async function loadTtsSettings() {
       if (typeof v.tts_voice_local === 'string') form.voice = v.tts_voice_local
       if (typeof v.tts_openai_voice === 'string') form.openaiVoice = v.tts_openai_voice
       if (typeof v.tts_openai_model === 'string') form.openaiModel = v.tts_openai_model
+      if (typeof (v as any).tts_openai_format === 'string') {
+        const f = String((v as any).tts_openai_format).toLowerCase()
+        if (['wav','mp3','opus'].includes(f)) form.openaiFormat = f as any
+      }
+      if (typeof (v as any).tts_openai_streaming === 'boolean') form.openaiStreaming = !!(v as any).tts_openai_streaming
     }
   } catch {}
 }
@@ -205,6 +123,9 @@ function scheduleSaveTtsSettings() {
         tts_voice_local: form.voice,
         tts_openai_voice: form.openaiVoice,
         tts_openai_model: form.openaiModel,
+        tts_openai_format: form.openaiFormat,
+        tts_openai_streaming: form.openaiStreaming,
+        tts_openai_instructions: form.openaiInstructions,
       } })
     } catch {}
   }, 300)
@@ -216,14 +137,17 @@ watch(() => form.volume, scheduleSaveTtsSettings)
 watch(() => form.voice, scheduleSaveTtsSettings)
 watch(() => form.openaiVoice, scheduleSaveTtsSettings)
 watch(() => form.openaiModel, scheduleSaveTtsSettings)
+watch(() => form.openaiFormat, scheduleSaveTtsSettings)
+watch(() => form.openaiStreaming, scheduleSaveTtsSettings)
 
 onMounted(() => {
-  loadVoices().catch(() => {})
-  ensureTtsSettingsLoaded().catch(() => {})
-  loadOpenAIModels().catch(() => {})
-  // Kick off stale cleanup now and periodically (every 30 minutes)
-  invoke('cleanup_stale_tts_wavs', { maxAgeMinutes: 240 }).catch(() => {})
-  cleanupTimer = setInterval(() => { invoke('cleanup_stale_tts_wavs', { maxAgeMinutes: 240 }).catch(() => {}) }, 30 * 60 * 1000)
+  if (!props.lightMount) {
+    loadVoices().catch(() => {})
+    ensureTtsSettingsLoaded().catch(() => {})
+    // Kick off stale cleanup now and periodically (every 30 minutes)
+    invoke('cleanup_stale_tts_wavs', { maxAgeMinutes: 240 }).catch(() => {})
+    cleanupTimer = setInterval(() => { invoke('cleanup_stale_tts_wavs', { maxAgeMinutes: 240 }).catch(() => {}) }, 30 * 60 * 1000)
+  }
 })
 onBeforeUnmount(() => {
   if (cleanupTimer) clearInterval(cleanupTimer)
@@ -237,27 +161,22 @@ watch(speaking, (v) => {
   try { emitTauri('tts:speaking', { speaking: !!v }) } catch {}
 })
 
-async function loadOpenAIModels() {
-  try {
-    const models = await invoke<string[]>('list_openai_models')
-    // Keep only likely TTS-capable models
-    const filtered = (models || []).filter(m => m.includes('tts') || m.includes('4o') || m.includes('audio'))
-    if (filtered.length) {
-      openaiModelOptions.value = Array.from(new Set([...filtered, ...openaiModelOptions.value]))
-      if (!openaiModelOptions.value.includes(form.openaiModel)) {
-        form.openaiModel = 'gpt-4o-mini-tts'
-      }
-    }
-  } catch {}
-}
-
-// Expose programmatic API for parent (App.vue)
 defineExpose({
   setText(text: string) { form.text = text || '' },
   async play() { await ensureTtsSettingsLoaded(); await onPlay() },
   async stop() { await onStop() },
   async setTextAndPlay(text: string) { form.text = text || ''; await ensureTtsSettingsLoaded(); await onPlay() },
 })
+
+// Token hint for unsent TTS text (approximate or tokenizer-based)
+const { settings } = useSettings()
+const ttsModelName = computed(() => engine.value === 'openai' ? form.openaiModel : settings.openai_chat_model)
+const tokenizerMode = computed(() => settings.tokenizer_mode)
+const ttsTextTokens = computed(() => {
+  const _ready = tokenizerReady.value
+  return estimateTextTokens(form.text || '', ttsModelName.value, tokenizerMode.value).tokens
+})
+const ttsTokenHint = computed(() => formatTokenInfo([{ label: 'text', tokens: ttsTextTokens.value }]))
 
 </script>
 
@@ -275,7 +194,19 @@ defineExpose({
 
     <div class="row">
       <label class="label">Text</label>
-      <textarea v-model="form.text" rows="4" class="input" placeholder="Type something to speak…" />
+      <textarea v-model="form.text" rows="4" class="input" placeholder="Type something to speak…" @keydown.enter.exact.prevent="onPlay" />
+      <div class="hint">{{ ttsTokenHint }}</div>
+    </div>
+
+    <!-- Controls: Play/Stop + Save (just below text input) -->
+    <div class="row inline">
+      <button
+        class="btn"
+        :class="{ danger: speaking }"
+        :disabled="busy && !speaking"
+        @click="speaking ? onStop() : onPlay()"
+      >{{ speaking ? 'Stop' : (busy && engine === 'openai' ? 'Synthesizing…' : 'Play') }}</button>
+      <button class="btn" :disabled="!wavPath" @click="onSynthesizeWithSave">Save to file</button>
     </div>
 
     <div class="row inline">
@@ -290,7 +221,12 @@ defineExpose({
         </div>
         <div v-if="err" class="hint error">{{ err }}</div>
       </div>
-      <div class="cell" v-else>
+      <div class="cell" v-else>        
+      <div class="cell" v-if="engine === 'openai'">
+        <label class="label">Voice tone (optional)</label>
+        <input class="input" v-model="form.openaiInstructions" placeholder="e.g. Cheerful and positive tone" />
+        <div class="hint">Optional hint sent to OpenAI to influence speaking style/tone.</div>
+      </div>
         <label class="label">Model (OpenAI)</label>
         <input class="input" v-model="form.openaiModel" list="openai-models" placeholder="gpt-4o-mini-tts" />
         <datalist id="openai-models">
@@ -306,6 +242,20 @@ defineExpose({
         </datalist>
         <div class="hint">Select a voice or type a custom one. Default is "alloy". Suggestions list might be incomplete.</div>
       </div>
+      <div class="cell" v-if="engine === 'openai'">
+        <label class="label">Format</label>
+        <select v-model="(form.openaiFormat as any)" class="input">
+          <option v-for="f in openaiFormatOptions" :key="f" :value="f">{{ f.toUpperCase() }}</option>
+        </select>
+        <div class="hint">OPUS can reduce latency and size. WAV is PCM16-compatible with Windows playback.</div>
+      </div>
+      <div class="cell" v-if="engine === 'openai'">
+        <label class="label" title="Streaming uses a local HTTP proxy to progressively play audio (MP3/WAV/OPUS). If playback isn’t supported or fails, it automatically falls back to non‑streaming synth‑then‑play.">Streaming (experimental)</label>
+        <div class="checkbox" title="Streaming uses a local HTTP proxy to progressively play audio (MP3/WAV/OPUS). If playback isn’t supported or fails, it automatically falls back to non‑streaming synth‑then‑play.">
+          <input type="checkbox" v-model="form.openaiStreaming" />
+          <span>Enable streaming when supported</span>
+        </div>
+      </div>
       <div class="cell">
         <label class="label">Rate: {{ form.rate }}</label>
         <input type="range" min="-10" max="10" step="1" v-model.number="form.rate" />
@@ -316,19 +266,17 @@ defineExpose({
       </div>
     </div>
 
-    <div class="row inline">
-      <button class="btn" :disabled="speaking || busy" @click="onPlay">{{ busy && engine === 'openai' ? 'Synthesizing…' : 'Play' }}</button>
-      <button class="btn danger" :disabled="!speaking" @click="onStop">Stop</button>
-      <button class="btn" @click="onSynthesize">Save to WAV</button>
+    
+
+    <div v-if="wavPath || (engine === 'openai' && form.openaiStreaming)" class="row">
+      <template v-if="wavPath">
+        <div class="label">Last output</div>
+        <div class="hint">{{ wavPath }}</div>
+      </template>
+      <audio ref="playerRef" :src="wavSrc || ''" controls preload="none" />
     </div>
 
-    <div v-if="wavPath" class="row">
-      <div class="label">Last output</div>
-      <div class="hint">{{ wavPath }}</div>
-      <audio ref="playerRef" v-if="wavSrc" :src="wavSrc" controls preload="none" />
-    </div>
-
-    <div class="hint">Note: Local engine uses Windows PowerShell System.Speech. OpenAI engine synthesizes to WAV using your OpenAI API key from Settings. Rate/Volume affect both OpenAI playback and saved WAV. (Speed changes will also change pitch.)</div>
+    <div class="hint">Note: Local engine uses Windows PowerShell System.Speech. </div>
   </div>
 </template>
 

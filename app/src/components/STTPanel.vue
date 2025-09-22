@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { reactive, watch } from 'vue'
+import { reactive, watch, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { startRecording, stopRecording } from '../stt'
+import { startRecording, stopRecording, transcodeToWav16kMono } from '../stt'
+import { useSettings } from '../composables/useSettings'
+import { estimateTextTokens, formatTokenInfo } from '../composables/useTokenEstimate'
+import { tokenizerReady } from '../composables/useTokenizer'
 
 const emit = defineEmits<{
   (e: 'use-as-prompt', text: string): void
@@ -45,9 +48,18 @@ async function transcribeBlob(blob: Blob, mime: string) {
   state.busy = true
   state.error = ''
   try {
-    const arrayBuffer = await blob.arrayBuffer()
-    const bytes = Array.from(new Uint8Array(arrayBuffer))
-    const text: string = await invoke('stt_transcribe', { audio: bytes, mime })
+    // For local STT, transcode to WAV 16kHz mono on the frontend to ensure broad compatibility.
+    let payloadBytes: Uint8Array
+    let payloadMime: string = mime
+    if ((settings as any).stt_engine === 'local') {
+      payloadBytes = await transcodeToWav16kMono(blob)
+      payloadMime = 'audio/wav'
+    } else {
+      const arrayBuffer = await blob.arrayBuffer()
+      payloadBytes = new Uint8Array(arrayBuffer)
+    }
+    const bytes = Array.from(payloadBytes)
+    const text: string = await invoke('stt_transcribe', { audio: bytes, mime: payloadMime })
     state.transcript = (text || '').trim()
     if (!state.transcript) props.notify?.('No transcription returned', 'error')
   } catch (e: any) {
@@ -75,6 +87,16 @@ function onUseAsPrompt() {
 }
 
 watch(() => state.busy, (v) => emit('busy', !!v))
+
+// Token hint for transcript text (approximate)
+const { settings } = useSettings()
+const sttModelName = computed(() => settings.openai_chat_model)
+const tokenizerMode = computed(() => settings.tokenizer_mode)
+const sttTextTokens = computed(() => {
+  const _ready = tokenizerReady.value
+  return estimateTextTokens(state.transcript || '', sttModelName.value, tokenizerMode.value).tokens
+})
+const sttTokenHint = computed(() => formatTokenInfo([{ label: 'text', tokens: sttTextTokens.value }]))
 </script>
 
 <template>
@@ -92,6 +114,7 @@ watch(() => state.busy, (v) => emit('busy', !!v))
     <div class="row" v-if="state.transcript">
       <label class="label">Transcript</label>
       <textarea :value="state.transcript" rows="6" readonly />
+      <div class="hint">{{ sttTokenHint }}</div>
       <div class="row inline">
         <button class="btn" @click="onCopy">Copy</button>
         <button class="btn" @click="onUseAsPrompt">Use as Prompt</button>
