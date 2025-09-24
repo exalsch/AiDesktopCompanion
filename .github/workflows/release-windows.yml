@@ -42,21 +42,32 @@ jobs:
       - name: Install WiX Toolset (for MSI bundling)
         run: choco install wixtoolset -y --no-progress
 
-      - name: Import Windows code signing cert (optional)
-        if: ${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' && secrets.WINDOWS_CERT_PASSWORD != '' }}
+      # Local STT (Whisper) requires LLVM/Clang for bindgen on Windows.
+      - name: Install LLVM (libclang) for local-stt
         shell: pwsh
         run: |
-          $certPath = "$env:RUNNER_TEMP\\codesign.pfx"
-          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
-          echo "CERT_PATH=$certPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+          choco install llvm -y --no-progress
+          echo "LIBCLANG_PATH=C:\\Program Files\\LLVM\\bin" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      # (Optional) CMake is commonly needed for audio dependencies
+      - name: Ensure CMake (for local-stt)
+        run: choco install cmake -y --no-progress
+
+      # - name: Import Windows code signing cert (optional)
+      #   if: ${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' && secrets.WINDOWS_CERT_PASSWORD != '' }}
+      #   shell: pwsh
+      #   run: |
+      #     $certPath = "$env:RUNNER_TEMP\\codesign.pfx"
+      #     [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
+      #     echo "CERT_PATH=$certPath" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Install frontend dependencies
         working-directory: app
         run: npm ci
 
-      - name: Build Tauri app (Windows release)
+      - name: Build Tauri app (Windows release, local-stt)
         working-directory: app
-        run: npm run tauri build
+        run: npm run tauri -- build --features local-stt
 
       - name: Generate release notes (Conventional Commits)
         id: changelog
@@ -68,19 +79,19 @@ jobs:
           output-file: false
           tag-prefix: 'v'
 
-      - name: Code-sign Windows artifacts (optional)
-        if: env.CERT_PATH != ''
-        shell: pwsh
-        run: |
-          $signtool = (Get-Command signtool.exe -ErrorAction SilentlyContinue).Source
-          if (-not $signtool) { throw "signtool.exe not found on PATH. Ensure Windows SDK is installed." }
-          $timestamp = if ('${{ secrets.WINDOWS_TIMESTAMP_URL }}') { '${{ secrets.WINDOWS_TIMESTAMP_URL }}' } else { 'http://timestamp.digicert.com' }
-          $bundleRoot = "app\src-tauri\target"
-          $files = Get-ChildItem $bundleRoot -Include *.exe,*.msi -Recurse -File
-          if ($files.Count -eq 0) { Write-Host "No signable artifacts found under $bundleRoot." }
-          foreach ($f in $files) {
-            & $signtool sign /f $env:CERT_PATH /p "${{ secrets.WINDOWS_CERT_PASSWORD }}" /fd SHA256 /td SHA256 /tr $timestamp "$($f.FullName)"
-          }
+      # - name: Code-sign Windows artifacts (optional)
+      #   if: env.CERT_PATH != ''
+      #   shell: pwsh
+      #   run: |
+      #     $signtool = (Get-Command signtool.exe -ErrorAction SilentlyContinue).Source
+      #     if (-not $signtool) { throw "signtool.exe not found on PATH. Ensure Windows SDK is installed." }
+      #     $timestamp = if ('${{ secrets.WINDOWS_TIMESTAMP_URL }}') { '${{ secrets.WINDOWS_TIMESTAMP_URL }}' } else { 'http://timestamp.digicert.com' }
+      #     $bundleRoot = "app\src-tauri\target"
+      #     $files = Get-ChildItem $bundleRoot -Include *.exe,*.msi -Recurse -File
+      #     if ($files.Count -eq 0) { Write-Host "No signable artifacts found under $bundleRoot." }
+      #     foreach ($f in $files) {
+      #       & $signtool sign /f $env:CERT_PATH /p "${{ secrets.WINDOWS_CERT_PASSWORD }}" /fd SHA256 /td SHA256 /tr $timestamp "$($f.FullName)"
+      #     }
 
       - name: Upload assets to GitHub Release
         uses: softprops/action-gh-release@v2
