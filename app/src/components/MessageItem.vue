@@ -108,6 +108,9 @@ async function copyMessage() {
   }
 }
 
+// Local guard to avoid accidental double-triggering (e.g., bubbling, rapid clicks)
+const startingTts = ref(false)
+
 async function playTtsInBackground() {
   try {
     if (props.message.type !== 'text') return
@@ -116,6 +119,18 @@ async function playTtsInBackground() {
     await emitTauri('tts:play-background', { text, id: props.message.id })
   } catch (err) {
     console.error('Failed to trigger TTS:', err)
+  }
+}
+
+async function onPlayClicked() {
+  // Re-entrancy guard: prevents duplicate emits in the same frame
+  if (startingTts.value) return
+  startingTts.value = true
+  try {
+    await playTtsInBackground()
+  } finally {
+    // Release quickly; external state (props.isPlaying) will take over button swap
+    startingTts.value = false
   }
 }
 
@@ -241,7 +256,7 @@ function formatMessageTimestamp(ts: number): string {
           v-if="!props.isPlaying"
           class="bubble-action-btn"
           title="Read aloud"
-          @click="playTtsInBackground"
+          @click.stop.prevent="onPlayClicked"
           aria-label="Read aloud"
         >
           <span>🔊</span>
