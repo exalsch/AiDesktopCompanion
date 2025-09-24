@@ -191,7 +191,7 @@ watch(() => settings.tokenizer_mode, async (mode) => {
       const ok = await preloadTokenizer()
       if (!ok) {
         try { console.warn('[tokenizer] init failed; using approximate counts', tokenizerLastError?.value) } catch {}
-        showToast('Accurate tokenizer unavailable; using approximate counts.', 'warning', 4200)
+        showToast('Accurate tokenizer unavailable; using approximate counts.', 'error', 4200)
       }
     } catch {}
   }
