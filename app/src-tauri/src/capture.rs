@@ -77,8 +77,8 @@ pub fn capture_region(app: tauri::AppHandle, x: i32, y: i32, width: i32, height:
     // Hiding is sufficient; avoid costly state changes and close after capture
     let _ = overlay.hide();
   }
-  // Keep a tiny delay so the hide is applied before capture
-  std::thread::sleep(std::time::Duration::from_millis(5));
+  // Keep a delay to ensure the UI is fully hidden and the selection rectangle is removed
+  std::thread::sleep(std::time::Duration::from_millis(30));
   #[cfg(target_os = "windows")]
   {
     use screenshots::Screen;
