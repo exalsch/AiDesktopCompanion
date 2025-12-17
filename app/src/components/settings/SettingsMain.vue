@@ -2,6 +2,8 @@
 import SettingsGeneral from './SettingsGeneral.vue'
 import SettingsMcpServers from './SettingsMcpServers.vue'
 import SettingsQuickPrompts from './SettingsQuickPrompts.vue'
+import { onMounted, watch } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
 
 const props = defineProps<{
   settings: any
@@ -21,6 +23,23 @@ const props = defineProps<{
   onCallTool: (payload: any) => any
   selectedToolObj: (server: any) => any
 }>()
+
+async function refreshMcpStatuses() {
+  try {
+    const arr = Array.isArray(props.settings?.mcp_servers) ? props.settings.mcp_servers : []
+    for (const s of arr) {
+      try {
+        if (!s || !s.id) continue
+        const ok = await invoke<boolean>('mcp_is_connected', { serverId: s.id })
+        if (ok) { s.status = 'connected'; s.connecting = false; s.error = null }
+        else { s.status = 'disconnected'; s.connecting = false }
+      } catch {}
+    }
+  } catch {}
+}
+
+onMounted(() => { if (props.settingsSubview === 'MCP Servers') { refreshMcpStatuses() } })
+watch(() => props.settingsSubview, (sub) => { if (sub === 'MCP Servers') { refreshMcpStatuses() } })
 </script>
 
 <template>

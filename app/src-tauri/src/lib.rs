@@ -93,6 +93,7 @@ pub fn run() {
       tts_stream_cleanup_idle,
       stt_transcribe,
       stt_prefetch_whisper_model,
+      stt_prefetch_parakeet_model,
       chat_complete,
       quick_actions::insert_text_into_focused_app,
       quick_actions::insert_prompt_text,
@@ -126,7 +127,10 @@ pub fn run() {
       mcp_read_resource,
       mcp_list_prompts,
       mcp_get_prompt,
-      mcp_ping
+      mcp_ping,
+      mcp_is_connected,
+      realtime_create_ephemeral_token,
+      realtime_build_tools
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
@@ -156,6 +160,7 @@ pub mod tts_mod;
 pub use tts_mod as tts;
 mod stt;
 mod stt_whisper;
+mod stt_parakeet;
 mod capture;
 mod chat;
 mod settings;
@@ -286,6 +291,13 @@ async fn mcp_ping(server_id: String) -> Result<String, String> {
   mcp::ping(&MCP_CLIENTS, &server_id).await
 }
 
+/// Query whether an MCP server is currently connected (exists in the clients map).
+#[tauri::command]
+async fn mcp_is_connected(server_id: String) -> Result<bool, String> {
+  let map = MCP_CLIENTS.lock().await;
+  Ok(map.contains_key(&server_id))
+}
+
 // get_disabled_tools_map local helper removed; use config::get_disabled_tools_map()
 
 // settings helpers moved to settings.rs
@@ -402,7 +414,14 @@ fn tts_openai_stream_stop(id: u64) -> Result<bool, String> {
 // Local STT wrapper with feature gating to avoid referencing missing symbols
 #[cfg(feature = "local-stt")]
 async fn transcribe_local_wrapper(audio: Vec<u8>, mime: String) -> Result<String, String> {
-  stt_whisper::transcribe_local(audio, mime).await
+  let lm = config::get_stt_local_model_from_settings_or_env();
+  let t = lm.trim().to_lowercase();
+  if t.contains("parakeet") {
+    let has_cuda = config::get_stt_parakeet_has_cuda_from_settings_or_env();
+    stt_parakeet::transcribe_local(audio, mime, has_cuda).await
+  } else {
+    stt_whisper::transcribe_local(audio, mime).await
+  }
 }
 
 #[cfg(not(feature = "local-stt"))]
@@ -418,8 +437,20 @@ async fn stt_transcribe(audio: Vec<u8>, mime: String) -> Result<String, String> 
   if engine == "local" {
     transcribe_local_wrapper(audio, mime).await
   } else {
-    let key = settings::get_api_key_from_settings_or_env()?;
-    stt::transcribe(key, audio, mime).await
+    let base_url = config::get_stt_cloud_base_url_from_settings_or_env();
+    let model = config::get_stt_cloud_model_from_settings_or_env();
+    let is_openai = base_url.trim().starts_with("https://api.openai.com");
+    let key_opt = if is_openai {
+      let v = config::load_settings_json();
+      let from_settings = v.get("openai_api_key").and_then(|x| x.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+      from_settings.or_else(|| std::env::var("OPENAI_API_KEY").ok())
+    } else {
+      config::get_stt_cloud_api_key_from_settings_or_env()
+    };
+    if is_openai && key_opt.is_none() {
+      return Err("OPENAI_API_KEY not set in settings or environment".to_string());
+    }
+    stt::transcribe(key_opt, base_url, model, audio, mime).await
   }
 }
 
@@ -427,6 +458,11 @@ async fn stt_transcribe(audio: Vec<u8>, mime: String) -> Result<String, String> 
 #[tauri::command]
 async fn stt_prefetch_whisper_model(app: tauri::AppHandle, url: Option<String>) -> Result<String, String> {
   stt_whisper::prefetch_model_with_progress(app, url).await
+}
+
+#[tauri::command]
+async fn stt_prefetch_parakeet_model(app: tauri::AppHandle) -> Result<String, String> {
+  stt_parakeet::prefetch_model_with_progress(app).await
 }
 
 // ---------------------------
@@ -448,4 +484,50 @@ async fn chat_complete(app: tauri::AppHandle, messages: Vec<chat::ChatMessage>) 
   let model = settings::get_model_from_settings_or_env();
   let temp = settings::get_temperature_from_settings_or_env();
   chat::chat_complete_with_mcp(app, messages, key, model, temp, &MCP_CLIENTS).await
+}
+
+// ---------------------------
+// OpenAI Realtime helpers
+// ---------------------------
+
+/// Create an ephemeral token for OpenAI Realtime WebRTC sessions.
+/// Frontend uses this token as the Bearer when exchanging the SDP offer.
+#[tauri::command]
+async fn realtime_create_ephemeral_token(model: Option<String>, voice: Option<String>) -> Result<String, String> {
+  let key = settings::get_api_key_from_settings_or_env()?;
+  let client = reqwest::Client::new();
+  let model_name = model.unwrap_or_else(|| "gpt-4o-realtime-preview".to_string());
+  let voice_name = voice.unwrap_or_else(|| "verse".to_string());
+  let body = serde_json::json!({
+    "model": model_name,
+    "modalities": ["audio", "text"],
+    "voice": voice_name
+  });
+  let resp = client
+    .post("https://api.openai.com/v1/realtime/sessions")
+    .bearer_auth(&key)
+    .json(&body)
+    .send()
+    .await
+    .map_err(|e| format!("request failed: {e}"))?;
+  if !resp.status().is_success() {
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    return Err(format!("OpenAI error: {status} {text}"));
+  }
+  let v: serde_json::Value = resp.json().await.map_err(|e| format!("json error: {e}"))?;
+  let token = v
+    .get("client_secret")
+    .and_then(|x| x.get("value"))
+    .and_then(|x| x.as_str())
+    .ok_or_else(|| "missing client_secret.value in response".to_string())?;
+  Ok(token.to_string())
+}
+
+/// Build OpenAI tool definitions from connected MCP servers for Realtime sessions.
+#[tauri::command]
+async fn realtime_build_tools() -> Result<serde_json::Value, String> {
+  let map = MCP_CLIENTS.lock().await;
+  let tools = mcp::build_openai_tools_from_mcp(&*map).await;
+  Ok(serde_json::Value::Array(tools))
 }

@@ -56,12 +56,16 @@ npm ci   # or: npm install
 - Run the desktop app in development mode (recommended):
 
 ```powershell
+# from the repository root
+cd app
 npm run tauri dev
 ```
 
 - Run with Local STT (Whisper) enabled:
 
 ```powershell
+# from the repository root
+cd app
 npm run tauri -- dev --features local-stt
 ```
 

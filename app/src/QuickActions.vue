@@ -3,7 +3,7 @@ import { onMounted, onBeforeUnmount, ref } from 'vue'
 import { getCurrentWebviewWindow, WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { LogicalSize } from '@tauri-apps/api/dpi'
 import { invoke } from '@tauri-apps/api/core'
-import { startRecording as sttStart, stopRecording as sttStop, isRecording as sttIsRecording } from './stt'
+import { startRecording as sttStart, stopRecording as sttStop, isRecording as sttIsRecording, transcodeToWav16kMono } from './stt'
 
 // Debug helper (enable by setting sessionStorage.setItem('qa_debug', '1'))
 const isDev = (import.meta as any)?.env?.DEV === true
@@ -333,12 +333,30 @@ async function stopSTTAndTranscribe(): Promise<void> {
       return
     }
     const { blob, mime } = res
-    const buf = new Uint8Array(await blob.arrayBuffer())
     // Close popup before transcribing
     await hidePopup()
     let text = ''
     try {
-      text = await invoke<string>('stt_transcribe', { audio: Array.from(buf), mime })
+      let payloadBytes: Uint8Array
+      let payloadMime: string = mime
+      try {
+        const settings = await invoke<any>('get_settings')
+        const engine = String(settings?.stt_engine || 'openai')
+        const baseUrl = String(settings?.stt_cloud_base_url || 'https://api.openai.com').trim()
+        const isOpenAi = baseUrl.startsWith('https://api.openai.com')
+        const shouldTranscode = engine === 'local' || (engine !== 'local' && !isOpenAi)
+        if (shouldTranscode) {
+          payloadBytes = await transcodeToWav16kMono(blob)
+          payloadMime = 'audio/wav'
+        } else {
+          payloadBytes = new Uint8Array(await blob.arrayBuffer())
+          payloadMime = mime
+        }
+      } catch {
+        payloadBytes = new Uint8Array(await blob.arrayBuffer())
+        payloadMime = mime
+      }
+      text = await invoke<string>('stt_transcribe', { audio: Array.from(payloadBytes), mime: payloadMime })
     } catch (err) {
       const msg = typeof err === 'string' ? err : (err && (err as any).message) ? (err as any).message : 'Unknown STT error'
       console.error('[stt] transcribe failed:', msg, err)

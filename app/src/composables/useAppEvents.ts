@@ -6,7 +6,7 @@ import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 export interface UseAppEventsDeps {
   // UI state
   prompt: { visible: boolean; selection: string; preview: string; length: number }
-  ui: { activeSection: 'Prompt'|'TTS'|'STT'|'Settings'; promptSubview: 'Chat'|'History' }
+  ui: { activeSection: 'Prompt'|'Assistant'|'TTS'|'STT'|'Settings'; promptSubview: 'Chat'|'History' }
 
   // Refs and helpers
   ttsRef: { value: any }
@@ -25,7 +25,7 @@ export interface UseAppEventsDeps {
   showToast: (msg: string, kind?: 'error'|'success', ms?: number) => void
 
   // Section helper
-  setSection: (s: 'Prompt' | 'TTS' | 'STT' | 'Settings') => void
+  setSection: (s: 'Prompt' | 'Assistant' | 'TTS' | 'STT' | 'Settings') => void
 }
 
 export function useAppEvents(deps: UseAppEventsDeps) {

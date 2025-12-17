@@ -51,9 +51,19 @@ async function transcribeBlob(blob: Blob, mime: string) {
     // For local STT, transcode to WAV 16kHz mono on the frontend to ensure broad compatibility.
     let payloadBytes: Uint8Array
     let payloadMime: string = mime
-    if ((settings as any).stt_engine === 'local') {
-      payloadBytes = await transcodeToWav16kMono(blob)
-      payloadMime = 'audio/wav'
+    const engine = String((settings as any).stt_engine || 'openai')
+    const baseUrl = String((settings as any).stt_cloud_base_url || 'https://api.openai.com').trim()
+    const isOpenAi = baseUrl.startsWith('https://api.openai.com')
+    const shouldTranscode = engine === 'local' || (engine !== 'local' && !isOpenAi)
+    if (shouldTranscode) {
+      try {
+        payloadBytes = await transcodeToWav16kMono(blob)
+        payloadMime = 'audio/wav'
+      } catch {
+        const arrayBuffer = await blob.arrayBuffer()
+        payloadBytes = new Uint8Array(arrayBuffer)
+        payloadMime = mime
+      }
     } else {
       const arrayBuffer = await blob.arrayBuffer()
       payloadBytes = new Uint8Array(arrayBuffer)

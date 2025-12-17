@@ -2,8 +2,8 @@
 import LoadingDots from '../LoadingDots.vue'
 
 const props = defineProps<{
-  sections: ReadonlyArray<'Prompt' | 'TTS' | 'STT' | 'Settings'>
-  activeSection: 'Prompt' | 'TTS' | 'STT' | 'Settings'
+  sections: ReadonlyArray<'Prompt' | 'Assistant' | 'TTS' | 'STT' | 'Settings'>
+  activeSection: 'Prompt' | 'Assistant' | 'TTS' | 'STT' | 'Settings'
   promptSubview: 'Chat' | 'History'
   settingsSubview: 'General' | 'Quick Prompts' | 'MCP Servers'
   sidebarOpen: boolean
@@ -12,7 +12,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'toggle-sidebar'): void
-  (e: 'set-section', section: 'Prompt' | 'TTS' | 'STT' | 'Settings'): void
+  (e: 'set-section', section: 'Prompt' | 'Assistant' | 'TTS' | 'STT' | 'Settings'): void
   (e: 'open-history'): void
   (e: 'set-settings-subview', sub: 'General' | 'Quick Prompts' | 'MCP Servers'): void
 }>()
@@ -35,6 +35,14 @@ const emit = defineEmits<{
             <path d="m18 13-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/>
             <path d="m2 2 7.586 7.586"/>
             <circle cx="11" cy="11" r="2"/>
+          </svg>
+        </template>
+        <template v-else-if="s === 'Assistant'">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 18v-6a9 9 0 0 1 18 0v6"/>
+            <rect x="3" y="18" width="18" height="3" rx="1.5"/>
+            <path d="M8 21v-3"/>
+            <path d="M16 21v-3"/>
           </svg>
         </template>
         <template v-else-if="s === 'TTS'">

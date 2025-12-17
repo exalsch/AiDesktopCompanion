@@ -96,6 +96,60 @@ pub fn get_stt_engine_from_settings_or_env() -> String {
   std::env::var("AIDC_STT_ENGINE").ok().map(|s| s.to_lowercase()).filter(|t| t == "local" || t == "openai").unwrap_or_else(|| "openai".to_string())
 }
 
+pub fn get_stt_local_model_from_settings_or_env() -> String {
+  let v = load_settings_json();
+  if let Some(s) = v.get("stt_local_model").and_then(|x| x.as_str()) {
+    let t = s.trim();
+    if !t.is_empty() { return t.to_string(); }
+  }
+  std::env::var("AIDC_STT_LOCAL_MODEL").unwrap_or_else(|_| "whisper".to_string())
+}
+
+pub fn get_stt_parakeet_has_cuda_from_settings_or_env() -> bool {
+  let v = load_settings_json();
+  if let Some(b) = v.get("stt_parakeet_has_cuda").and_then(|x| x.as_bool()) {
+    return b;
+  }
+  std::env::var("AIDC_STT_PARAKEET_HAS_CUDA")
+    .ok()
+    .map(|s| {
+      let t = s.trim().to_lowercase();
+      t == "1" || t == "true" || t == "yes" || t == "y" || t == "on"
+    })
+    .unwrap_or(false)
+}
+
+pub fn get_stt_cloud_base_url_from_settings_or_env() -> String {
+  let v = load_settings_json();
+  if let Some(s) = v.get("stt_cloud_base_url").and_then(|x| x.as_str()) {
+    let t = s.trim().trim_end_matches('/');
+    if !t.is_empty() { return t.to_string(); }
+  }
+  std::env::var("AIDC_STT_CLOUD_BASE_URL")
+    .ok()
+    .map(|s| s.trim().trim_end_matches('/').to_string())
+    .filter(|s| !s.is_empty())
+    .unwrap_or_else(|| "https://api.openai.com".to_string())
+}
+
+pub fn get_stt_cloud_model_from_settings_or_env() -> String {
+  let v = load_settings_json();
+  if let Some(s) = v.get("stt_cloud_model").and_then(|x| x.as_str()) {
+    let t = s.trim();
+    if !t.is_empty() { return t.to_string(); }
+  }
+  std::env::var("AIDC_STT_CLOUD_MODEL").unwrap_or_else(|_| "whisper-1".to_string())
+}
+
+pub fn get_stt_cloud_api_key_from_settings_or_env() -> Option<String> {
+  let v = load_settings_json();
+  if let Some(s) = v.get("stt_cloud_api_key").and_then(|x| x.as_str()) {
+    let t = s.trim();
+    if !t.is_empty() { return Some(t.to_string()); }
+  }
+  std::env::var("AIDC_STT_CLOUD_API_KEY").ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
 pub fn get_settings() -> Result<serde_json::Value, String> {
   let v = load_settings_json();
   Ok(v)
@@ -134,6 +188,9 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   // Pass-through for MCP servers configuration when provided
   if let Some(ms) = map.get("mcp_servers") { obj.insert("mcp_servers".to_string(), ms.clone()); }
 
+  // Persist Assistant Mode realtime settings when provided
+  if let Some(ar) = map.get("assistant_realtime") { obj.insert("assistant_realtime".to_string(), ar.clone()); }
+
   // New TTS preference keys
   if let Some(e) = map.get("tts_engine").and_then(|x| x.as_str()) { obj.insert("tts_engine".to_string(), serde_json::Value::String(e.to_string())); }
   if let Some(r) = map.get("tts_rate").and_then(|x| x.as_i64()) { obj.insert("tts_rate".to_string(), serde_json::Value::Number((r as i64).into())); }
@@ -146,9 +203,17 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
 
   // New STT preference keys
   if let Some(se) = map.get("stt_engine").and_then(|x| x.as_str()) { obj.insert("stt_engine".to_string(), serde_json::Value::String(se.to_string())); }
+  if let Some(lm) = map.get("stt_local_model").and_then(|x| x.as_str()) { obj.insert("stt_local_model".to_string(), serde_json::Value::String(lm.to_string())); }
+  if let Some(b) = map.get("stt_parakeet_has_cuda").and_then(|x| x.as_bool()) { obj.insert("stt_parakeet_has_cuda".to_string(), serde_json::Value::Bool(b)); }
+  if let Some(bu) = map.get("stt_cloud_base_url").and_then(|x| x.as_str()) { obj.insert("stt_cloud_base_url".to_string(), serde_json::Value::String(bu.to_string())); }
+  if let Some(sm) = map.get("stt_cloud_model").and_then(|x| x.as_str()) { obj.insert("stt_cloud_model".to_string(), serde_json::Value::String(sm.to_string())); }
+  if let Some(sk) = map.get("stt_cloud_api_key").and_then(|x| x.as_str()) { obj.insert("stt_cloud_api_key".to_string(), serde_json::Value::String(sk.to_string())); }
   // Whisper (local STT) model selection
   if let Some(u) = map.get("stt_whisper_model_url").and_then(|x| x.as_str()) { obj.insert("stt_whisper_model_url".to_string(), serde_json::Value::String(u.to_string())); }
   if let Some(preset) = map.get("stt_whisper_model_preset").and_then(|x| x.as_str()) { obj.insert("stt_whisper_model_preset".to_string(), serde_json::Value::String(preset.to_string())); }
+
+  // Remove deprecated local STT model selector keys if present
+  obj.remove("stt_local_base_url");
 
   let pretty = serde_json::to_string_pretty(&serde_json::Value::Object(obj)).map_err(|e| format!("Serialize settings failed: {e}"))?;
   fs::write(&path, pretty).map_err(|e| format!("Write settings failed: {e}"))?;

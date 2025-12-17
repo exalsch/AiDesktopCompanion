@@ -17,7 +17,7 @@ export function useMcp(settings: any, showToast: (msg: string, kind?: 'error' | 
       const env = s.transport === 'stdio'
         ? normalizeEnvInput(typeof s.envJson === 'string' ? s.envJson : s.env)
         : {}
-      await invoke<string>('mcp_connect', {
+      const res = await invoke<string>('mcp_connect', {
         serverId: s.id,
         command: s.command,
         args,
@@ -25,6 +25,13 @@ export function useMcp(settings: any, showToast: (msg: string, kind?: 'error' | 
         env,
         transport: s.transport
       })
+      // If backend says it's already connected, we won't get another mcp:connected event.
+      // Recover UI state immediately to avoid appearing disconnected.
+      if (typeof res === 'string' && res.toLowerCase().includes('already connected')) {
+        s.status = 'connected'
+        s.connecting = false
+        s.error = null
+      }
     } catch (err) {
       const msg = typeof err === 'string' ? err : (err && (err as any).message) ? (err as any).message : 'Unknown error'
       s.error = msg

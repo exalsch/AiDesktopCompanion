@@ -4,6 +4,7 @@ import PromptPanel from './components/PromptPanel.vue'
 import CaptureOverlay from './components/CaptureOverlay.vue'
 import ConversationHistory from './components/ConversationHistory.vue'
 import PromptMain from './components/prompt/PromptMain.vue'
+import AssistantMode from './components/assistant/AssistantMode.vue'
 import TTSPanel from './components/TTSPanel.vue'
 import STTPanel from './components/STTPanel.vue'
 import SidebarNav from './components/sidebar/SidebarNav.vue'
@@ -40,8 +41,8 @@ const prompt = reactive({
 
 // Simple section navigation for Main Window
 const ui = reactive({
-  sections: ['Prompt', 'TTS', 'STT', 'Settings'] as const,
-  activeSection: 'Prompt' as 'Prompt' | 'TTS' | 'STT' | 'Settings',
+  sections: ['Prompt', 'Assistant', 'TTS', 'STT', 'Settings'] as const,
+  activeSection: 'Prompt' as 'Prompt' | 'Assistant' | 'TTS' | 'STT' | 'Settings',
   promptSubview: 'Chat' as 'Chat' | 'History',
   settingsSubview: 'General' as 'General' | 'Quick Prompts' | 'MCP Servers',
 })
@@ -171,7 +172,7 @@ const { registerAppEvents } = useAppEvents({
   updateMessage: (id: string, patch: any) => { try { return !!updateMessage(id as any, patch) } catch { return false } },
   findServerById: (id: string) => mcp.findServerById(id),
   showToast,
-  setSection: (s: 'Prompt' | 'TTS' | 'STT' | 'Settings') => { ui.activeSection = s; if (s === 'Prompt') ui.promptSubview = 'Chat' },
+  setSection: (s: 'Prompt' | 'Assistant' | 'TTS' | 'STT' | 'Settings') => { ui.activeSection = s; if (s === 'Prompt') ui.promptSubview = 'Chat' },
 })
 
 async function saveSettings() { try { await saveSettingsNow() } catch {} }
@@ -300,7 +301,7 @@ function handleUseAsPrompt(text: string) {
   }
 }
 
-function setSection(s: 'Prompt' | 'TTS' | 'STT' | 'Settings') {
+function setSection(s: 'Prompt' | 'Assistant' | 'TTS' | 'STT' | 'Settings') {
   ui.activeSection = s
   if (s === 'Prompt') ui.promptSubview = 'Chat'
 }
@@ -389,6 +390,11 @@ async function autoConnectServers() {
               />
             </template>
           </template>
+
+          <div v-if="ui.activeSection === 'Assistant'" class="section">
+            <div class="section-title">Assistant Mode</div>
+            <AssistantMode :mcpServers="settings.mcp_servers" :notify="showToast" />
+          </div>
 
           <div v-show="ui.activeSection === 'TTS'" class="section">
             <div class="section-title">Text To Speech</div>

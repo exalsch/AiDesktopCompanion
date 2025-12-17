@@ -30,6 +30,11 @@ const settings = reactive({
   show_quick_prompt_result_in_popup: false as boolean,
   tokenizer_mode: 'approx' as 'approx' | 'tiktoken',
   stt_engine: 'openai' as 'openai' | 'local',
+  stt_local_model: 'whisper' as string,
+  stt_parakeet_has_cuda: false as boolean,
+  stt_cloud_base_url: 'https://api.openai.com' as string,
+  stt_cloud_model: 'whisper-1' as string,
+  stt_cloud_api_key: '' as string,
   // Local Whisper (STT) model config
   stt_whisper_model_preset: 'base' as string,
   stt_whisper_model_url: '' as string,
@@ -84,11 +89,18 @@ export function useSettings() {
         settings.tokenizer_mode = (tm === 'tiktoken') ? 'tiktoken' : 'approx'
       }
       if (Array.isArray(v.mcp_servers)) {
-        settings.mcp_servers = v.mcp_servers.map((s: any) => {
+        // Preserve runtime status and object identity for existing servers.
+        const existingById = new Map<string, any>(
+          Array.isArray(settings.mcp_servers) ? settings.mcp_servers.map((x: any) => [String(x?.id || ''), x]) : []
+        )
+        const next: any[] = []
+        for (const s of v.mcp_servers) {
+          const id = String(s?.id || '')
+          const prev = existingById.get(id)
           const envObj = normalizeEnvInput(s?.env)
           const envJsonStr = Object.keys(envObj).length ? JSON.stringify(envObj, null, 0) : '{ "LOG_LEVEL": "info" }'
-          return {
-            id: String(s.id || ''),
+          const config = {
+            id,
             transport: (s.transport === 'http' || s.transport === 'sse') ? 'http' : 'stdio',
             command: String(s.command || ''),
             args: Array.isArray(s.args) ? s.args.filter((x: any) => typeof x === 'string') : [],
@@ -98,23 +110,69 @@ export function useSettings() {
             envJson: envJsonStr,
             auto_connect: s.auto_connect === true,
             disabled_tools: Array.isArray(s.disabled_tools) ? s.disabled_tools.filter((x: any) => typeof x === 'string') : [],
-            status: 'disconnected',
-            connecting: false,
-            error: null as string | null,
-            tools: [],
-            toolsOpen: false,
-            selectedTool: '',
-            toolArgsJson: '{}',
-            toolArgsError: null as string | null,
-            toolResults: [] as Array<any>,
-            envError: null as string | null,
           }
-        })
+          if (prev) {
+            // Update config fields in place; preserve runtime fields like status/tools.
+            prev.id = config.id
+            prev.transport = config.transport
+            prev.command = config.command
+            prev.args = config.args
+            prev.argsText = config.argsText
+            prev.cwd = config.cwd
+            prev.env = config.env
+            prev.envJson = config.envJson
+            prev.auto_connect = config.auto_connect
+            prev.disabled_tools = config.disabled_tools
+            // Ensure required runtime fields exist
+            if (typeof prev.status !== 'string') prev.status = 'disconnected'
+            if (typeof prev.connecting !== 'boolean') prev.connecting = false
+            if (!('error' in prev)) prev.error = null
+            if (!Array.isArray(prev.tools)) prev.tools = []
+            if (typeof prev.toolsOpen !== 'boolean') prev.toolsOpen = false
+            if (typeof prev.selectedTool !== 'string') prev.selectedTool = ''
+            if (typeof prev.toolArgsJson !== 'string') prev.toolArgsJson = '{}'
+            if (!('toolArgsError' in prev)) prev.toolArgsError = null
+            if (!Array.isArray(prev.toolResults)) prev.toolResults = []
+            if (!('envError' in prev)) prev.envError = null
+            next.push(prev)
+          } else {
+            next.push({
+              ...config,
+              status: 'disconnected',
+              connecting: false,
+              error: null as string | null,
+              tools: [],
+              toolsOpen: false,
+              selectedTool: '',
+              toolArgsJson: '{}',
+              toolArgsError: null as string | null,
+              toolResults: [] as Array<any>,
+              envError: null as string | null,
+            })
+          }
+        }
+        // Replace array contents in place to preserve reactivity on the top-level ref
+        settings.mcp_servers.splice(0, settings.mcp_servers.length, ...next)
       }
       // STT engine selection (optional; default openai)
       if (typeof (v as any).stt_engine === 'string') {
         const se = String((v as any).stt_engine).toLowerCase()
         settings.stt_engine = (se === 'local') ? 'local' : 'openai'
+      }
+      if (typeof (v as any).stt_local_model === 'string' && String((v as any).stt_local_model).trim()) {
+        settings.stt_local_model = String((v as any).stt_local_model).trim()
+      }
+      if (typeof (v as any).stt_parakeet_has_cuda === 'boolean') {
+        settings.stt_parakeet_has_cuda = (v as any).stt_parakeet_has_cuda === true
+      }
+      if (typeof (v as any).stt_cloud_base_url === 'string' && String((v as any).stt_cloud_base_url).trim()) {
+        settings.stt_cloud_base_url = String((v as any).stt_cloud_base_url).trim()
+      }
+      if (typeof (v as any).stt_cloud_model === 'string' && String((v as any).stt_cloud_model).trim()) {
+        settings.stt_cloud_model = String((v as any).stt_cloud_model).trim()
+      }
+      if (typeof (v as any).stt_cloud_api_key === 'string') {
+        settings.stt_cloud_api_key = String((v as any).stt_cloud_api_key)
       }
       // Whisper model selection (optional)
       if (typeof (v as any).stt_whisper_model_preset === 'string') {

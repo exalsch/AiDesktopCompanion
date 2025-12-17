@@ -124,7 +124,7 @@ pub async fn prefetch_model_with_progress(app: tauri::AppHandle, url_opt: Option
   Ok(p)
 }
 
-fn decode_to_f32_mono_16k(audio: &[u8], _mime: &str) -> Result<Vec<f32>, String> {
+pub(crate) fn decode_to_f32_mono_16k(audio: &[u8], _mime: &str) -> Result<Vec<f32>, String> {
   // Decode container using Symphonia to interleaved f32 and track sample rate/channels
   let mss = MediaSourceStream::new(Box::new(std::io::Cursor::new(audio.to_vec())), Default::default());
   let hint = Hint::new();
