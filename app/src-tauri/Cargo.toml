@@ -2,7 +2,7 @@
 name = "AiDesktopCompanion"
 version = "0.1.4"
 description = "AiDesktopCompanion"
-authors = ["Alexander Schick"]
+authors = ["exlasch"]
 license = ""
 repository = ""
 edition = "2021"

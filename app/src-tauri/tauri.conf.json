@@ -73,7 +73,7 @@
     "targets": "all",    
     "windows": {
       "wix": {
-        "language": ["en-US", "de-DE"]
+        "language": ["en-US"]
       }
     },
     "icon": [
