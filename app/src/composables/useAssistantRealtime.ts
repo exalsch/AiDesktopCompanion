@@ -13,6 +13,7 @@ export interface AssistantRealtimeOptions {
 export interface ConnectParams {
   enableTools?: boolean
   useSupervisor?: boolean
+  supervisorMode?: 'always' | 'needed'
   // Session config
   model?: string
   voice?: string
@@ -29,6 +30,7 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
   const statusRef = ref<{ toolsCount: number, supervisor: boolean, temperature?: number, voice?: string, silenceMs?: number, idleMs?: number }>({ toolsCount: 0, supervisor: false })
   let remoteAudioEl: HTMLAudioElement | null = document.createElement('audio')
   let currentUseSupervisor = false
+  let currentSupervisorMode: 'always' | 'needed' = 'always'
   try {
     if (remoteAudioEl) {
       remoteAudioEl.autoplay = true
@@ -37,6 +39,42 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       remoteAudioEl.volume = 1.0
     }
   } catch {}
+
+  function shouldCallSupervisorForText(userText: string) {
+    const t = (userText || '').trim().toLowerCase()
+    if (!t) return false
+    if (t.length >= 220) return true
+
+    const keywords = [
+      'tool', 'tools', 'mcp', 'server', 'open', 'launch', 'run', 'execute',
+      'search', 'look up', 'browse', 'website', 'url', 'http',
+      'file', 'folder', 'directory',
+      'calendar', 'email', 'slack', 'teams',
+      'weather', 'news', 'stock', 'price',
+      'debug', 'error', 'stack trace', 'refactor', 'code'
+    ]
+    for (const k of keywords) {
+      if (t.includes(k)) return true
+    }
+    return false
+  }
+
+  function respondDirectlyViaRealtime(userText: string) {
+    try {
+      if (!eventsDc || eventsDc.readyState !== 'open') return
+      const payload = {
+        type: 'response.create',
+        response: {
+          modalities: ['audio', 'text'],
+          instructions: `Reply to the user's last message. The user said: """${userText}""" IMPORTANT: Always reply in the same language the user is speaking/writing. If you are unsure, reply in English. Do not switch languages unless the user clearly switches.`
+        }
+      }
+      eventsDc.send(JSON.stringify(payload))
+      opts.onLog?.('[supervisor-needed] realtime responded (no supervisor)')
+    } catch (e) {
+      try { opts.onLog?.('[supervisor-needed] realtime response.create failed: ' + (e as any)?.message) } catch {}
+    }
+  }
 
   async function supervisorRespond(userText: string) {
     try {
@@ -140,7 +178,7 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
             if (parsed?.type === 'session.updated') {
               try { opts.onLog?.('[session.updated] ' + JSON.stringify(parsed?.session || {})) } catch {}
             }
-            // Minimal supervisor orchestration: when a user message with text arrives, consult Prompt model and speak back.
+            // Supervisor orchestration: when a user message with text arrives, decide whether to call supervisor or let realtime respond.
             if (currentUseSupervisor && parsed?.type === 'conversation.item.created' && parsed?.item?.role === 'user') {
               const item = parsed.item
               const itemId = String(item?.id || '')
@@ -157,7 +195,11 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
                 if (userText && userText.trim()) {
                   handledUserItems.add(itemId)
                   try { opts.onLog?.(`[supervisor] handle user item ${itemId}, text: ${userText.slice(0, 120)}`) } catch {}
-                  supervisorRespond(userText).catch((e) => { try { opts.onLog?.('[supervisor] error in respond: ' + (e?.message || e)) } catch {} })
+                  if (currentSupervisorMode === 'needed' && !shouldCallSupervisorForText(userText)) {
+                    respondDirectlyViaRealtime(userText)
+                  } else {
+                    supervisorRespond(userText).catch((e) => { try { opts.onLog?.('[supervisor] error in respond: ' + (e?.message || e)) } catch {} })
+                  }
                 }
               }
             }
@@ -168,7 +210,11 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
               if (itemId && transcript && !handledUserItems.has(itemId)) {
                 handledUserItems.add(itemId)
                 try { opts.onLog?.(`[supervisor] transcript ready for ${itemId}: ${transcript.slice(0, 120)}`) } catch {}
-                supervisorRespond(transcript).catch((e) => { try { opts.onLog?.('[supervisor] error in respond: ' + (e?.message || e)) } catch {} })
+                if (currentSupervisorMode === 'needed' && !shouldCallSupervisorForText(transcript)) {
+                  respondDirectlyViaRealtime(transcript)
+                } else {
+                  supervisorRespond(transcript).catch((e) => { try { opts.onLog?.('[supervisor] error in respond: ' + (e?.message || e)) } catch {} })
+                }
               }
             }
           } catch {}
@@ -239,6 +285,7 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       if (!eventsDc || eventsDc.readyState !== 'open') return
       // Store supervisor flag for event handlers
       currentUseSupervisor = params.useSupervisor === true
+      currentSupervisorMode = (params.supervisorMode === 'needed') ? 'needed' : 'always'
 
       // Prefer backend to mirror Prompt section MCP tool filtering/settings
       let tools: any[] = []
@@ -365,9 +412,6 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     } catch {}
     pcRef.value = null
     try { if (remoteAudioEl) (remoteAudioEl as any).srcObject = null } catch {}
-    try { if (audioSrc) { audioSrc.disconnect(); audioSrc = null } } catch {}
-    try { if (audioGain) { audioGain.disconnect(); audioGain = null } } catch {}
-    try { if (audioCtx) { await audioCtx.close(); audioCtx = null } } catch {}
     try { opts.onDisconnected?.() } catch {}
   }
 

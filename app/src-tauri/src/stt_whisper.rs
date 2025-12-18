@@ -18,7 +18,7 @@ static DEFAULT_MODEL_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/r
 
 static CLIENT: Lazy<reqwest::Client> = Lazy::new(|| reqwest::Client::new());
 
-fn models_dir() -> Option<PathBuf> {
+pub(crate) fn models_dir() -> Option<PathBuf> {
   #[cfg(target_os = "windows")]
   {
     if let Ok(appdata) = std::env::var("APPDATA") {
@@ -44,8 +44,25 @@ fn models_dir() -> Option<PathBuf> {
   }
 }
 
-fn file_name_from_url(url: &str) -> String {
-  url.split('/').last().filter(|s| !s.is_empty()).unwrap_or("ggml-base.bin").to_string()
+pub(crate) fn file_name_from_url(url: &str) -> String {
+  let u = url.split('?').next().unwrap_or(url);
+  u.split('/').last().filter(|s| !s.is_empty()).unwrap_or("ggml-base.bin").to_string()
+}
+
+pub fn local_model_status(url: String) -> Result<(bool, String, Vec<String>), String> {
+  let dir = models_dir().ok_or_else(|| "Unsupported platform for model path".to_string())?;
+  let file_name = file_name_from_url(&url);
+  let path = dir.join(&file_name);
+  let p = path.to_string_lossy().to_string();
+  if !path.exists() {
+    return Ok((false, p, vec![file_name]));
+  }
+  if let Ok(md) = fs::metadata(&path) {
+    if md.len() > 10 * 1024 * 1024 {
+      return Ok((true, p, Vec::new()));
+    }
+  }
+  Ok((false, p, vec![file_name]))
 }
 
 async fn ensure_model_file() -> Result<PathBuf, String> {

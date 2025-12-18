@@ -94,6 +94,8 @@ pub fn run() {
       stt_transcribe,
       stt_prefetch_whisper_model,
       stt_prefetch_parakeet_model,
+      stt_check_parakeet_cuda,
+      stt_local_model_status,
       chat_complete,
       quick_actions::insert_text_into_focused_app,
       quick_actions::insert_prompt_text,
@@ -147,6 +149,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex as AsyncMutex;
 use arboard::Clipboard;
 use enigo::{Enigo, Key, KeyboardControllable};
+use serde::Serialize;
 
 pub mod tts_streaming_server;
 mod utils;
@@ -418,7 +421,7 @@ async fn transcribe_local_wrapper(audio: Vec<u8>, mime: String) -> Result<String
   let t = lm.trim().to_lowercase();
   if t.contains("parakeet") {
     let has_cuda = config::get_stt_parakeet_has_cuda_from_settings_or_env();
-    stt_parakeet::transcribe_local(audio, mime, has_cuda).await
+    stt_parakeet::transcribe_local(audio, mime, has_cuda, lm).await
   } else {
     stt_whisper::transcribe_local(audio, mime).await
   }
@@ -461,8 +464,58 @@ async fn stt_prefetch_whisper_model(app: tauri::AppHandle, url: Option<String>) 
 }
 
 #[tauri::command]
-async fn stt_prefetch_parakeet_model(app: tauri::AppHandle) -> Result<String, String> {
-  stt_parakeet::prefetch_model_with_progress(app).await
+async fn stt_prefetch_parakeet_model(app: tauri::AppHandle, local_model: Option<String>) -> Result<String, String> {
+  let lm = local_model.unwrap_or_else(|| config::get_stt_local_model_from_settings_or_env());
+  stt_parakeet::prefetch_model_with_progress(app, lm).await
+}
+
+#[derive(Serialize)]
+struct SttCudaCheckResult {
+  ok: bool,
+  message: String,
+}
+
+#[tauri::command]
+fn stt_check_parakeet_cuda() -> Result<SttCudaCheckResult, String> {
+  match stt_parakeet::check_cuda_available() {
+    Ok(()) => Ok(SttCudaCheckResult {
+      ok: true,
+      message: "CUDA is available for Parakeet.".to_string(),
+    }),
+    Err(e) => Ok(SttCudaCheckResult { ok: false, message: e }),
+  }
+}
+
+#[derive(Serialize)]
+struct SttLocalModelStatusResult {
+  downloaded: bool,
+  path: String,
+  missing: Vec<String>,
+}
+
+#[tauri::command]
+fn stt_local_model_status(
+  local_model: String,
+  whisper_url: Option<String>,
+  parakeet_has_cuda: Option<bool>,
+) -> Result<SttLocalModelStatusResult, String> {
+  let t = local_model.trim().to_lowercase();
+  if t.contains("parakeet") {
+    let has_cuda = parakeet_has_cuda.unwrap_or_else(|| config::get_stt_parakeet_has_cuda_from_settings_or_env());
+    let (downloaded, path, missing) = stt_parakeet::local_model_status(local_model, has_cuda)?;
+    Ok(SttLocalModelStatusResult { downloaded, path, missing })
+  } else {
+    let url = whisper_url
+      .and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
+      .unwrap_or_else(|| config::load_settings_json().get("stt_whisper_model_url").and_then(|x| x.as_str()).unwrap_or("").to_string());
+    let url = if url.trim().is_empty() {
+      std::env::var("AIDC_WHISPER_MODEL_URL").unwrap_or_else(|_| "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin".to_string())
+    } else {
+      url
+    };
+    let (downloaded, path, missing) = stt_whisper::local_model_status(url)?;
+    Ok(SttLocalModelStatusResult { downloaded, path, missing })
+  }
 }
 
 // ---------------------------

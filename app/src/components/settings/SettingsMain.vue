@@ -2,13 +2,14 @@
 import SettingsGeneral from './SettingsGeneral.vue'
 import SettingsMcpServers from './SettingsMcpServers.vue'
 import SettingsQuickPrompts from './SettingsQuickPrompts.vue'
+import SettingsSpeechToText from './SettingsSpeechToText.vue'
 import { onMounted, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 
 const props = defineProps<{
   settings: any
   models: any
-  settingsSubview: 'General' | 'Quick Prompts' | 'MCP Servers'
+  settingsSubview: 'General' | 'Speech To Text' | 'Quick Prompts' | 'MCP Servers'
   onSave: (map?: any) => any
   onRefreshModels: () => any
   onClearConversations: () => any
@@ -52,6 +53,11 @@ watch(() => props.settingsSubview, (sub) => { if (sub === 'MCP Servers') { refre
       :onSave="props.onSave"
       :onRefreshModels="props.onRefreshModels"
       :onClearConversations="props.onClearConversations"
+    />
+
+    <SettingsSpeechToText
+      v-else-if="props.settingsSubview === 'Speech To Text'"
+      :settings="props.settings"
     />
 
     <SettingsQuickPrompts

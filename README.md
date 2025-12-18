@@ -1,14 +1,31 @@
 # AiDesktopCompanion
-### Local STT (Whisper)
 
-- Select Local (Whisper) in Settings → Speech To Text.
-- Choose a model preset or paste a custom URL to a `ggml-*.bin` file.
-- Click “Prefetch Whisper model” to download with a progress indicator.
-- Models are stored at `%APPDATA%/AiDesktopCompanion/models/whisper/` using the file name derived from the URL, allowing multiple models to co‑exist.
-- The app transcodes microphone recordings to WAV 16 kHz mono on the frontend to maximize backend compatibility.
+A Windows-first desktop AI companion built with Vue 3 + Vite and Tauri 2.
 
+It’s designed around a fast **Quick Actions** popup that can capture your current selection (or typed text), run an AI action (prompt/STT/TTS), and then reliably insert the result back into the **currently focused application**.
 
-A Windows-first desktop companion built with Vue 3 + Vite and Tauri 2. It provides fast "Quick Actions" for Prompting, Text‑to‑Speech (TTS), Speech‑to‑Text (STT), and an Image capture overlay.
+## Highlights
+
+- **Quick Actions popup** for prompt + STT + TTS + image capture
+- **Prompt-to-insertion workflow** (aggressive clipboard copy/restore) for pasting the final answer into the active app
+- **Speech-to-Text (STT)**
+  - Local (on-device): Whisper (ggml) or Parakeet V2 (ONNX, optional CUDA)
+  - Cloud: any OpenAI-compatible endpoint (`POST /v1/audio/transcriptions`)
+- **Text-to-Speech (TTS)**
+  - Local: Windows voices (System.Speech)
+  - Cloud: OpenAI TTS (optional streaming playback)
+- **MCP servers**: connect to tools over `stdio` or HTTP and run them from chat
+
+## Local Speech-to-Text (STT): Whisper + Parakeet (on-device)
+
+- In Settings → Speech To Text, set **Engine** to **Local (on-device)**.
+- Choose **Local Engine Model**:
+  - **Whisper**: pick a model preset and download the `ggml-*.bin` file.
+  - **Parakeet V2**: download the ONNX model files (optional CUDA if available).
+- Model cache folders (Windows):
+  - Whisper: `%APPDATA%/AiDesktopCompanion/models/whisper/`
+  - Parakeet: `%APPDATA%/AiDesktopCompanion/models/parakeet/parakeet-tdt-0.6b-v2/`
+- The frontend transcodes microphone recordings to WAV 16 kHz mono to maximize backend compatibility.
 
 
 ## Repository layout
@@ -29,7 +46,7 @@ A Windows-first desktop companion built with Vue 3 + Vite and Tauri 2. It provid
 - Microsoft Edge WebView2 Runtime (usually preinstalled)
 - Tauri prerequisites for Windows: https://tauri.app/start/prerequisites/
 
-Optional for Local STT (Whisper):
+Optional for Local STT (Whisper/Parakeet):
 
 - CMake (needed by some audio crates)
 - LLVM/Clang for bindgen (required to build whisper-rs on Windows)
@@ -58,23 +75,17 @@ npm ci   # or: npm install
 ```powershell
 # from the repository root
 cd app
-npm run tauri dev
-```
-
-- Run with Local STT (Whisper) enabled:
-
-```powershell
-# from the repository root
-cd app
-npm run tauri -- dev --features local-stt
+npm run tauri -- dev
 ```
 
 Notes (Local STT):
 
-- On first transcription, the app downloads the selected Whisper model (`ggml-*.bin`) into `%APPDATA%/AiDesktopCompanion/models/whisper/`.
-- In Settings → Speech To Text, you can pick a preset (e.g., `base.en`, `small`, `medium`, `large-v3`) and use the “Prefetch Whisper model” button to download in advance with a progress indicator.
-- You can override the model URL via `settings.stt_whisper_model_url` or environment `AIDC_WHISPER_MODEL_URL`.
-
+- Whisper stores downloaded `ggml-*.bin` models under `%APPDATA%/AiDesktopCompanion/models/whisper/`.
+- Parakeet stores downloaded ONNX model files under `%APPDATA%/AiDesktopCompanion/models/parakeet/parakeet-tdt-0.6b-v2/`.
+- In Settings → Speech To Text:
+  - Whisper: pick a preset (e.g., `base.en`, `small`, `medium`, `large-v3`) and use the Download button.
+  - Parakeet: click Download and optionally enable CUDA (it will auto-disable if CUDA isn’t available).
+- You can override the Whisper model URL via `settings.stt_whisper_model_url` or environment `AIDC_WHISPER_MODEL_URL`.
 - Run only the web dev server (for UI-only iteration):
 
 ```powershell
@@ -90,19 +101,13 @@ npm run dev
 npm run build
 ```
 
-- Build the packaged desktop app:
+- Build the packaged desktop app with Local STT enabled (default):
 
 ```powershell
-npm run tauri build
+npm run tauri -- build
 ```
 
 Artifacts are produced under `app/src-tauri/target/` (e.g. `release/`).
-
-- Build the packaged desktop app with Local STT (Whisper):
-
-```powershell
-npm run tauri -- build --features local-stt
-```
 
 When shipping Local STT, ensure your users meet the Windows prerequisites (LLVM/Clang etc.) noted above.
 
@@ -188,6 +193,7 @@ Release notes:
   - TTS (open TTS panel with selection)
   - Speech-to-Text push‑to‑talk (hold S / mouse, release to transcribe)
   - Image capture overlay
+- MCP server connections (tool discovery + tool calls from chat)
 - Aggressive clipboard copy‑restore for reliable text insertion
 - Auto‑sizing popup and robust window focus management
 
@@ -205,7 +211,7 @@ Release notes:
 - Path issues in PowerShell:
   - Use quotes around paths with spaces and prefer running from the project root + `cd app`.
 
-Local STT (Whisper) tips:
+Local STT (Whisper/Parakeet) tips:
 
 - Bindgen/Clang errors while compiling `whisper-rs`:
   - Install LLVM via `winget install -e --id LLVM.LLVM` and set `LIBCLANG_PATH` to `C:\\Program Files\\LLVM\\bin`.

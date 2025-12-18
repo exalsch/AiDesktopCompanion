@@ -44,7 +44,7 @@ const ui = reactive({
   sections: ['Prompt', 'Assistant', 'TTS', 'STT', 'Settings'] as const,
   activeSection: 'Prompt' as 'Prompt' | 'Assistant' | 'TTS' | 'STT' | 'Settings',
   promptSubview: 'Chat' as 'Chat' | 'History',
-  settingsSubview: 'General' as 'General' | 'Quick Prompts' | 'MCP Servers',
+  settingsSubview: 'General' as 'General' | 'Speech To Text' | 'Quick Prompts' | 'MCP Servers',
 })
 
 // Layout state for sidebar

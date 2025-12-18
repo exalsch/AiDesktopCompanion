@@ -5,7 +5,7 @@ const props = defineProps<{
   sections: ReadonlyArray<'Prompt' | 'Assistant' | 'TTS' | 'STT' | 'Settings'>
   activeSection: 'Prompt' | 'Assistant' | 'TTS' | 'STT' | 'Settings'
   promptSubview: 'Chat' | 'History'
-  settingsSubview: 'General' | 'Quick Prompts' | 'MCP Servers'
+  settingsSubview: 'General' | 'Speech To Text' | 'Quick Prompts' | 'MCP Servers'
   sidebarOpen: boolean
   busy: boolean
 }>()
@@ -14,7 +14,7 @@ const emit = defineEmits<{
   (e: 'toggle-sidebar'): void
   (e: 'set-section', section: 'Prompt' | 'Assistant' | 'TTS' | 'STT' | 'Settings'): void
   (e: 'open-history'): void
-  (e: 'set-settings-subview', sub: 'General' | 'Quick Prompts' | 'MCP Servers'): void
+  (e: 'set-settings-subview', sub: 'General' | 'Speech To Text' | 'Quick Prompts' | 'MCP Servers'): void
 }>()
 </script>
 
@@ -111,6 +111,22 @@ const emit = defineEmits<{
         </svg>
         <span v-if="props.sidebarOpen">General</span>
       </button>
+
+      <button
+        v-if="s === 'Settings'"
+        class="side-subtab"
+        :class="{ active: props.activeSection === 'Settings' && props.settingsSubview === 'Speech To Text' }"
+        @click="$emit('set-settings-subview', 'Speech To Text')"
+        title="Speech To Text"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+          <line x1="12" x2="12" y1="19" y2="22"/>
+        </svg>
+        <span v-if="props.sidebarOpen">Speech To Text</span>
+      </button>
+
       <button
         v-if="s === 'Settings'"
         class="side-subtab"

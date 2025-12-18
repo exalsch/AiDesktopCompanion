@@ -65,9 +65,9 @@ jobs:
         working-directory: app
         run: npm ci
 
-      - name: Build Tauri app (Windows release, local-stt)
+      - name: Build Tauri app (Windows release)
         working-directory: app
-        run: npm run tauri -- build --features local-stt
+        run: npm run tauri -- build
 
       - name: Generate release notes (Conventional Commits)
         id: changelog
