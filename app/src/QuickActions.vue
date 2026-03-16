@@ -356,7 +356,14 @@ async function stopSTTAndTranscribe(): Promise<void> {
         payloadBytes = new Uint8Array(await blob.arrayBuffer())
         payloadMime = mime
       }
-      text = await invoke<string>('stt_transcribe', { audio: Array.from(payloadBytes), mime: payloadMime })
+      const sttResult = await invoke<any>('stt_transcribe', { audio: Array.from(payloadBytes), mime: payloadMime })
+      if (typeof sttResult === 'string') {
+        text = sttResult
+      } else if (sttResult && typeof sttResult === 'object') {
+        text = String((sttResult as any).final_text || '')
+      } else {
+        text = ''
+      }
     } catch (err) {
       const msg = typeof err === 'string' ? err : (err && (err as any).message) ? (err as any).message : 'Unknown STT error'
       console.error('[stt] transcribe failed:', msg, err)
