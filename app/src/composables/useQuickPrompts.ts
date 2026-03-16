@@ -1,5 +1,6 @@
 import { computed, reactive, ref } from 'vue'
 import type { Ref } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
 
 export function useQuickPrompts(composerInput: Ref<string>, composerRef: Ref<any>) {
   // Quick Prompts state (read-only for main UI)
@@ -11,8 +12,6 @@ export function useQuickPrompts(composerInput: Ref<string>, composerRef: Ref<any
 
   async function loadQuickPrompts() {
     try {
-      // Lazy import to avoid tight coupling with tauri core here
-      const { invoke } = await import('@tauri-apps/api/core')
       const data = await invoke<any>('get_quick_prompts')
       for (let i = 1; i <= 9; i++) {
         const k = String(i)

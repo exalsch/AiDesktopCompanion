@@ -438,19 +438,43 @@ async fn transcribe_local_wrapper(_audio: Vec<u8>, _mime: String) -> Result<Stri
   Err("Local STT is not available: app built without 'local-stt' feature.".into())
 }
 
-async fn maybe_post_process_stt_text(text: String) -> Result<String, String> {
+struct SttPostProcessOutcome {
+  final_text: String,
+  applied: bool,
+  error: Option<String>,
+}
+
+async fn maybe_post_process_stt_text(text: String) -> SttPostProcessOutcome {
+  let original = text.clone();
   if !config::get_stt_post_process_enabled_from_settings_or_env() {
-    return Ok(text);
+    return SttPostProcessOutcome {
+      final_text: original,
+      applied: false,
+      error: None,
+    };
   }
 
   let input = text.trim().to_string();
   if input.is_empty() {
-    return Ok(text);
+    return SttPostProcessOutcome {
+      final_text: original,
+      applied: false,
+      error: Some("STT post-processing skipped: transcript is empty.".to_string()),
+    };
   }
 
   let key = match config::get_api_key_from_settings_or_env() {
     Ok(v) => v,
-    Err(_) => return Ok(text),
+    Err(_) => match config::get_stt_cloud_api_key_from_settings_or_env() {
+      Some(v) => v,
+      None => {
+        return SttPostProcessOutcome {
+          final_text: original,
+          applied: false,
+          error: Some("STT post-processing skipped: API key not configured (openai_api_key/OPENAI_API_KEY or stt_cloud_api_key).".to_string()),
+        };
+      }
+    },
   };
   let model = config::get_stt_post_process_model_from_settings_or_env();
   let prompt = config::get_stt_post_process_prompt_from_settings_or_env();
@@ -466,8 +490,7 @@ async fn maybe_post_process_stt_text(text: String) -> Result<String, String> {
         "role": "user",
         "content": input
       }
-    ],
-    "temperature": 0
+    ]
   });
 
   let client = reqwest::Client::new();
@@ -479,16 +502,40 @@ async fn maybe_post_process_stt_text(text: String) -> Result<String, String> {
     .await
   {
     Ok(v) => v,
-    Err(_) => return Ok(text),
+    Err(e) => {
+      return SttPostProcessOutcome {
+        final_text: original,
+        applied: false,
+        error: Some(format!("STT post-processing request failed: {e}")),
+      };
+    }
   };
 
   if !resp.status().is_success() {
-    return Ok(text);
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    let detail = body.trim().chars().take(300).collect::<String>();
+    let suffix = if detail.is_empty() {
+      String::new()
+    } else {
+      format!(" - {detail}")
+    };
+    return SttPostProcessOutcome {
+      final_text: original,
+      applied: false,
+      error: Some(format!("STT post-processing API error ({status}){suffix}")),
+    };
   }
 
   let v: serde_json::Value = match resp.json().await {
     Ok(v) => v,
-    Err(_) => return Ok(text),
+    Err(e) => {
+      return SttPostProcessOutcome {
+        final_text: original,
+        applied: false,
+        error: Some(format!("STT post-processing response parse failed: {e}")),
+      };
+    }
   };
   let cleaned = v
     .get("choices")
@@ -501,16 +548,32 @@ async fn maybe_post_process_stt_text(text: String) -> Result<String, String> {
     .to_string();
 
   if cleaned.is_empty() {
-    Ok(text)
+    SttPostProcessOutcome {
+      final_text: original,
+      applied: false,
+      error: Some("STT post-processing returned empty output.".to_string()),
+    }
   } else {
-    Ok(cleaned)
+    SttPostProcessOutcome {
+      final_text: cleaned,
+      applied: true,
+      error: None,
+    }
   }
+}
+
+#[derive(Serialize)]
+struct SttTranscriptionResult {
+  original_text: String,
+  final_text: String,
+  post_process_applied: bool,
+  post_process_error: Option<String>,
 }
 
 /// Transcribe audio bytes. Engine is selected via settings (`stt_engine`: "openai" | "local").
 /// Local engine uses whisper-rs with an auto-downloaded ggml model.
 #[tauri::command]
-async fn stt_transcribe(audio: Vec<u8>, mime: String) -> Result<String, String> {
+async fn stt_transcribe(audio: Vec<u8>, mime: String) -> Result<SttTranscriptionResult, String> {
   let engine = config::get_stt_engine_from_settings_or_env();
   let transcript = if engine == "local" {
     transcribe_local_wrapper(audio, mime).await?
@@ -531,7 +594,16 @@ async fn stt_transcribe(audio: Vec<u8>, mime: String) -> Result<String, String> 
     stt::transcribe(key_opt, base_url, model, audio, mime).await?
   };
 
-  maybe_post_process_stt_text(transcript).await
+  let original_text = transcript.trim().to_string();
+  let post_processed = maybe_post_process_stt_text(transcript).await;
+  let final_text = post_processed.final_text.trim().to_string();
+
+  Ok(SttTranscriptionResult {
+    original_text,
+    final_text,
+    post_process_applied: post_processed.applied,
+    post_process_error: post_processed.error,
+  })
 }
 
 /// Prefetch Whisper model to the local models folder and emit progress via `stt-model-download` events.

@@ -11,4 +11,18 @@ export default defineConfig({
   optimizeDeps: {
     include: [],
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return
+          if (id.includes('@dqbd/tiktoken')) return 'vendor-tiktoken'
+          if (id.includes('markdown-it')) return 'vendor-markdown'
+          if (id.includes('highlight.js')) return 'vendor-highlight'
+          if (id.includes('dompurify')) return 'vendor-dompurify'
+          if (id.includes('@tauri-apps')) return 'vendor-tauri'
+        },
+      },
+    },
+  },
 })

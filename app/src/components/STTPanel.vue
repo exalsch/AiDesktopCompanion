@@ -6,6 +6,13 @@ import { useSettings } from '../composables/useSettings'
 import { estimateTextTokens, formatTokenInfo } from '../composables/useTokenEstimate'
 import { tokenizerReady } from '../composables/useTokenizer'
 
+type SttTranscriptionResult = {
+  original_text: string
+  final_text: string
+  post_process_applied?: boolean
+  post_process_error?: string | null
+}
+
 const emit = defineEmits<{
   (e: 'use-as-prompt', text: string): void
   (e: 'busy', v: boolean): void
@@ -16,7 +23,10 @@ const props = defineProps<{ notify?: (msg: string, kind?: 'error' | 'success', m
 const state = reactive({
   recording: false,
   mime: '' as string,
+  originalTranscript: '' as string,
   transcript: '' as string,
+  postProcessApplied: false,
+  postProcessError: '' as string,
   busy: false,
   error: '' as string,
 })
@@ -27,7 +37,10 @@ async function onRecordToggle() {
       await startRecording('audio/webm;codecs=opus')
       state.recording = true
       state.error = ''
+      state.originalTranscript = ''
       state.transcript = ''
+      state.postProcessApplied = false
+      state.postProcessError = ''
       props.notify?.('Recording… click Stop to transcribe.', 'success', 1500)
     } else {
       const res = await stopRecording()
@@ -69,8 +82,15 @@ async function transcribeBlob(blob: Blob, mime: string) {
       payloadBytes = new Uint8Array(arrayBuffer)
     }
     const bytes = Array.from(payloadBytes)
-    const text: string = await invoke('stt_transcribe', { audio: bytes, mime: payloadMime })
-    state.transcript = (text || '').trim()
+    const result: SttTranscriptionResult = await invoke('stt_transcribe', { audio: bytes, mime: payloadMime })
+    state.originalTranscript = String(result?.original_text || '').trim()
+    state.transcript = String(result?.final_text || '').trim()
+    state.postProcessApplied = result?.post_process_applied === true
+    state.postProcessError = String(result?.post_process_error || '').trim()
+
+    if (settings.stt_post_process_enabled && state.postProcessError) {
+      props.notify?.(state.postProcessError, 'error', 4200)
+    }
     if (!state.transcript) props.notify?.('No transcription returned', 'error')
   } catch (e: any) {
     const msg = e?.message || String(e) || 'Transcription failed'
@@ -107,6 +127,13 @@ const sttTextTokens = computed(() => {
   return estimateTextTokens(state.transcript || '', sttModelName.value, tokenizerMode.value).tokens
 })
 const sttTokenHint = computed(() => formatTokenInfo([{ label: 'text', tokens: sttTextTokens.value }]))
+const showOriginalTranscript = computed(() => settings.stt_post_process_enabled && !!state.originalTranscript)
+const postProcessStatusHint = computed(() => {
+  if (!settings.stt_post_process_enabled || !state.transcript) return ''
+  if (state.postProcessError) return `Post-processing error: ${state.postProcessError}`
+  if (state.postProcessApplied) return 'Post-processing applied.'
+  return 'Post-processing enabled, but no changes were applied.'
+})
 </script>
 
 <template>
@@ -122,8 +149,14 @@ const sttTokenHint = computed(() => formatTokenInfo([{ label: 'text', tokens: st
     <div v-if="state.error" class="hint error">{{ state.error }}</div>
 
     <div class="row" v-if="state.transcript">
+      <template v-if="showOriginalTranscript">
+        <label class="label">Original Transcript</label>
+        <textarea :value="state.originalTranscript" rows="5" readonly />
+      </template>
+
       <label class="label">Transcript</label>
       <textarea :value="state.transcript" rows="6" readonly />
+      <div v-if="postProcessStatusHint" class="hint" :class="{ error: !!state.postProcessError }">{{ postProcessStatusHint }}</div>
       <div class="hint">{{ sttTokenHint }}</div>
       <div class="row inline">
         <button class="btn" @click="onCopy">Copy</button>
@@ -138,7 +171,7 @@ const sttTokenHint = computed(() => formatTokenInfo([{ label: 'text', tokens: st
 .row { display: flex; flex-direction: column; gap: 6px; }
 .row.inline { flex-direction: row; align-items: center; gap: 10px; flex-wrap: wrap; }
 .label { font-size: 12px; color: #c8c9d3; }
-textarea { width: 100%; resize: vertical; min-height: 140px; padding: 8px; border-radius: 8px; border: 1px solid #3a3a44; background: #14141a; color: #e0e0ea; }
+textarea { width: 100%; resize: vertical; min-height: 140px; padding: 8px; border-radius: 8px; border: 1px solid #3a3a44; background: #14141a; color: #e0e0ea; box-sizing: border-box; }
 .btn { padding: 8px 12px; border-radius: 8px; border: 1px solid #3a3a44; background: #2e5cff; color: #fff; cursor: pointer; }
 .btn.danger { background: #a42828; border-color: #7c1f1f; }
 .hint { font-size: 12px; color: #9fa0aa; white-space: pre-line; }
