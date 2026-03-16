@@ -20,6 +20,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::tts_streaming_server::TtsStreamingServer;
 
+const OPENAI_TTS_MAX_INPUT_CHARS: usize = 3500;
+
 // Audio decode helpers moved to tts_utils
 
 // ---------------------------
@@ -302,11 +304,23 @@ pub async fn openai_synthesize_file(
   volume: Option<u8>,
   instructions: Option<String>,
 ) -> Result<String, String> {
+  let text = text.trim().to_string();
+  if text.is_empty() {
+    return Err("Text is empty".into());
+  }
+  if text.len() > OPENAI_TTS_MAX_INPUT_CHARS {
+    return Err(format!("Text exceeds OpenAI TTS limit of {} characters", OPENAI_TTS_MAX_INPUT_CHARS));
+  }
+
   let fmt_in = format.unwrap_or_else(|| "wav".to_string());
-  let (accept, body_format) = match fmt_in.as_str() { "mp3" => ("audio/mpeg", "mp3"), "opus" => ("audio/ogg", "opus"), _ => ("audio/wav", "wav") };
+  let (accept, body_format) = match fmt_in.as_str() {
+    "mp3" => ("audio/mpeg", "mp3"),
+    "opus" => ("audio/ogg", "opus"),
+    _ => ("audio/wav", "wav"),
+  };
   let m = model.unwrap_or_else(|| "gpt-4o-mini-tts".to_string());
   let v = voice.unwrap_or_else(|| "alloy".to_string());
-  // Build JSON body; include instructions if provided & non-empty
+  let client = reqwest::Client::new();
   let mut body_obj = serde_json::Map::new();
   body_obj.insert("model".to_string(), serde_json::Value::String(m));
   body_obj.insert("input".to_string(), serde_json::Value::String(text));
@@ -318,22 +332,54 @@ pub async fn openai_synthesize_file(
     }
   }
   let body = serde_json::Value::Object(body_obj);
-  let client = reqwest::Client::new();
+
   let resp = client
     .post("https://api.openai.com/v1/audio/speech")
-    .bearer_auth(key)
+    .bearer_auth(&key)
     .header("Accept", accept)
     .json(&body)
     .send()
     .await
     .map_err(|e| format!("request failed: {e}"))?;
-  if !resp.status().is_success() { let status = resp.status(); let body_text = resp.text().await.unwrap_or_default(); return Err(format!("OpenAI error: {status} {body_text}")); }
-  let ct_hdr = resp.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("");
-  let ext = if ct_hdr.contains("wav") { "wav" } else if ct_hdr.contains("mpeg") || ct_hdr.contains("mp3") { "mp3" } else if ct_hdr.contains("ogg") { "ogg" } else if ct_hdr.contains("opus") { "opus" } else if fmt_in == "mp3" { "mp3" } else if fmt_in == "opus" { "opus" } else { "wav" };
+
+  if !resp.status().is_success() {
+    let status = resp.status();
+    let body_text = resp.text().await.unwrap_or_default();
+    return Err(format!("OpenAI error: {status} {body_text}"));
+  }
+
+  let ct_hdr = resp
+    .headers()
+    .get(reqwest::header::CONTENT_TYPE)
+    .and_then(|v| v.to_str().ok())
+    .unwrap_or("");
+  let ext = if ct_hdr.contains("wav") {
+    "wav"
+  } else if ct_hdr.contains("mpeg") || ct_hdr.contains("mp3") {
+    "mp3"
+  } else if ct_hdr.contains("ogg") {
+    "ogg"
+  } else if ct_hdr.contains("opus") {
+    "opus"
+  } else if fmt_in == "mp3" {
+    "mp3"
+  } else if fmt_in == "opus" {
+    "opus"
+  } else {
+    "wav"
+  };
+
   let file_name = format!("aidc_tts_{}_openai.{}", chrono::Local::now().format("%Y%m%d_%H%M%S"), ext);
   let mut path = std::env::temp_dir(); path.push(file_name); let target = path.to_string_lossy().to_string();
-  let bytes = resp.bytes().await.map_err(|e| format!("bytes error: {e}"))?;
-  if ext == "wav" { let r = rate.unwrap_or(0).clamp(-10, 10); let vol = volume.unwrap_or(100).min(100); write_pcm16_wav_from_any(&bytes, &target, r, vol)?; } else { std::fs::write(&target, &bytes).map_err(|e| format!("write failed: {e}"))?; }
+  let bytes_to_write = resp.bytes().await.map_err(|e| format!("bytes error: {e}"))?;
+
+  if ext == "wav" {
+    let r = rate.unwrap_or(0).clamp(-10, 10);
+    let vol = volume.unwrap_or(100).min(100);
+    write_pcm16_wav_from_any(&bytes_to_write, &target, r, vol)?;
+  } else {
+    std::fs::write(&target, &bytes_to_write).map_err(|e| format!("write failed: {e}"))?;
+  }
   Ok(target)
 }
 

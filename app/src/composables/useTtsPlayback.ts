@@ -4,6 +4,8 @@ import type { Ref } from 'vue'
 
 export interface NotifyFn { (msg: string, kind?: 'error' | 'success', ms?: number): void }
 
+export const OPENAI_TTS_MAX_INPUT_CHARS = 3500
+
 export function useTtsPlayback(notify?: NotifyFn) {
   const engine = ref<'local' | 'openai'>('local')
 
@@ -30,8 +32,21 @@ export function useTtsPlayback(notify?: NotifyFn) {
   const streamSessionUrl = ref('')
   let streamSessionId: string | null = null
 
+  function validateTtsInput(): boolean {
+    const text = form.text.trim()
+    if (!text) {
+      notify?.('Enter some text to speak', 'error')
+      return false
+    }
+    if (engine.value === 'openai' && text.length > OPENAI_TTS_MAX_INPUT_CHARS) {
+      notify?.(`OpenAI TTS input is limited to ${OPENAI_TTS_MAX_INPUT_CHARS} characters.`, 'error')
+      return false
+    }
+    return true
+  }
+
   async function onPlay() {
-    if (!form.text.trim()) { notify?.('Enter some text to speak', 'error'); return }
+    if (!validateTtsInput()) { return }
     try {
       if (engine.value === 'local') {
         await invoke('tts_start', { text: form.text, voice: form.voice || null, rate: form.rate, volume: form.volume })
@@ -58,11 +73,56 @@ export function useTtsPlayback(notify?: NotifyFn) {
           requestAnimationFrame(() => {
             const a = playerRef.value
             if (a) {
+              let fallbackTried = false
+              const tryWavFallback = async (): Promise<boolean> => {
+                if (fallbackTried) return false
+                fallbackTried = true
+                try {
+                  const fallbackPath = await invoke<string>('tts_openai_synthesize_file', {
+                    text: form.text,
+                    voice: form.openaiVoice || 'alloy',
+                    model: form.openaiModel || 'gpt-4o-mini-tts',
+                    format: 'wav',
+                    rate: form.rate,
+                    volume: form.volume,
+                    instructions: form.openaiInstructions || null,
+                  })
+                  const oldPath = lastPlayTempPath.value
+                  wavPath.value = fallbackPath
+                  wavSrc.value = convertFileSrc(fallbackPath)
+                  lastPlayTempPath.value = fallbackPath
+                  if (oldPath && oldPath !== fallbackPath) {
+                    try { await invoke<boolean>('tts_delete_temp_wav', { path: oldPath }) } catch {}
+                  }
+                  a.src = wavSrc.value
+                  a.currentTime = 0
+                  await a.play()
+                  speaking.value = true
+                  notify?.('Selected TTS format was not playable. Retried with WAV.', 'error', 3200)
+                  return true
+                } catch {
+                  return false
+                }
+              }
+
               const factor = Math.max(0.25, Math.min(4, Math.pow(2, (form.rate || 0) / 10)))
               a.playbackRate = factor
               a.volume = Math.max(0, Math.min(1, (form.volume || 100) / 100))
               a.currentTime = 0
-              a.play().catch(() => {})
+              a.onerror = async () => {
+                const recovered = await tryWavFallback()
+                if (!recovered) {
+                  speaking.value = false
+                  notify?.('Failed to load synthesized audio in this format.', 'error')
+                }
+              }
+              a.play().catch(async () => {
+                const recovered = await tryWavFallback()
+                if (!recovered) {
+                  speaking.value = false
+                  notify?.('Failed to play synthesized audio in this format.', 'error')
+                }
+              })
               speaking.value = true
               a.onended = async () => {
                 speaking.value = false
@@ -104,6 +164,7 @@ export function useTtsPlayback(notify?: NotifyFn) {
   }
 
   async function startProxyStreaming() {
+    if (!validateTtsInput()) { return }
     busy.value = true
     await nextTick()
     const a = playerRef.value
@@ -199,7 +260,7 @@ export function useTtsPlayback(notify?: NotifyFn) {
   }
 
   async function onSynthesize() {
-    if (!form.text.trim()) { notify?.('Enter some text to synthesize', 'error'); return }
+    if (!validateTtsInput()) { return }
     try {
       busy.value = true
       const path = engine.value === 'local'
@@ -223,6 +284,7 @@ export function useTtsPlayback(notify?: NotifyFn) {
     busy,
     wavPath,
     wavSrc,
+    validateTtsInput,
     lastPlayTempPath,
     playerRef,
     onPlay,

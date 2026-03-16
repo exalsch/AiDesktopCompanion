@@ -3,7 +3,7 @@ import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
 import { emit as emitTauri } from '@tauri-apps/api/event'
 import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import { save as saveDialog } from '@tauri-apps/plugin-dialog'
-import { useTtsPlayback } from '../composables/useTtsPlayback'
+import { useTtsPlayback, OPENAI_TTS_MAX_INPUT_CHARS } from '../composables/useTtsPlayback'
 import { useSettings } from '../composables/useSettings'
 import { estimateTextTokens, formatTokenInfo } from '../composables/useTokenEstimate'
 import { tokenizerReady } from '../composables/useTokenizer'
@@ -28,6 +28,9 @@ const openaiVoiceOptions = ref<string[]>([
 // OpenAI models (load from backend; fallback defaults)
 const openaiModelOptions = ref<string[]>(['gpt-4o-mini-tts', 'tts-1', 'tts-1-hd'])
 const openaiFormatOptions = ref<Array<'wav'|'mp3'|'opus'>>(['wav','mp3','opus'])
+const hasSavableOutput = computed(() => !!String(wavPath.value || '').trim())
+const openaiInputLength = computed(() => form.text.trim().length)
+const openaiTextTooLong = computed(() => engine.value === 'openai' && openaiInputLength.value > OPENAI_TTS_MAX_INPUT_CHARS)
 
 // OpenAI rate/volume are applied server-side into the saved WAV to keep playback and export consistent.
 
@@ -156,6 +159,24 @@ onBeforeUnmount(() => {
 
 watch(busy, (v) => emit('busy', !!v))
 
+watch([
+  () => form.text,
+  () => engine.value,
+  () => form.voice,
+  () => form.openaiVoice,
+  () => form.openaiModel,
+  () => form.openaiFormat,
+  () => form.openaiInstructions,
+  () => form.rate,
+  () => form.volume,
+], () => {
+  if (busy.value || speaking.value) return
+  if (wavPath.value) {
+    wavPath.value = ''
+    wavSrc.value = ''
+  }
+})
+
 // Broadcast speaking state so other parts of the app (e.g., background controller) can react
 watch(speaking, (v) => {
   try { emitTauri('tts:speaking', { speaking: !!v }) } catch {}
@@ -196,6 +217,7 @@ const ttsTokenHint = computed(() => formatTokenInfo([{ label: 'text', tokens: tt
       <label class="label">Text</label>
       <textarea v-model="form.text" rows="4" class="input" placeholder="Type something to speak…" @keydown.enter.exact.prevent="onPlay" />
       <div class="hint">{{ ttsTokenHint }}</div>
+      <div v-if="engine === 'openai'" class="hint" :class="{ error: openaiTextTooLong }">{{ openaiInputLength }} / {{ OPENAI_TTS_MAX_INPUT_CHARS }} characters</div>
     </div>
 
     <!-- Controls: Play/Stop + Save (just below text input) -->
@@ -203,10 +225,10 @@ const ttsTokenHint = computed(() => formatTokenInfo([{ label: 'text', tokens: tt
       <button
         class="btn"
         :class="{ danger: speaking }"
-        :disabled="busy && !speaking"
+        :disabled="(busy && !speaking) || openaiTextTooLong"
         @click="speaking ? onStop() : onPlay()"
       >{{ speaking ? 'Stop' : (busy && engine === 'openai' ? 'Synthesizing…' : 'Play') }}</button>
-      <button class="btn" :disabled="!wavPath" @click="onSynthesizeWithSave">Save to file</button>
+      <button class="btn" :disabled="!hasSavableOutput || busy" @click="onSynthesizeWithSave">Save to file</button>
     </div>
 
     <div class="row inline">
