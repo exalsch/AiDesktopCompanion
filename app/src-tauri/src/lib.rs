@@ -64,6 +64,12 @@ pub fn run() {
         tray_builder = tray_builder.icon(icon.clone());
       }
       let _tray = tray_builder.build(app)?;
+      if !config::get_start_in_tray_from_settings() {
+        if let Some(window) = app.get_webview_window("main") {
+          let _ = window.show();
+          let _ = window.set_focus();
+        }
+      }
       // Ensure default quick_prompts.json exists on first run to avoid errors when loading quick prompts
       if let Some(p) = quick_prompts::quick_prompts_config_path() {
         if !p.exists() {
@@ -432,13 +438,82 @@ async fn transcribe_local_wrapper(_audio: Vec<u8>, _mime: String) -> Result<Stri
   Err("Local STT is not available: app built without 'local-stt' feature.".into())
 }
 
+async fn maybe_post_process_stt_text(text: String) -> Result<String, String> {
+  if !config::get_stt_post_process_enabled_from_settings_or_env() {
+    return Ok(text);
+  }
+
+  let input = text.trim().to_string();
+  if input.is_empty() {
+    return Ok(text);
+  }
+
+  let key = match config::get_api_key_from_settings_or_env() {
+    Ok(v) => v,
+    Err(_) => return Ok(text),
+  };
+  let model = config::get_stt_post_process_model_from_settings_or_env();
+  let prompt = config::get_stt_post_process_prompt_from_settings_or_env();
+
+  let body = serde_json::json!({
+    "model": model,
+    "messages": [
+      {
+        "role": "system",
+        "content": prompt
+      },
+      {
+        "role": "user",
+        "content": input
+      }
+    ],
+    "temperature": 0
+  });
+
+  let client = reqwest::Client::new();
+  let resp = match client
+    .post("https://api.openai.com/v1/chat/completions")
+    .bearer_auth(&key)
+    .json(&body)
+    .send()
+    .await
+  {
+    Ok(v) => v,
+    Err(_) => return Ok(text),
+  };
+
+  if !resp.status().is_success() {
+    return Ok(text);
+  }
+
+  let v: serde_json::Value = match resp.json().await {
+    Ok(v) => v,
+    Err(_) => return Ok(text),
+  };
+  let cleaned = v
+    .get("choices")
+    .and_then(|c| c.get(0))
+    .and_then(|c| c.get("message"))
+    .and_then(|m| m.get("content"))
+    .and_then(|t| t.as_str())
+    .unwrap_or("")
+    .trim()
+    .to_string();
+
+  if cleaned.is_empty() {
+    Ok(text)
+  } else {
+    Ok(cleaned)
+  }
+}
+
 /// Transcribe audio bytes. Engine is selected via settings (`stt_engine`: "openai" | "local").
 /// Local engine uses whisper-rs with an auto-downloaded ggml model.
 #[tauri::command]
 async fn stt_transcribe(audio: Vec<u8>, mime: String) -> Result<String, String> {
   let engine = config::get_stt_engine_from_settings_or_env();
-  if engine == "local" {
-    transcribe_local_wrapper(audio, mime).await
+  let transcript = if engine == "local" {
+    transcribe_local_wrapper(audio, mime).await?
   } else {
     let base_url = config::get_stt_cloud_base_url_from_settings_or_env();
     let model = config::get_stt_cloud_model_from_settings_or_env();
@@ -453,8 +528,10 @@ async fn stt_transcribe(audio: Vec<u8>, mime: String) -> Result<String, String> 
     if is_openai && key_opt.is_none() {
       return Err("OPENAI_API_KEY not set in settings or environment".to_string());
     }
-    stt::transcribe(key_opt, base_url, model, audio, mime).await
-  }
+    stt::transcribe(key_opt, base_url, model, audio, mime).await?
+  };
+
+  maybe_post_process_stt_text(transcript).await
 }
 
 /// Prefetch Whisper model to the local models folder and emit progress via `stt-model-download` events.

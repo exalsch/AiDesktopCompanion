@@ -6,6 +6,8 @@ import { listen } from '@tauri-apps/api/event'
 
 const props = defineProps<{
   settings: any
+  models?: { list: string[]; loading: boolean; error: string | null }
+  onRefreshModels?: () => any
 }>()
 
 const showSttCloudKey = ref(false)
@@ -67,6 +69,20 @@ const cloudSttModelPresets = computed(() => {
     return [{ label: `${cur} (current)`, value: cur, hint: 'Current value is not in the suggested list.' }, ...cloudSttModelPresetsBase]
   }
   return cloudSttModelPresetsBase
+})
+
+const postProcessModelOptions = computed(() => {
+  const fromSettings = Array.isArray(props.models?.list)
+    ? props.models!.list.filter((x: any) => typeof x === 'string' && String(x).trim()).map((x: string) => String(x).trim())
+    : []
+  const deduped = Array.from(new Set(fromSettings))
+  const fallback = ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini']
+  const base = deduped.length ? deduped : fallback
+  const current = String(props.settings.stt_post_process_model || '').trim()
+  if (current && !base.includes(current)) {
+    return [current, ...base]
+  }
+  return base
 })
 
 function urlForPreset(preset: string): string {
@@ -165,7 +181,7 @@ async function prefetchParakeetModel() {
       } catch {}
     })
 
-    const path = await invoke<string>('stt_prefetch_parakeet_model', { local_model: String(props.settings.stt_local_model || '') })
+    const path = await invoke<string>('stt_prefetch_parakeet_model', { localModel: String(props.settings.stt_local_model || '') })
     if (path) prefetchParakeetDonePath.value = path
     await refreshLocalModelStatus()
   } catch (e: any) {
@@ -202,9 +218,9 @@ async function refreshLocalModelStatus() {
 
     const localModel = String(props.settings.stt_local_model || '')
     const res = await invoke<any>('stt_local_model_status', {
-      local_model: localModel,
-      whisper_url: String(props.settings.stt_whisper_model_url || ''),
-      parakeet_has_cuda: Boolean(props.settings.stt_parakeet_has_cuda),
+      localModel,
+      whisperUrl: String(props.settings.stt_whisper_model_url || ''),
+      parakeetHasCuda: Boolean(props.settings.stt_parakeet_has_cuda),
     })
     localModelDownloaded.value = Boolean(res?.downloaded)
     localModelPath.value = String(res?.path || '')
@@ -479,6 +495,46 @@ function infoTitle(v: string): string {
         <button class="btn ghost" @click="showSttCloudKey = !showSttCloudKey">{{ showSttCloudKey ? 'Hide' : 'Show' }}</button>
       </div>
     </div>
+
+    <div class="settings-row col">
+      <div class="row-label">
+        <label class="label">AI Post-Processing</label>
+        <span class="info-icon" :title="infoTitle('Runs a cleanup pass on the transcript (punctuation, casing, readability) using the selected AI model.')">i</span>
+      </div>
+
+      <label class="checkbox" style="margin: 0;">
+        <input type="checkbox" v-model="props.settings.stt_post_process_enabled" />
+        Improve transcribed text with AI
+      </label>
+
+      <div class="row-inline" style="gap: 10px; align-items: center; flex-wrap: wrap;" v-if="props.settings.stt_post_process_enabled">
+        <select v-model="props.settings.stt_post_process_model" class="input" style="max-width: 320px;">
+          <option v-for="m in postProcessModelOptions" :key="m" :value="m">{{ m }}</option>
+        </select>
+        <button class="btn" :disabled="props.models?.loading" @click="props.onRefreshModels?.()">
+          {{ props.models?.loading ? 'Fetching…' : 'Fetch Models' }}
+        </button>
+      </div>
+      <div v-if="props.settings.stt_post_process_enabled && props.models?.error" class="settings-hint error">{{ props.models.error }}</div>
+
+      <div class="settings-row col" v-if="props.settings.stt_post_process_enabled" style="margin-top: 4px; width: 100%;">
+        <div class="row-label">
+          <label class="label">Post-Processing Prompt</label>
+          <span class="info-icon" :title="infoTitle('Customize how transcript cleanup should be done. Keep it focused on formatting and language quality unless you explicitly want rewriting.')">i</span>
+        </div>
+        <textarea
+          v-model="props.settings.stt_post_process_prompt"
+          class="input"
+          rows="3"
+          placeholder="Improve the text to be perfect business UK English."
+          style="width: 100%; max-width: 820px;"
+        />
+      </div>
+
+      <div class="settings-hint">
+        This setting is also used by Quick Speak to text (S) in Quick Actions.
+      </div>
+    </div>
   </div>
 </template>
 
@@ -538,5 +594,15 @@ function infoTitle(v: string): string {
 .status-pill.bad {
   border-color: rgba(220, 90, 90, 0.7);
   color: rgba(220, 90, 90, 1);
+}
+
+.settings-section :deep(textarea.input) {
+  display: block;
+  width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box;
+  flex: 0 0 auto !important;
+  align-self: stretch;
+  overflow-x: hidden;
 }
 </style>

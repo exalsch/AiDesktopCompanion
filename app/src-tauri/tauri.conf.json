@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "AiDesktopCompanion",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "identifier": "de.schick-nest.aidesktopcompanion",
   "build": {
     "frontendDist": "../dist",
@@ -18,6 +18,7 @@
         "height": 600,
         "minWidth": 760,
         "minHeight": 740,
+        "visible": false,
         "resizable": true,
         "fullscreen": false,
         "browserExtensionsEnabled": false,

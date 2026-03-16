@@ -238,6 +238,10 @@ async function cleanupIdleTtsProxy() {
       </select>
       <div class="settings-hint">Switch between Sidebar Dark or Sidebar Light.</div>
     </div>
+    <div class="settings-row">
+      <label class="checkbox"><input type="checkbox" v-model="props.settings.start_in_tray"/> Start in tray</label>
+    </div>
+    <div class="settings-hint">When enabled, the main window stays hidden on app startup until you open it from the tray.</div>
     <div class="settings-title">Conversation</div>
     <div class="settings-row">
       <label class="checkbox"><input type="checkbox" v-model="props.settings.persist_conversations"/> Persist conversations</label>

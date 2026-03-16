@@ -86,6 +86,11 @@ pub fn get_temperature_from_settings_or_env() -> Option<f32> {
   v.get("temperature").and_then(|x| x.as_f64()).map(|f| f as f32)
 }
 
+pub fn get_start_in_tray_from_settings() -> bool {
+  let v = load_settings_json();
+  v.get("start_in_tray").and_then(|x| x.as_bool()).unwrap_or(false)
+}
+
 // Speech-To-Text engine selection: "openai" (default) or "local"
 pub fn get_stt_engine_from_settings_or_env() -> String {
   let v = load_settings_json();
@@ -150,6 +155,44 @@ pub fn get_stt_cloud_api_key_from_settings_or_env() -> Option<String> {
   std::env::var("AIDC_STT_CLOUD_API_KEY").ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
 }
 
+pub fn get_stt_post_process_enabled_from_settings_or_env() -> bool {
+  let v = load_settings_json();
+  if let Some(b) = v.get("stt_post_process_enabled").and_then(|x| x.as_bool()) {
+    return b;
+  }
+  std::env::var("AIDC_STT_POST_PROCESS_ENABLED")
+    .ok()
+    .map(|s| {
+      let t = s.trim().to_lowercase();
+      t == "1" || t == "true" || t == "yes" || t == "y" || t == "on"
+    })
+    .unwrap_or(false)
+}
+
+pub fn get_stt_post_process_model_from_settings_or_env() -> String {
+  let v = load_settings_json();
+  if let Some(s) = v.get("stt_post_process_model").and_then(|x| x.as_str()) {
+    let t = s.trim();
+    if !t.is_empty() { return t.to_string(); }
+  }
+  std::env::var("AIDC_STT_POST_PROCESS_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string())
+}
+
+pub fn get_stt_post_process_prompt_from_settings_or_env() -> String {
+  let default_prompt = "You are an STT post-processor. Rewrite the given transcript to improve readability only: fix punctuation, casing, spacing, and obvious recognition artifacts including repeating words. Preserve original meaning, language, and details while improving clarity. Return only the cleaned transcript text.".to_string();
+  let v = load_settings_json();
+  if let Some(s) = v.get("stt_post_process_prompt").and_then(|x| x.as_str()) {
+    if !s.trim().is_empty() {
+      return s.to_string();
+    }
+  }
+  std::env::var("AIDC_STT_POST_PROCESS_PROMPT")
+    .ok()
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty())
+    .unwrap_or(default_prompt)
+}
+
 pub fn get_settings() -> Result<serde_json::Value, String> {
   let v = load_settings_json();
   Ok(v)
@@ -171,6 +214,7 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   if let Some(qpm) = map.get("quick_prompt_model").and_then(|x| x.as_str()) { obj.insert("quick_prompt_model".to_string(), serde_json::Value::String(qpm.to_string())); }
   if let Some(t) = map.get("temperature").and_then(|x| x.as_f64()) { obj.insert("temperature".to_string(), serde_json::Value::Number(serde_json::Number::from_f64(t).unwrap_or_else(|| serde_json::Number::from_f64(1.0).unwrap()))); }
   if let Some(p) = map.get("persist_conversations").and_then(|x| x.as_bool()) { obj.insert("persist_conversations".to_string(), serde_json::Value::Bool(p)); }
+  if let Some(s) = map.get("start_in_tray").and_then(|x| x.as_bool()) { obj.insert("start_in_tray".to_string(), serde_json::Value::Bool(s)); }
   // Persist UI style selection
   if let Some(ui) = map.get("ui_style").and_then(|x| x.as_str()) { obj.insert("ui_style".to_string(), serde_json::Value::String(ui.to_string())); }
   // Persist chat display preference
@@ -208,6 +252,9 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   if let Some(bu) = map.get("stt_cloud_base_url").and_then(|x| x.as_str()) { obj.insert("stt_cloud_base_url".to_string(), serde_json::Value::String(bu.to_string())); }
   if let Some(sm) = map.get("stt_cloud_model").and_then(|x| x.as_str()) { obj.insert("stt_cloud_model".to_string(), serde_json::Value::String(sm.to_string())); }
   if let Some(sk) = map.get("stt_cloud_api_key").and_then(|x| x.as_str()) { obj.insert("stt_cloud_api_key".to_string(), serde_json::Value::String(sk.to_string())); }
+  if let Some(pp) = map.get("stt_post_process_enabled").and_then(|x| x.as_bool()) { obj.insert("stt_post_process_enabled".to_string(), serde_json::Value::Bool(pp)); }
+  if let Some(pm) = map.get("stt_post_process_model").and_then(|x| x.as_str()) { obj.insert("stt_post_process_model".to_string(), serde_json::Value::String(pm.to_string())); }
+  if let Some(ppp) = map.get("stt_post_process_prompt").and_then(|x| x.as_str()) { obj.insert("stt_post_process_prompt".to_string(), serde_json::Value::String(ppp.to_string())); }
   // Whisper (local STT) model selection
   if let Some(u) = map.get("stt_whisper_model_url").and_then(|x| x.as_str()) { obj.insert("stt_whisper_model_url".to_string(), serde_json::Value::String(u.to_string())); }
   if let Some(preset) = map.get("stt_whisper_model_preset").and_then(|x| x.as_str()) { obj.insert("stt_whisper_model_preset".to_string(), serde_json::Value::String(preset.to_string())); }

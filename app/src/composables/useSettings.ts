@@ -15,12 +15,16 @@ const DEFAULT_SYSTEM_PROMPT = (
   '   - If no tool is necessary, formulate a direct answer using your internal knowledge.'
 )
 
+const DEFAULT_STT_POST_PROCESS_PROMPT =
+  'You are an STT post-processor. Rewrite the given transcript to improve readability only: fix punctuation, casing, spacing, and obvious recognition artifacts including repeating words. Preserve original meaning, language, and details while improving clarity. Return only the cleaned transcript text.'
+
 const settings = reactive({
   openai_api_key: '',
   openai_chat_model: 'gpt-4o-mini',
   quick_prompt_model: '' as string,
   temperature: 1.0 as number,
   persist_conversations: false as boolean,
+  start_in_tray: false as boolean,
   hide_tool_calls_in_chat: false as boolean,
   ui_style: 'sidebar-dark' as UIStyle,
   global_hotkey: '' as string,
@@ -35,6 +39,9 @@ const settings = reactive({
   stt_cloud_base_url: 'https://api.openai.com' as string,
   stt_cloud_model: 'whisper-1' as string,
   stt_cloud_api_key: '' as string,
+  stt_post_process_enabled: false as boolean,
+  stt_post_process_model: 'gpt-4o-mini' as string,
+  stt_post_process_prompt: DEFAULT_STT_POST_PROCESS_PROMPT as string,
   // Local Whisper (STT) model config
   stt_whisper_model_preset: 'base' as string,
   stt_whisper_model_url: '' as string,
@@ -56,6 +63,7 @@ export function useSettings() {
       }
       if (typeof v.temperature === 'number') settings.temperature = v.temperature
       if (typeof v.persist_conversations === 'boolean') settings.persist_conversations = v.persist_conversations
+      if (typeof (v as any).start_in_tray === 'boolean') settings.start_in_tray = (v as any).start_in_tray
       if (typeof (v as any).hide_tool_calls_in_chat === 'boolean') settings.hide_tool_calls_in_chat = (v as any).hide_tool_calls_in_chat
       if (typeof (v as any).global_hotkey === 'string') settings.global_hotkey = (v as any).global_hotkey
       {
@@ -173,6 +181,17 @@ export function useSettings() {
       }
       if (typeof (v as any).stt_cloud_api_key === 'string') {
         settings.stt_cloud_api_key = String((v as any).stt_cloud_api_key)
+      }
+      if (typeof (v as any).stt_post_process_enabled === 'boolean') {
+        settings.stt_post_process_enabled = (v as any).stt_post_process_enabled === true
+      }
+      if (typeof (v as any).stt_post_process_model === 'string' && String((v as any).stt_post_process_model).trim()) {
+        settings.stt_post_process_model = String((v as any).stt_post_process_model).trim()
+      }
+      if (typeof (v as any).stt_post_process_prompt === 'string' && String((v as any).stt_post_process_prompt).trim()) {
+        settings.stt_post_process_prompt = String((v as any).stt_post_process_prompt)
+      } else {
+        settings.stt_post_process_prompt = DEFAULT_STT_POST_PROCESS_PROMPT
       }
       // Whisper model selection (optional)
       if (typeof (v as any).stt_whisper_model_preset === 'string') {

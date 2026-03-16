@@ -58,6 +58,8 @@ watch(() => props.settingsSubview, (sub) => { if (sub === 'MCP Servers') { refre
     <SettingsSpeechToText
       v-else-if="props.settingsSubview === 'Speech To Text'"
       :settings="props.settings"
+      :models="props.models"
+      :onRefreshModels="props.onRefreshModels"
     />
 
     <SettingsQuickPrompts

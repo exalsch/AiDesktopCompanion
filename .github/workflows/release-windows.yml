@@ -76,6 +76,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           preset: conventionalcommits
           skip-commit: true
+          skip-git-pull: true
           output-file: false
           tag-prefix: 'v'
 
