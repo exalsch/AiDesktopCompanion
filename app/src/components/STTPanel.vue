@@ -138,6 +138,23 @@ const postProcessStatusHint = computed(() => {
 
 <template>
   <div class="stt">
+    <div class="row">
+      <label class="checkbox" style="margin: 0;">
+        <input type="checkbox" v-model="settings.stt_post_process_enabled" />
+        Improve transcribed text with AI
+      </label>
+      <div v-if="settings.stt_post_process_enabled" class="row" style="margin-top: 2px;">
+        <label class="label">STT Post-Processing Prompt</label>
+        <textarea
+          v-model="settings.stt_post_process_prompt"
+          rows="3"
+          placeholder="You are an STT post-processor..."
+          style="min-height: 88px;"
+        />
+        <div class="hint">Model selection for post-processing stays in Settings → Speech To Text.</div>
+      </div>
+    </div>
+
     <div class="row inline">
       <button class="btn" :disabled="state.busy" :class="{ danger: state.recording }" @click="onRecordToggle">
         {{ state.recording ? 'Stop & Transcribe' : 'Record' }}
@@ -172,6 +189,7 @@ const postProcessStatusHint = computed(() => {
 .row.inline { flex-direction: row; align-items: center; gap: 10px; flex-wrap: wrap; }
 .label { font-size: 12px; color: #c8c9d3; }
 textarea { width: 100%; resize: vertical; min-height: 140px; padding: 8px; border-radius: 8px; border: 1px solid #3a3a44; background: #14141a; color: #e0e0ea; box-sizing: border-box; }
+.checkbox { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: #c8c9d3; }
 .btn { padding: 8px 12px; border-radius: 8px; border: 1px solid #3a3a44; background: #2e5cff; color: #fff; cursor: pointer; }
 .btn.danger { background: #a42828; border-color: #7c1f1f; }
 .hint { font-size: 12px; color: #9fa0aa; white-space: pre-line; }

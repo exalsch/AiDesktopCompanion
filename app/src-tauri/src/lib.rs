@@ -98,6 +98,7 @@ pub fn run() {
       tts_stream_session_count,
       tts_stream_cleanup_idle,
       stt_transcribe,
+      stt_post_process_text,
       stt_prefetch_whisper_model,
       stt_prefetch_parakeet_model,
       stt_check_parakeet_cuda,
@@ -444,9 +445,9 @@ struct SttPostProcessOutcome {
   error: Option<String>,
 }
 
-async fn maybe_post_process_stt_text(text: String) -> SttPostProcessOutcome {
+async fn maybe_post_process_stt_text(text: String, prompt_override: Option<String>, force_apply: bool) -> SttPostProcessOutcome {
   let original = text.clone();
-  if !config::get_stt_post_process_enabled_from_settings_or_env() {
+  if !force_apply && !config::get_stt_post_process_enabled_from_settings_or_env() {
     return SttPostProcessOutcome {
       final_text: original,
       applied: false,
@@ -477,7 +478,10 @@ async fn maybe_post_process_stt_text(text: String) -> SttPostProcessOutcome {
     },
   };
   let model = config::get_stt_post_process_model_from_settings_or_env();
-  let prompt = config::get_stt_post_process_prompt_from_settings_or_env();
+  let prompt = prompt_override
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty())
+    .unwrap_or_else(|| config::get_stt_post_process_prompt_from_settings_or_env());
 
   let body = serde_json::json!({
     "model": model,
@@ -570,10 +574,17 @@ struct SttTranscriptionResult {
   post_process_error: Option<String>,
 }
 
+#[derive(Serialize)]
+struct SttPostProcessResult {
+  final_text: String,
+  post_process_applied: bool,
+  post_process_error: Option<String>,
+}
+
 /// Transcribe audio bytes. Engine is selected via settings (`stt_engine`: "openai" | "local").
 /// Local engine uses whisper-rs with an auto-downloaded ggml model.
 #[tauri::command]
-async fn stt_transcribe(audio: Vec<u8>, mime: String) -> Result<SttTranscriptionResult, String> {
+async fn stt_transcribe(audio: Vec<u8>, mime: String, apply_post_process: Option<bool>) -> Result<SttTranscriptionResult, String> {
   let engine = config::get_stt_engine_from_settings_or_env();
   let transcript = if engine == "local" {
     transcribe_local_wrapper(audio, mime).await?
@@ -595,12 +606,31 @@ async fn stt_transcribe(audio: Vec<u8>, mime: String) -> Result<SttTranscription
   };
 
   let original_text = transcript.trim().to_string();
-  let post_processed = maybe_post_process_stt_text(transcript).await;
+  let should_apply = apply_post_process.unwrap_or(true);
+  let post_processed = if should_apply {
+    maybe_post_process_stt_text(transcript, None, false).await
+  } else {
+    SttPostProcessOutcome {
+      final_text: original_text.clone(),
+      applied: false,
+      error: None,
+    }
+  };
   let final_text = post_processed.final_text.trim().to_string();
 
   Ok(SttTranscriptionResult {
     original_text,
     final_text,
+    post_process_applied: post_processed.applied,
+    post_process_error: post_processed.error,
+  })
+}
+
+#[tauri::command]
+async fn stt_post_process_text(text: String, prompt_override: Option<String>) -> Result<SttPostProcessResult, String> {
+  let post_processed = maybe_post_process_stt_text(text, prompt_override, true).await;
+  Ok(SttPostProcessResult {
+    final_text: post_processed.final_text.trim().to_string(),
     post_process_applied: post_processed.applied,
     post_process_error: post_processed.error,
   })

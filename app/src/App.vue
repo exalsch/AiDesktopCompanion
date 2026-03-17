@@ -75,6 +75,8 @@ let unsubs: Array<() => void> = []
 onMounted(async () => {
   // For QuickActions popup, strip global app padding/min-width via body class
   try { addBodyClass() } catch {}
+  // Apply current style immediately for fast first paint.
+  try { applyStyleCss(settings.ui_style) } catch {}
   try {
     const unsubApp = await registerAppEvents()
     const unsubTtsBg = await registerBackgroundTtsEvents()
@@ -87,30 +89,31 @@ onMounted(async () => {
   }
   // Load prompt settings on mount
   try { await loadSettings() } catch {} finally { setSettingsLoaded(true) }
-  // Preload tokenizer if requested by settings; show hint if unavailable
-  try {
-    if (settings.tokenizer_mode === 'tiktoken') {
-      const ok = await preloadTokenizer()
-      if (!ok) {
-        try { console.warn('[tokenizer] init failed; using approximate counts', tokenizerLastError?.value) } catch {}
-        showToast('Accurate tokenizer unavailable; using approximate counts.', 'error', 4200)
-      }
-    }
-  } catch {}
-  // Apply style-specific CSS after loading settings (all windows)
+  // Re-apply style after settings load in case user configured a different theme.
   try { applyStyleCss(settings.ui_style) } catch {}
 
-  // Load persisted conversation if enabled
-  try { await loadPersistedConversation() } catch {}
-  // Load Quick Prompts for composer buttons
-  try { await loadQuickPrompts() } catch {}
-  // MCP events are handled inside registerAppEvents()
-  // Attempt auto-connect for MCP servers after settings load
-  try {
-    await autoConnectServers()
-  } catch {}
-  // App version for footer
-  try { appVersion.value = await getVersion() } catch {}
+  // Defer non-critical startup work to keep UI responsive.
+  setTimeout(() => {
+    // Preload tokenizer if requested by settings; show hint if unavailable
+    if (settings.tokenizer_mode === 'tiktoken') {
+      preloadTokenizer().then((ok) => {
+        if (!ok) {
+          try { console.warn('[tokenizer] init failed; using approximate counts', tokenizerLastError?.value) } catch {}
+          showToast('Accurate tokenizer unavailable; using approximate counts.', 'error', 4200)
+        }
+      }).catch(() => {})
+    }
+
+    // Load persisted conversation if enabled
+    loadPersistedConversation().catch(() => {})
+    // Load Quick Prompts for composer buttons
+    loadQuickPrompts().catch(() => {})
+    // MCP events are handled inside registerAppEvents()
+    // Attempt auto-connect for MCP servers after settings load
+    autoConnectServers().catch(() => {})
+    // App version for footer
+    getVersion().then((v) => { appVersion.value = v }).catch(() => {})
+  }, 0)
 })
 
 onBeforeUnmount(() => {
@@ -346,8 +349,8 @@ async function autoConnectServers() {
       @close="prompt.visible = false"
     />
 
-    <!-- Sidebar layout (dark/light) -->
-    <div v-if="settings.ui_style === 'sidebar-dark' || settings.ui_style === 'sidebar-light'" class="shell">
+    <!-- Sidebar layout is the only supported main-window layout; always render it as a safe fallback. -->
+    <div class="shell">
       <SidebarNav
         :sections="ui.sections as any"
         :active-section="ui.activeSection"

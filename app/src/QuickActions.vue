@@ -55,6 +55,7 @@ async function onClosePreview(): Promise<void> {
 
 const sttRecording = ref(false)
 const sttPending = ref(false) // true while requesting mic permission / starting
+const sttPostProcessQuickPromptIndex = ref<number | null>(null)
 const rootRef = ref<HTMLElement | null>(null)
 const debugOn = ref(false)
 const lastHideReason = ref('')
@@ -158,6 +159,16 @@ async function handleAction(action: 'prompt' | 'tts' | 'stt' | 'image'): Promise
 function onKeydown(e: KeyboardEvent): void {
   // Only react to single keys when this window is focused
   const key = e.key.toLowerCase()
+
+  // While recording STT (holding S), keys 0-9 choose optional quick-prompt post-processing.
+  // 0 disables quick STT post-processing for this recording.
+  if (sttRecording.value && key >= '0' && key <= '9' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault()
+    const idx = Number(key)
+    sttPostProcessQuickPromptIndex.value = idx === 0 ? null : idx
+    return
+  }
+
   // Toggle debug logging with Ctrl+D
   if (key === 'd' && (e.ctrlKey || e.metaKey)) {
     try {
@@ -310,6 +321,7 @@ async function startSTT(): Promise<void> {
   if (sttRecording.value || sttIsRecording() || sttPending.value) return
   try {
     sttPending.value = true
+    sttPostProcessQuickPromptIndex.value = null
     await sttStart()
     sttRecording.value = true
     console.info('[stt] recording started')
@@ -336,6 +348,8 @@ async function stopSTTAndTranscribe(): Promise<void> {
     // Close popup before transcribing
     await hidePopup()
     let text = ''
+    const quickPromptIndex = sttPostProcessQuickPromptIndex.value
+    sttPostProcessQuickPromptIndex.value = null
     try {
       let payloadBytes: Uint8Array
       let payloadMime: string = mime
@@ -356,13 +370,32 @@ async function stopSTTAndTranscribe(): Promise<void> {
         payloadBytes = new Uint8Array(await blob.arrayBuffer())
         payloadMime = mime
       }
-      const sttResult = await invoke<any>('stt_transcribe', { audio: Array.from(payloadBytes), mime: payloadMime })
+      const sttResult = await invoke<any>('stt_transcribe', {
+        audio: Array.from(payloadBytes),
+        mime: payloadMime,
+        applyPostProcess: false,
+      })
       if (typeof sttResult === 'string') {
         text = sttResult
       } else if (sttResult && typeof sttResult === 'object') {
         text = String((sttResult as any).final_text || '')
       } else {
         text = ''
+      }
+
+      if (text.trim().length > 0 && typeof quickPromptIndex === 'number' && quickPromptIndex >= 1 && quickPromptIndex <= 9) {
+        const map = await invoke<any>('get_quick_prompts')
+        const quickPromptText = String(map?.[String(quickPromptIndex)] || '').trim()
+        if (quickPromptText) {
+          const pp = await invoke<any>('stt_post_process_text', {
+            text,
+            promptOverride: quickPromptText,
+          })
+          const ppText = String(pp?.final_text || '').trim()
+          if (ppText) {
+            text = ppText
+          }
+        }
       }
     } catch (err) {
       const msg = typeof err === 'string' ? err : (err && (err as any).message) ? (err as any).message : 'Unknown STT error'
@@ -571,7 +604,7 @@ async function onInsert(): Promise<void> {
       </div>
       <div class="qa-hint">
         <span v-if="sttRecording" class="rec">
-          ● Recording... Release S or mouse to transcribe
+          ● Recording... Release S or mouse to transcribe. Press 1–9 to apply that Quick Prompt as post-processing (0 = no post-processing).
         </span>
         <span v-else>Press P / T / S / I or 1–9 for quick prompts. Esc to close.</span>
       </div>

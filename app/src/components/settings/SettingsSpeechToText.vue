@@ -498,16 +498,11 @@ function infoTitle(v: string): string {
 
     <div class="settings-row col">
       <div class="row-label">
-        <label class="label">AI Post-Processing</label>
-        <span class="info-icon" :title="infoTitle('Runs a cleanup pass on the transcript (punctuation, casing, readability) using the selected AI model.')">i</span>
+        <label class="label">AI Post-Processing Model</label>
+        <span class="info-icon" :title="infoTitle('Select the model used for STT post-processing. Enable/disable and prompt are configured in the STT view.')">i</span>
       </div>
 
-      <label class="checkbox" style="margin: 0;">
-        <input type="checkbox" v-model="props.settings.stt_post_process_enabled" />
-        Improve transcribed text with AI
-      </label>
-
-      <div class="row-inline" style="gap: 10px; align-items: center; flex-wrap: wrap;" v-if="props.settings.stt_post_process_enabled">
+      <div class="row-inline" style="gap: 10px; align-items: center; flex-wrap: wrap;">
         <select v-model="props.settings.stt_post_process_model" class="input" style="max-width: 320px;">
           <option v-for="m in postProcessModelOptions" :key="m" :value="m">{{ m }}</option>
         </select>
@@ -515,25 +510,7 @@ function infoTitle(v: string): string {
           {{ props.models?.loading ? 'Fetching…' : 'Fetch Models' }}
         </button>
       </div>
-      <div v-if="props.settings.stt_post_process_enabled && props.models?.error" class="settings-hint error">{{ props.models.error }}</div>
-
-      <div class="settings-row col" v-if="props.settings.stt_post_process_enabled" style="margin-top: 4px; width: 100%;">
-        <div class="row-label">
-          <label class="label">Post-Processing Prompt</label>
-          <span class="info-icon" :title="infoTitle('Customize how transcript cleanup should be done. Keep it focused on formatting and language quality unless you explicitly want rewriting.')">i</span>
-        </div>
-        <textarea
-          v-model="props.settings.stt_post_process_prompt"
-          class="input"
-          rows="3"
-          placeholder="Improve the text to be perfect business UK English."
-          style="width: 100%; max-width: 820px;"
-        />
-      </div>
-
-      <div class="settings-hint">
-        This setting is also used by Quick Speak to text (S) in Quick Actions.
-      </div>
+      <div v-if="props.models?.error" class="settings-hint error">{{ props.models.error }}</div>
     </div>
   </div>
 </template>
