@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "AiDesktopCompanion",
-  "version": "0.1.7",
+  "version": "0.1.10",
   "identifier": "de.schick-nest.aidesktopcompanion",
   "build": {
     "frontendDist": "../dist",
@@ -26,6 +26,19 @@
         "windowEffects": {
           "effects": ["mica"]
         }
+      },
+      {
+        "title": "Quick Actions",
+        "label": "quick-actions",
+        "url": "/?window=quick-actions",
+        "width": 380,
+        "height": 95,
+        "visible": false,
+        "resizable": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": false
       }
     ],
     "security": {
@@ -33,9 +46,9 @@
         "default-src": ["'self'", "asset:", "http://asset.localhost"],
         "script-src": ["'self'", "'wasm-unsafe-eval'"],
         "script-src-elem": ["'self'", "'wasm-unsafe-eval'"],
-        "connect-src": ["'self'", "ipc:", "http://ipc.localhost", "https://api.openai.com", "asset:", "http://asset.localhost"],
+        "connect-src": ["'self'", "ipc:", "http://ipc.localhost", "https://api.openai.com", "asset:", "http://asset.localhost", "http://127.0.0.1"],
         "img-src": ["'self'", "asset:", "http://asset.localhost", "blob:", "data:"],
-        "media-src": ["'self'", "asset:", "http://asset.localhost", "blob:", "data:"],
+        "media-src": ["'self'", "asset:", "http://asset.localhost", "blob:", "data:", "http://127.0.0.1"],
         "font-src": ["'self'", "data:"],
         "style-src": ["'self'", "'unsafe-inline'"],
         "object-src": ["'none'"],
@@ -47,9 +60,9 @@
       "devCsp": {
         "default-src": ["'self'", "asset:"],
         "script-src": ["'self'", "'wasm-unsafe-eval'"],
-        "connect-src": ["'self'", "ipc:", "http://ipc.localhost", "https://api.openai.com", "http://localhost:5173", "ws://localhost:5173", "asset:", "http://asset.localhost"],
+        "connect-src": ["'self'", "ipc:", "http://ipc.localhost", "https://api.openai.com", "http://localhost:5173", "ws://localhost:5173", "asset:", "http://asset.localhost", "http://127.0.0.1"],
         "img-src": ["'self'", "asset:", "http://asset.localhost", "blob:", "data:"],
-        "media-src": ["'self'", "asset:", "http://asset.localhost", "blob:", "data:"],
+        "media-src": ["'self'", "asset:", "http://asset.localhost", "blob:", "data:", "http://127.0.0.1"],
         "font-src": ["'self'", "data:"],
         "style-src": ["'self'", "'unsafe-inline'"],
         "object-src": ["'none'"],

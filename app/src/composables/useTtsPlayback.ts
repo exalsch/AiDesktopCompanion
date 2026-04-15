@@ -27,6 +27,7 @@ export function useTtsPlayback(notify?: NotifyFn) {
   const wavSrc = ref('')
   const lastPlayTempPath = ref('')
   const playerRef = ref<HTMLAudioElement | null>(null)
+  let localPollHandle: ReturnType<typeof setInterval> | null = null
 
   // Streaming state
   const streamSessionUrl = ref('')
@@ -51,6 +52,15 @@ export function useTtsPlayback(notify?: NotifyFn) {
       if (engine.value === 'local') {
         await invoke('tts_start', { text: form.text, voice: form.voice || null, rate: form.rate, volume: form.volume })
         speaking.value = true
+        // Clear any existing poll before starting a new one
+        if (localPollHandle) { clearInterval(localPollHandle); localPollHandle = null }
+        // Poll for PowerShell process completion since local TTS has no end callback
+        localPollHandle = setInterval(async () => {
+          try {
+            const still = await invoke<boolean>('tts_is_speaking')
+            if (!still) { speaking.value = false; if (localPollHandle) { clearInterval(localPollHandle); localPollHandle = null } }
+          } catch { speaking.value = false; if (localPollHandle) { clearInterval(localPollHandle); localPollHandle = null } }
+        }, 500)
       } else {
         if (form.openaiStreaming) {
           await startProxyStreaming()
@@ -145,6 +155,8 @@ export function useTtsPlayback(notify?: NotifyFn) {
   }
 
   async function onStop() {
+    // Clear local TTS poll if active
+    if (localPollHandle) { clearInterval(localPollHandle); localPollHandle = null }
     try {
       if (engine.value === 'local') {
         await invoke('tts_stop')
@@ -228,6 +240,15 @@ export function useTtsPlayback(notify?: NotifyFn) {
             el.currentTime = 0
             el.play().catch(() => {})
             speaking.value = true
+            el.onended = async () => {
+              speaking.value = false
+              const p = lastPlayTempPath.value
+              if (p) {
+                try { await invoke<boolean>('tts_delete_temp_wav', { path: p }) } catch {}
+                if (wavPath.value === p) { wavPath.value = ''; wavSrc.value = '' }
+                lastPlayTempPath.value = ''
+              }
+            }
           }
         })
       } catch (e: any) {

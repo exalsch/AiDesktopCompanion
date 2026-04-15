@@ -14,7 +14,7 @@ const emit = defineEmits<{
 
 // Markdown renderer function ref. It is initialized dynamically to avoid
 // hard dependency on external libraries at build time.
-const renderMarkdown = ref<(src: string) => string>(() => basicMarkdownFallback(''))
+const renderMarkdown = ref<(src: string) => string>((src: string) => basicMarkdownFallback(src))
 
 // Token tooltip per message (approximate or tokenizer-based)
 const { settings } = useSettings()
@@ -164,9 +164,12 @@ function basicMarkdownFallback(input: string): string {
   let s = input ?? ''
   s = s.replace(/\r\n/g, '\n')
 
+  // Escape HTML FIRST to prevent XSS
+  s = escape(s)
+
   // Fenced code blocks ```
   s = s.replace(/```([\s\S]*?)```/g, (_, code: string) => {
-    return `<pre class="md-pre"><code>${escape(code)}</code></pre>`
+    return `<pre class="md-pre"><code>${code}</code></pre>`
   })
 
   // Headings
@@ -180,7 +183,7 @@ function basicMarkdownFallback(input: string): string {
   // Lists (very minimal: consecutive lines starting with - or *)
   s = s.replace(/(?:^(?:-|\*)\s+.+\n?)+/gm, (block: string) => {
     const items = block.trim().split(/\n/).map(l => l.replace(/^(?:-|\*)\s+/, ''))
-    return `<ul class="md-ul">${items.map(it => `<li>${escape(it)}</li>`).join('')}</ul>`
+    return `<ul class="md-ul">${items.map(it => `<li>${it}</li>`).join('')}</ul>`
   })
 
   // Inline code

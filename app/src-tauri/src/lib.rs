@@ -1,3 +1,4 @@
+// AiDesktopCompanion v0.1.10 build8
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -86,6 +87,7 @@ pub fn run() {
       open_tts_with_text,
       tts_start,
       tts_stop,
+      tts_is_speaking,
       tts_list_voices,
       tts_synthesize_wav,
       tts_openai_synthesize_wav,
@@ -128,6 +130,7 @@ pub fn run() {
       quick_actions::size_overlay_to_virtual_screen,
       quick_actions::capture_region,
       quick_actions::copy_text_to_clipboard,
+      quick_actions::refocus_previous_app,
       mcp_connect,
       mcp_disconnect,
       mcp_list_tools,
@@ -390,6 +393,11 @@ fn tts_list_voices() -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
+fn tts_is_speaking() -> bool {
+  tts_win_native::local_tts_is_speaking()
+}
+
+#[tauri::command]
 fn tts_synthesize_wav(text: String, voice: Option<String>, rate: Option<i32>, volume: Option<u8>) -> Result<String, String> {
   tts_win_native::local_tts_synthesize_wav(text, voice, rate, volume)
 }
@@ -498,8 +506,16 @@ async fn maybe_post_process_stt_text(text: String, prompt_override: Option<Strin
   });
 
   let client = reqwest::Client::new();
+  // Use the configured base URL for post-processing (respects custom/local LLM endpoints)
+  let base_url = config::get_stt_cloud_base_url_from_settings_or_env();
+  let b = base_url.trim().trim_end_matches('/');
+  let chat_url = if b.ends_with("/v1") {
+    format!("{}/chat/completions", b)
+  } else {
+    format!("{}/v1/chat/completions", b)
+  };
   let resp = match client
-    .post("https://api.openai.com/v1/chat/completions")
+    .post(&chat_url)
     .bearer_auth(&key)
     .json(&body)
     .send()
@@ -584,7 +600,7 @@ struct SttPostProcessResult {
 /// Transcribe audio bytes. Engine is selected via settings (`stt_engine`: "openai" | "local").
 /// Local engine uses whisper-rs with an auto-downloaded ggml model.
 #[tauri::command]
-async fn stt_transcribe(audio: Vec<u8>, mime: String, apply_post_process: Option<bool>) -> Result<SttTranscriptionResult, String> {
+async fn stt_transcribe(audio: Vec<u8>, mime: String, apply_post_process: Option<bool>, prompt_override: Option<String>) -> Result<SttTranscriptionResult, String> {
   let engine = config::get_stt_engine_from_settings_or_env();
   let transcript = if engine == "local" {
     transcribe_local_wrapper(audio, mime).await?
@@ -607,8 +623,14 @@ async fn stt_transcribe(audio: Vec<u8>, mime: String, apply_post_process: Option
 
   let original_text = transcript.trim().to_string();
   let should_apply = apply_post_process.unwrap_or(true);
-  let post_processed = if should_apply {
-    maybe_post_process_stt_text(transcript, None, false).await
+  // Normalize empty prompt_override to None
+  let effective_prompt_override = prompt_override
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty());
+  // When a prompt_override is provided, force post-processing with that prompt in a single LLM call
+  let post_processed = if should_apply || effective_prompt_override.is_some() {
+    let force = effective_prompt_override.is_some();
+    maybe_post_process_stt_text(transcript, effective_prompt_override, force).await
   } else {
     SttPostProcessOutcome {
       final_text: original_text.clone(),

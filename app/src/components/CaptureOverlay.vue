@@ -36,37 +36,39 @@ const screenRect = computed(() => {
   return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 }
 })
 
-function toScreenCoords(evt: MouseEvent) {
-  // Convert client (CSS px) -> screen (physical px): add outerPosition (physical) + multiply by DPR
-  const dpr = window.devicePixelRatio || 1
-  return getCurrentWebviewWindow().outerPosition().then((pos: any) => {
-    const baseX = (pos?.x ?? 0)
-    const baseY = (pos?.y ?? 0)
-    return { x: Math.round(evt.clientX * dpr + baseX), y: Math.round(evt.clientY * dpr + baseY) }
-  }).catch(() => ({ x: Math.round(evt.clientX * dpr), y: Math.round(evt.clientY * dpr) }))
-}
+// Cached window base position for screen coordinate calculation (set once on mousedown)
+let cachedBaseX = 0
+let cachedBaseY = 0
 
 async function onMouseDown(e: MouseEvent) {
   e.preventDefault()
-  const p = await toScreenCoords(e)
+  const dpr = window.devicePixelRatio || 1
+  try {
+    const pos = await getCurrentWebviewWindow().outerPosition()
+    cachedBaseX = (pos as any)?.x ?? 0
+    cachedBaseY = (pos as any)?.y ?? 0
+  } catch {
+    cachedBaseX = 0
+    cachedBaseY = 0
+  }
   state.dragging = true
   state.startClientX = e.clientX
   state.startClientY = e.clientY
   state.curClientX = e.clientX
   state.curClientY = e.clientY
-  state.startScreenX = p.x
-  state.startScreenY = p.y
-  state.curScreenX = p.x
-  state.curScreenY = p.y
+  state.startScreenX = Math.round(e.clientX * dpr + cachedBaseX)
+  state.startScreenY = Math.round(e.clientY * dpr + cachedBaseY)
+  state.curScreenX = state.startScreenX
+  state.curScreenY = state.startScreenY
 }
 
-async function onMouseMove(e: MouseEvent) {
+function onMouseMove(e: MouseEvent) {
   if (!state.dragging) return
-  const p = await toScreenCoords(e)
+  const dpr = window.devicePixelRatio || 1
   state.curClientX = e.clientX
   state.curClientY = e.clientY
-  state.curScreenX = p.x
-  state.curScreenY = p.y
+  state.curScreenX = Math.round(e.clientX * dpr + cachedBaseX)
+  state.curScreenY = Math.round(e.clientY * dpr + cachedBaseY)
 }
 
 async function onMouseUp(_e: MouseEvent) {
@@ -119,6 +121,7 @@ function onKey(e: KeyboardEvent) {
 let prevHtmlBg = ''
 let prevBodyBg = ''
 let unlistenImage: (() => void) | null = null
+let contextMenuHandler: ((e: Event) => void) | null = null
 
 onMounted(() => {
   window.addEventListener('mousedown', onMouseDown)
@@ -127,7 +130,8 @@ onMounted(() => {
   window.addEventListener('keydown', onKey)
   window.addEventListener('keyup', onKey)
   // Right-click to cancel quickly
-  window.addEventListener('contextmenu', (e) => { e.preventDefault(); getCurrentWebviewWindow().close().catch(() => {}) })
+  contextMenuHandler = (e) => { e.preventDefault(); getCurrentWebviewWindow().close().catch(() => {}) }
+  window.addEventListener('contextmenu', contextMenuHandler)
   // Make the underlying page fully transparent so the desktop shows through
   prevHtmlBg = (document.documentElement.style.background || '')
   prevBodyBg = (document.body.style.background || '')
@@ -181,6 +185,7 @@ onBeforeUnmount(() => {
   document.documentElement.style.background = prevHtmlBg
   document.body.style.background = prevBodyBg
   try { unlistenImage && unlistenImage() } catch {}
+  if (contextMenuHandler) window.removeEventListener('contextmenu', contextMenuHandler)
 })
 </script>
 

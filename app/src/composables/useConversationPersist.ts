@@ -33,8 +33,12 @@ export function useConversationPersist(settingsPersistConversations: Ref<boolean
 
   function registerConversationPersist() {
     const stopFns: Array<() => void> = []
-    // Persist when messages change
-    stopFns.push(watch(() => conversation.currentConversation.messages.length, () => schedulePersistSave()))
+    // Deep watch on current conversation to catch message content changes (streaming, tool results)
+    stopFns.push(watch(
+      () => conversation.currentConversation,
+      () => schedulePersistSave(),
+      { deep: true }
+    ))
     // Persist when switching current conversation (so currentId is saved)
     stopFns.push(watch(() => conversation.currentConversation.id, () => schedulePersistSave()))
     // Persist when conversations are added/removed

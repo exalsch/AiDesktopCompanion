@@ -82,7 +82,11 @@ export async function initGlobalHotkeys(): Promise<void> {
     console.error('[hotkeys] No global hotkeys could be registered. Another app may be using them. Try running as admin or change the hotkey in settings.')
   } else {
     currentShortcut = successes[0] || null
-    console.info('[hotkeys] Registered:', successes.join(', '))
+    // Unregister all but the first successful shortcut to avoid ghost handlers
+    for (let i = 1; i < successes.length; i++) {
+      try { await unregister(successes[i]) } catch {}
+    }
+    console.info('[hotkeys] Registered:', currentShortcut)
   }
 
   // Clean up on hot reload / window unload during dev
@@ -120,7 +124,7 @@ export async function applyGlobalHotkey(shortcut: string | null | undefined): Pr
       throw new Error('Shortcut not registered (possibly in use by another app)')
     }
     // Success: remove previous shortcut (if any) and commit
-    if (currentShortcut) {
+    if (currentShortcut && currentShortcut !== s) {
       try { await unregister(currentShortcut) } catch {}
     }
     currentShortcut = s

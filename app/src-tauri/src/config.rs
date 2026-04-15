@@ -230,10 +230,14 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   // Remove deprecated global MCP auto_connect flag if present
   obj.remove("auto_connect");
   // Pass-through for MCP servers configuration when provided
-  if let Some(ms) = map.get("mcp_servers") { obj.insert("mcp_servers".to_string(), ms.clone()); }
+  if let Some(ms) = map.get("mcp_servers") {
+    if !ms.is_null() { obj.insert("mcp_servers".to_string(), ms.clone()); }
+  }
 
   // Persist Assistant Mode realtime settings when provided
-  if let Some(ar) = map.get("assistant_realtime") { obj.insert("assistant_realtime".to_string(), ar.clone()); }
+  if let Some(ar) = map.get("assistant_realtime") {
+    if !ar.is_null() { obj.insert("assistant_realtime".to_string(), ar.clone()); }
+  }
 
   // New TTS preference keys
   if let Some(e) = map.get("tts_engine").and_then(|x| x.as_str()) { obj.insert("tts_engine".to_string(), serde_json::Value::String(e.to_string())); }
@@ -244,6 +248,10 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   if let Some(om) = map.get("tts_openai_model").and_then(|x| x.as_str()) { obj.insert("tts_openai_model".to_string(), serde_json::Value::String(om.to_string())); }
   if let Some(of) = map.get("tts_openai_format").and_then(|x| x.as_str()) { obj.insert("tts_openai_format".to_string(), serde_json::Value::String(of.to_string())); }
   if let Some(os) = map.get("tts_openai_streaming").and_then(|x| x.as_bool()) { obj.insert("tts_openai_streaming".to_string(), serde_json::Value::Bool(os)); }
+  if let Some(ti) = map.get("tts_openai_instructions").and_then(|x| x.as_str()) { obj.insert("tts_openai_instructions".to_string(), serde_json::Value::String(ti.to_string())); }
+
+  // Tokenizer mode
+  if let Some(tm) = map.get("tokenizer_mode").and_then(|x| x.as_str()) { obj.insert("tokenizer_mode".to_string(), serde_json::Value::String(tm.to_string())); }
 
   // New STT preference keys
   if let Some(se) = map.get("stt_engine").and_then(|x| x.as_str()) { obj.insert("stt_engine".to_string(), serde_json::Value::String(se.to_string())); }
@@ -263,7 +271,9 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   obj.remove("stt_local_base_url");
 
   let pretty = serde_json::to_string_pretty(&serde_json::Value::Object(obj)).map_err(|e| format!("Serialize settings failed: {e}"))?;
-  fs::write(&path, pretty).map_err(|e| format!("Write settings failed: {e}"))?;
+  let tmp_path = path.with_extension("json.tmp");
+  fs::write(&tmp_path, &pretty).map_err(|e| format!("Write settings failed: {e}"))?;
+  fs::rename(&tmp_path, &path).map_err(|e| format!("Rename settings failed: {e}"))?;
   Ok(path.to_string_lossy().to_string())
 }
 
@@ -331,7 +341,9 @@ pub fn save_conversation_state(state: serde_json::Value) -> Result<String, Strin
     fs::create_dir_all(dir).map_err(|e| format!("Failed to create config directory: {e}"))?;
   }
   let pretty = serde_json::to_string_pretty(&state).map_err(|e| format!("Serialize conversation failed: {e}"))?;
-  fs::write(&path, pretty).map_err(|e| format!("Write conversations failed: {e}"))?;
+  let tmp_path = path.with_extension("json.tmp");
+  fs::write(&tmp_path, &pretty).map_err(|e| format!("Write conversations failed: {e}"))?;
+  fs::rename(&tmp_path, &path).map_err(|e| format!("Rename conversations failed: {e}"))?;
   Ok(path.to_string_lossy().to_string())
 }
 

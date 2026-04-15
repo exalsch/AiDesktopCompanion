@@ -39,7 +39,7 @@ export function useThemeStyle(uiStyle: Ref<string>) {
   // React to changes
   watch(uiStyle, (v) => {
     try { applyStyleCss(v) } catch {}
-  })
+  }, { immediate: true })
 
   return { applyStyleCss }
 }

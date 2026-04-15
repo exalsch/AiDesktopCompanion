@@ -55,7 +55,7 @@ export function useTtsBackground(ttsBgRef: Ref<any>) {
     })
     unsubs.push(uSpeaking)
 
-    return () => { try { unsubs.forEach(u => u()) } catch {} }
+    return () => { for (const u of unsubs) { try { u() } catch {} } }
   }
 
   return { ttsBg, registerBackgroundTtsEvents }

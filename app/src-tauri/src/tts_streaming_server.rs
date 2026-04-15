@@ -72,7 +72,7 @@ impl TtsStreamingServer {
                 tokio::time::sleep(Duration::from_secs(60)).await;
                 let mut to_remove: Vec<String> = Vec::new();
                 {
-                    let guard = sessions_for_cleanup.lock().unwrap();
+                    let guard = sessions_for_cleanup.lock().unwrap_or_else(|e| e.into_inner());
                     for (k, v) in guard.iter() {
                         let age = v.created_at.elapsed();
                         if age > ttl && !v.started.load(Ordering::SeqCst) {
@@ -81,7 +81,7 @@ impl TtsStreamingServer {
                     }
                 }
                 if !to_remove.is_empty() {
-                    let mut guard = sessions_for_cleanup.lock().unwrap();
+                    let mut guard = sessions_for_cleanup.lock().unwrap_or_else(|e| e.into_inner());
                     for k in to_remove {
                         guard.remove(&k);
                     }
@@ -107,13 +107,13 @@ impl TtsStreamingServer {
             started: Arc::new(AtomicBool::new(false)),
         };
         
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
         sessions.insert(session_id.clone(), session);
         session_id
     }
     
     pub fn stop_session(&self, session_id: &str) -> bool {
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(sess) = sessions.get(session_id) {
             sess.cancel.store(true, Ordering::SeqCst);
         }
@@ -125,13 +125,13 @@ impl TtsStreamingServer {
     }
 
     pub fn count_sessions(&self) -> usize {
-        let guard = self.sessions.lock().unwrap();
+        let guard = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
         guard.len()
     }
 
     pub fn cleanup_idle(&self, ttl: Duration) -> usize {
         let mut removed = 0usize;
-        let mut guard = self.sessions.lock().unwrap();
+        let mut guard = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
         let keys: Vec<String> = guard
             .iter()
             .filter_map(|(k, v)| {
@@ -173,7 +173,7 @@ async fn handle_tts_stream(
 ) -> Result<Response<Body>, hyper::Error> {
     // Get session details
     let (session_opt, cancel_flag, started_flag) = {
-        let sessions_guard = sessions.lock().unwrap();
+        let sessions_guard = sessions.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(s) = sessions_guard.get(session_id) {
             (Some(s.clone()), s.cancel.clone(), s.started.clone())
         } else { (None, Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false))) }
@@ -256,7 +256,7 @@ async fn handle_tts_stream(
         let cleaned_flag = cleaned;
         let maybe_cleanup = |sessions_map: &Arc<Mutex<HashMap<String, StreamingSession>>>, sid: &str, cleaned: &mut bool| {
             if !*cleaned {
-                let mut guard = sessions_map.lock().unwrap();
+                let mut guard = sessions_map.lock().unwrap_or_else(|e| e.into_inner());
                 guard.remove(sid);
                 *cleaned = true;
             }

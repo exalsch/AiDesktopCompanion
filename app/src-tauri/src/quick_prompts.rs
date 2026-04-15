@@ -510,6 +510,8 @@ pub fn save_quick_prompts(map: serde_json::Value) -> Result<String, String> {
 
   let pretty = serde_json::to_string_pretty(&serde_json::Value::Object(obj))
     .map_err(|e| format!("Serialize prompts failed: {e}"))?;
-  fs::write(&path, pretty).map_err(|e| format!("Write config failed: {e}"))?;
+  let tmp_path = path.with_extension("json.tmp");
+  fs::write(&tmp_path, &pretty).map_err(|e| format!("Write config failed: {e}"))?;
+  fs::rename(&tmp_path, &path).map_err(|e| format!("Rename config failed: {e}"))?;
   Ok(path.to_string_lossy().to_string())
 }

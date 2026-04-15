@@ -68,7 +68,15 @@ function onToggle(serverId: string, tool: string, enabled: boolean) {
 }
 
 watch(
-  () => props.messages.length,
+  () => {
+    const len = props.messages.length
+    const last = len > 0 ? props.messages[len - 1] : null
+    return {
+      len,
+      lastText: last?.text,
+      lastToolStatus: last?.tool?.status,
+    }
+  },
   async () => {
     await nextTick()
     const el = listRef.value

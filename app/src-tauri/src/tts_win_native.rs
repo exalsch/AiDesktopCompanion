@@ -66,6 +66,22 @@ pub fn local_tts_stop() -> Result<(), String> {
 pub fn local_tts_stop() -> Result<(), String> { Err("TTS not implemented on this platform".into()) }
 
 #[cfg(target_os = "windows")]
+pub fn local_tts_is_speaking() -> bool {
+  if let Ok(mut guard) = TTS_CHILD.lock() {
+    if let Some(ref mut c) = *guard {
+      match c.try_wait() {
+        Ok(Some(_)) => { guard.take(); false }
+        Ok(None) => true,
+        Err(_) => { guard.take(); false }
+      }
+    } else { false }
+  } else { false }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn local_tts_is_speaking() -> bool { false }
+
+#[cfg(target_os = "windows")]
 pub fn local_tts_list_voices() -> Result<Vec<String>, String> {
   let ps = r#"
 Add-Type -AssemblyName System.Speech;

@@ -7,10 +7,12 @@ import { toggleQuickActionsWindow } from './popup'
 const app = createApp(App)
 app.mount('#app')
 
-// Initialize global hotkeys (non-blocking)
-initGlobalHotkeys().catch((err) => console.error('[hotkeys] init failed', err))
+// Only initialize hotkeys and popup toggle in the main window (not in QuickActions or CaptureOverlay)
+const winParam = new URLSearchParams(window.location.search).get('window')
+if (!winParam) {
+  initGlobalHotkeys().catch((err) => console.error('[hotkeys] init failed', err))
 
-// Bind hotkey event to toggle the Quick Actions popup
-window.addEventListener('ai-desktop:hotkey', () => {
-  toggleQuickActionsWindow().catch((err) => console.error('[popup] toggle failed', err))
-})
+  window.addEventListener('ai-desktop:hotkey', () => {
+    toggleQuickActionsWindow().catch((err) => console.error('[popup] toggle failed', err))
+  })
+}

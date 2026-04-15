@@ -1,4 +1,7 @@
 use reqwest;
+use once_cell::sync::Lazy;
+
+static CLIENT: Lazy<reqwest::Client> = Lazy::new(|| reqwest::Client::new());
 
 fn build_transcriptions_url(base_url: &str) -> String {
   let b = base_url.trim().trim_end_matches('/');
@@ -23,7 +26,7 @@ pub async fn transcribe(key: Option<String>, base_url: String, model: String, au
     .text("model", model)
     .part("file", part);
 
-  let client = reqwest::Client::new();
+  let client = &*CLIENT;
   let url = build_transcriptions_url(&base_url);
   let req = client
     .post(url)

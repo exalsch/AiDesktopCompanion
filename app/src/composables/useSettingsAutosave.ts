@@ -4,6 +4,23 @@ import { applyGlobalHotkey, checkShortcutAvailable } from '../hotkeys'
 import { parseArgs, normalizeEnvInput } from './utils'
 import { getPersistState } from '../state/conversation'
 
+// MCP runtime-only fields that should NOT trigger autosave
+const MCP_RUNTIME_KEYS = new Set([
+  'status', 'connecting', 'error', 'tools', 'toolsOpen',
+  'selectedTool', 'toolArgsJson', 'toolArgsError', 'toolResults', 'envError',
+])
+
+/** Return a JSON-serializable snapshot of only the saveable MCP server config */
+function serializableMcpServers(servers: any[]): any[] {
+  return (servers || []).map((s: any) => {
+    const out: any = {}
+    for (const key of Object.keys(s)) {
+      if (!MCP_RUNTIME_KEYS.has(key)) out[key] = s[key]
+    }
+    return out
+  })
+}
+
 export function useSettingsAutosave(settings: any, showToast: (msg: string, kind?: 'error'|'success', ms?: number) => void) {
   let loaded = false
   let timer: any = 0
@@ -16,7 +33,13 @@ export function useSettingsAutosave(settings: any, showToast: (msg: string, kind
     timer = setTimeout(() => { save().catch(err => console.warn('[settings] auto-save failed', err)) }, 600)
   }
 
-  watch(settings, schedule, { deep: true })
+  // Watch only user-facing config — returns a serialized snapshot so Vue
+  // compares by value.  MCP runtime fields (status, tools, etc.) are excluded,
+  // preventing unnecessary save cycles during MCP operations.
+  watch(() => {
+    const { mcp_servers, ...rest } = settings
+    return JSON.stringify({ ...rest, mcp_servers: serializableMcpServers(mcp_servers) })
+  }, schedule)
 
   async function save() {
     try {

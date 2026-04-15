@@ -16,7 +16,7 @@ export function appendMessage(
   }
   state.currentConversation.messages.push(m)
   const t = m.createdAt || Date.now()
-  state.currentConversation.updatedAt = Math.max(state.currentConversation.updatedAt || 0, t)
+  state.currentConversation.updatedAt = Math.max(state.currentConversation.updatedAt ?? 0, t)
   return m
 }
 
@@ -25,12 +25,14 @@ export function updateMessage(id: string, patch: Partial<Message>): Message | nu
   const idx = list.findIndex(m => m.id === id)
   if (idx === -1) return null
   const cur = list[idx]
+  // Strip immutable fields from patch to prevent accidental corruption
+  const { id: _id, createdAt: _ca, ...safePatch } = patch
   const next: Message = {
     ...cur,
-    ...patch,
-    tool: (patch.tool || cur.tool) ? { ...(cur.tool || {}), ...(patch.tool || {}) } : undefined,
+    ...safePatch,
+    tool: (safePatch.tool || cur.tool) ? { ...(cur.tool || {}), ...(safePatch.tool || {}) } : undefined,
   }
   list[idx] = next
-  state.currentConversation.updatedAt = Math.max(state.currentConversation.updatedAt || 0, Date.now())
+  state.currentConversation.updatedAt = Math.max(state.currentConversation.updatedAt ?? 0, Date.now())
   return next
 }

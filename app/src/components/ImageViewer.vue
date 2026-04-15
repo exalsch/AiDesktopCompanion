@@ -15,6 +15,14 @@ watch(
   (v) => { idx.value = v || 0 }
 )
 
+watch(
+  () => props.images.length,
+  (len) => {
+    if (len === 0) return
+    if (idx.value >= len) idx.value = len - 1
+  }
+)
+
 function close() { emit('close') }
 function prev() { if (!props.images.length) return; idx.value = (idx.value - 1 + props.images.length) % props.images.length }
 function next() { if (!props.images.length) return; idx.value = (idx.value + 1) % props.images.length }
