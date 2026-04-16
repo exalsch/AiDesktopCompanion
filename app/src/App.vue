@@ -111,6 +111,8 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  try { flushSettings() } catch {}
+  try { flushPersist() } catch {}
   try { unsubs.forEach(u => u()); } finally { unsubs = [] }
   try { removeBodyClass() } catch {}
 })
@@ -144,12 +146,12 @@ const { settings, models, loadSettings } = useSettings()
 // Aggregate busy state now that models is available
 const { busy, isBusy } = useBusy(computed(() => models.loading))
 // Conversation persistence via composable
-const { loadPersistedConversation, registerConversationPersist } = useConversationPersist(computed(() => settings.persist_conversations), showToast)
+const { loadPersistedConversation, registerConversationPersist, flushPersist } = useConversationPersist(computed(() => settings.persist_conversations), showToast)
 // Theme/style loader via composable
 useThemeStyle(computed(() => settings.ui_style))
 
 // Initialize settings auto-save (silent on success)
-const { setLoaded: setSettingsLoaded } = useSettingsAutosave(settings as any, showToast)
+const { setLoaded: setSettingsLoaded, flush: flushSettings } = useSettingsAutosave(settings as any, showToast)
 // Manual save helper (with success toast)
 const { saveSettingsNow } = useSettingsSave(settings as any, showToast)
 

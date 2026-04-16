@@ -83,9 +83,8 @@ async function unsuppressKeyGlobal(keyChar: string): Promise<void> {
   if (!suppressedKeys.has(upper)) return
   try {
     await unregister(upper)
-    suppressedKeys.delete(upper)
-    dbg(`global suppress unregistered: ${upper}`)
   } catch {}
+  suppressedKeys.delete(upper)  // always clean up tracking regardless of unregister success
 }
 async function unsuppressAllKeys(): Promise<void> {
   for (const k of [...suppressedKeys]) {
@@ -802,7 +801,6 @@ async function onInsert(): Promise<void> {
   height: max-content; /* shrink-wrap */
   width: max-content; /* shrink-wrap horizontally */
   display: grid;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 10px;

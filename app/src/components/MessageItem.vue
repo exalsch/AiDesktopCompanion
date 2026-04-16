@@ -45,8 +45,9 @@ function initMarkdownSingleton(): Promise<(src: string) => string> {
       })
       return (src: string) => DOMPurify.sanitize(md.render(src))
     } catch {
-      // Fallback returned if dynamic imports fail — keeps app functional.
-      return null
+      // Fallback returned if dynamic imports fail — allows retry on next call.
+      _mdReady = null
+      return (src: string) => basicMarkdownFallback(src)
     }
   })()
   return _mdReady as Promise<(src: string) => string>
