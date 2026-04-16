@@ -1,4 +1,4 @@
-// AiDesktopCompanion v0.1.10 build9
+// AiDesktopCompanion v0.1.10 build10
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -82,6 +82,7 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       quick_actions::prompt_action,
       quick_actions::position_quick_actions,
+      quick_actions::clamp_quick_actions_to_screen,
       quick_actions::tts_selection,
       tts_open_with_selection,
       open_tts_with_text,

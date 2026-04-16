@@ -253,6 +253,44 @@ pub fn position_quick_actions(app: tauri::AppHandle) -> Result<(), String> {
   { Ok(()) }
 }
 
+/// Clamp the quick-actions window to screen bounds after a resize.
+/// Reads the current window position and size, then adjusts position if any part is off-screen.
+#[tauri::command]
+pub fn clamp_quick_actions_to_screen(app: tauri::AppHandle) -> Result<(), String> {
+  #[cfg(target_os = "windows")]
+  {
+    use windows::Win32::UI::WindowsAndMessaging::{
+      GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+      SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+    };
+    if let Some(win) = app.get_webview_window("quick-actions") {
+      let pos = win.outer_position().map_err(|e| format!("{e}"))?;
+      let size = win.outer_size().map_err(|e| format!("{e}"))?;
+      unsafe {
+        let screen_x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        let screen_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        let screen_w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        let screen_h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        let w = size.width as i32;
+        let h = size.height as i32;
+        let mut x = pos.x;
+        let mut y = pos.y;
+        let mut changed = false;
+        if x + w > screen_x + screen_w { x = screen_x + screen_w - w; changed = true; }
+        if y + h > screen_y + screen_h { y = screen_y + screen_h - h; changed = true; }
+        if x < screen_x { x = screen_x; changed = true; }
+        if y < screen_y { y = screen_y; changed = true; }
+        if changed {
+          let _ = win.set_position(tauri::Position::Physical(PhysicalPosition::new(x, y)));
+        }
+      }
+    }
+    Ok(())
+  }
+  #[cfg(not(target_os = "windows"))]
+  { Ok(()) }
+}
+
 // File util passthrough
 #[tauri::command]
 pub fn copy_file_to_path(src: String, dest: String, overwrite: Option<bool>) -> Result<String, String> {

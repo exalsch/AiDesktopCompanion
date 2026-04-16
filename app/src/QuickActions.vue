@@ -568,7 +568,10 @@ onMounted(() => {
         if (width !== lastSetWidth || height !== lastSetHeight) {
           lastSetWidth = width
           lastSetHeight = height
-          void w.setSize(new LogicalSize(width, height)).catch(() => {})
+          void w.setSize(new LogicalSize(width, height)).then(() => {
+            // After resize, clamp position so the window stays on-screen
+            void invoke('clamp_quick_actions_to_screen').catch(() => {})
+          }).catch(() => {})
         }
       }
       // Initial fit after mount
