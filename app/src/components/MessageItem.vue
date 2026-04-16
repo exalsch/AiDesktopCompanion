@@ -47,10 +47,17 @@ function initMarkdownSingleton(): Promise<(src: string) => string> {
     } catch {
       // Fallback returned if dynamic imports fail — allows retry on next call.
       _mdReady = null
-      return (src: string) => basicMarkdownFallback(src)
+      return (src: string) => _basicFallback(src)
     }
   })()
   return _mdReady as Promise<(src: string) => string>
+}
+
+// Minimal fallback for when markdown-it/dompurify fail to load (module-level accessible)
+function _basicFallback(input: string): string {
+  let s = (input ?? '').replace(/\r\n/g, '\n')
+  s = _escapeHtml(s)
+  return s.split(/\n\n+/).map(p => `<p>${p.replace(/\n/g, '<br/>')}</p>`).join('')
 }
 </script>
 
