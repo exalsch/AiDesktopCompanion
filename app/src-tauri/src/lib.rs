@@ -7,7 +7,7 @@ pub fn run() {
     .on_window_event(|window, event| {
       if let tauri::WindowEvent::CloseRequested { api, .. } = event {
         // Close-to-tray: prevent app exit and hide the main window
-        if window.label() == "main" {
+        if window.label() == "main" || window.label() == "quick-actions" {
           api.prevent_close();
           let _ = window.hide();
         }
@@ -506,7 +506,11 @@ async fn maybe_post_process_stt_text(text: String, prompt_override: Option<Strin
     ]
   });
 
-  let client = reqwest::Client::new();
+  let client = reqwest::Client::builder()
+    .timeout(std::time::Duration::from_secs(30))
+    .connect_timeout(std::time::Duration::from_secs(10))
+    .build()
+    .unwrap_or_else(|_| reqwest::Client::new());
   // Use the configured base URL for post-processing (respects custom/local LLM endpoints)
   let base_url = config::get_stt_cloud_base_url_from_settings_or_env();
   let b = base_url.trim().trim_end_matches('/');
@@ -750,7 +754,11 @@ async fn chat_complete(app: tauri::AppHandle, messages: Vec<chat::ChatMessage>) 
 #[tauri::command]
 async fn realtime_create_ephemeral_token(model: Option<String>, voice: Option<String>) -> Result<String, String> {
   let key = settings::get_api_key_from_settings_or_env()?;
-  let client = reqwest::Client::new();
+  let client = reqwest::Client::builder()
+    .timeout(std::time::Duration::from_secs(15))
+    .connect_timeout(std::time::Duration::from_secs(10))
+    .build()
+    .unwrap_or_else(|_| reqwest::Client::new());
   let model_name = model.unwrap_or_else(|| "gpt-4o-realtime-preview".to_string());
   let voice_name = voice.unwrap_or_else(|| "verse".to_string());
   let body = serde_json::json!({

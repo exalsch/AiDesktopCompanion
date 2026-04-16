@@ -1,7 +1,13 @@
 use reqwest;
 use once_cell::sync::Lazy;
 
-static CLIENT: Lazy<reqwest::Client> = Lazy::new(|| reqwest::Client::new());
+static CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
+  reqwest::Client::builder()
+    .timeout(std::time::Duration::from_secs(60))
+    .connect_timeout(std::time::Duration::from_secs(10))
+    .build()
+    .unwrap_or_else(|_| reqwest::Client::new())
+});
 
 fn build_transcriptions_url(base_url: &str) -> String {
   let b = base_url.trim().trim_end_matches('/');

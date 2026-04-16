@@ -13,20 +13,28 @@ async function getQaWindow(): Promise<WebviewWindow | null> {
   }
 }
 
+let toggling = false
+
 export async function toggleQuickActionsWindow(): Promise<void> {
-  const w = await getQaWindow()
-  if (!w) { console.error('[popup] quick-actions window not found'); return }
+  if (toggling) return
+  toggling = true
   try {
-    const visible = await w.isVisible()
-    if (visible) {
-      await w.hide()
-    } else {
-      try { await invoke('prepare_quick_actions') } catch (e) { console.warn('[popup] prepare_quick_actions failed', e) }
-      try { await invoke('position_quick_actions') } catch (e) { console.warn('[popup] position_quick_actions failed', e) }
-      await w.show()
-      await w.setFocus()
+    const w = await getQaWindow()
+    if (!w) { console.error('[popup] quick-actions window not found'); return }
+    try {
+      const visible = await w.isVisible()
+      if (visible) {
+        await w.hide()
+      } else {
+        try { await invoke('prepare_quick_actions') } catch (e) { console.warn('[popup] prepare_quick_actions failed', e) }
+        try { await invoke('position_quick_actions') } catch (e) { console.warn('[popup] position_quick_actions failed', e) }
+        await w.show()
+        await w.setFocus()
+      }
+    } catch (err) {
+      console.error('[popup] toggle failed', err)
     }
-  } catch (err) {
-    console.error('[popup] toggle failed', err)
+  } finally {
+    toggling = false
   }
 }

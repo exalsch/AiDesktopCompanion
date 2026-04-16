@@ -37,7 +37,13 @@ export async function stopRecording(): Promise<{ blob: Blob, mime: string } | nu
   const mime = recorder.mimeType
   const r = recorder
   return await new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      console.warn('[stt] onstop timeout — forcing cleanup')
+      cleanup()
+      resolve(null)
+    }, 5000)
     r.onstop = async () => {
+      clearTimeout(timeout)
       try {
         const blob = new Blob(chunks, { type: mime })
         resolve({ blob, mime })
@@ -51,6 +57,7 @@ export async function stopRecording(): Promise<{ blob: Blob, mime: string } | nu
     try {
       r.stop()
     } catch (e) {
+      clearTimeout(timeout)
       console.error('[stt] recorder.stop() failed', e)
       cleanup()
       resolve(null)

@@ -67,9 +67,11 @@ pub fn load_settings_json() -> serde_json::Value {
 pub fn get_api_key_from_settings_or_env() -> Result<String, String> {
   let v = load_settings_json();
   if let Some(s) = v.get("openai_api_key").and_then(|x| x.as_str()) {
-    if !s.trim().is_empty() { return Ok(s.to_string()); }
+    if !s.trim().is_empty() { return Ok(s.trim().to_string()); }
   }
-  std::env::var("OPENAI_API_KEY").map_err(|_| "OPENAI_API_KEY not set in settings or environment".to_string())
+  std::env::var("OPENAI_API_KEY")
+    .map(|s| s.trim().to_string())
+    .map_err(|_| "OPENAI_API_KEY not set in settings or environment".to_string())
 }
 
 pub fn get_model_from_settings_or_env() -> String {
@@ -273,6 +275,9 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   let pretty = serde_json::to_string_pretty(&serde_json::Value::Object(obj)).map_err(|e| format!("Serialize settings failed: {e}"))?;
   let tmp_path = path.with_extension("json.tmp");
   fs::write(&tmp_path, &pretty).map_err(|e| format!("Write settings failed: {e}"))?;
+  // On Windows, fs::rename fails if target exists — remove first
+  #[cfg(target_os = "windows")]
+  { if path.exists() { let _ = fs::remove_file(&path); } }
   fs::rename(&tmp_path, &path).map_err(|e| format!("Rename settings failed: {e}"))?;
   Ok(path.to_string_lossy().to_string())
 }
@@ -343,6 +348,8 @@ pub fn save_conversation_state(state: serde_json::Value) -> Result<String, Strin
   let pretty = serde_json::to_string_pretty(&state).map_err(|e| format!("Serialize conversation failed: {e}"))?;
   let tmp_path = path.with_extension("json.tmp");
   fs::write(&tmp_path, &pretty).map_err(|e| format!("Write conversations failed: {e}"))?;
+  #[cfg(target_os = "windows")]
+  { if path.exists() { let _ = fs::remove_file(&path); } }
   fs::rename(&tmp_path, &path).map_err(|e| format!("Rename conversations failed: {e}"))?;
   Ok(path.to_string_lossy().to_string())
 }

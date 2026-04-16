@@ -58,38 +58,6 @@ const debugOn = ref(false)
 const lastHideReason = ref('')
 const allowPreviewHotkeys = true
 
-// Global S-key suppression during STT recording.
-// While recording, we register a global shortcut that swallows the S key so other apps
-// don't receive repeated "s" characters when the user holds S and switches focus.
-let sKeyGlobalRegistered = false
-async function registerSKeyGlobal(): Promise<void> {
-  if (sKeyGlobalRegistered) return
-  try {
-    await register('S', (event) => {
-      // On key release, trigger stop+transcribe
-      if (event.state === 'Released' && sttRecording.value) {
-        void stopSTTAndTranscribe()
-      }
-      // Swallow all S key events (press + release) while recording
-    })
-    sKeyGlobalRegistered = true
-    dbg('S-key global shortcut registered')
-  } catch (err) {
-    // If registration fails (e.g. another app holds S), just log and continue
-    console.warn('[quick-actions] failed to register global S shortcut', err)
-  }
-}
-async function unregisterSKeyGlobal(): Promise<void> {
-  if (!sKeyGlobalRegistered) return
-  try {
-    await unregister('S')
-    sKeyGlobalRegistered = false
-    dbg('S-key global shortcut unregistered')
-  } catch (err) {
-    console.warn('[quick-actions] failed to unregister global S shortcut', err)
-  }
-}
-
 // Generic temporary global key suppression.
 // Registers a global shortcut for a key so it doesn't leak into other apps,
 // then auto-unregisters on keyup (via the global shortcut callback).
@@ -266,6 +234,7 @@ function onKeydown(e: KeyboardEvent): void {
   // Register global shortcut to swallow key repeats if user switches focus while holding
   if (['p', 't', 's', 'i'].includes(key)) {
     e.preventDefault()
+    if (e.repeat) return  // skip key repeats
     if (key === 's') {
       void startSTT()
     } else {
@@ -283,7 +252,12 @@ function onKeydown(e: KeyboardEvent): void {
   // Suppress globally to prevent "111" in target apps
   if (key >= '1' && key <= '9') {
     e.preventDefault()
-    void suppressKeyGlobal(key)
+    if (e.repeat) return  // skip key repeats
+    const numKey = key
+    void suppressKeyGlobal(key, () => {
+      // Fire the quick prompt action if released via global shortcut (focus switched)
+      onKeyup(new KeyboardEvent('keyup', { key: numKey }))
+    })
     return
   }
   // Escape closes the popup or goes back from info
@@ -476,6 +450,7 @@ async function stopSTTAndTranscribe(): Promise<void> {
     }
     return
   }
+  sttRecording.value = false  // eagerly claim to prevent concurrent entry
   // Immediately unregister global S-key so it doesn't interfere after recording
   await unsuppressKeyGlobal('S')
   try {
@@ -584,7 +559,7 @@ onMounted(() => {
         const rect = el.getBoundingClientRect()
         const width = Math.ceil(rect.width)
         const height = Math.ceil(rect.height)
-        if (width !== lastSetWidth || height !== lastSetHeight) {
+        if (Math.abs(width - lastSetWidth) > 1 || Math.abs(height - lastSetHeight) > 1) {
           lastSetWidth = width
           lastSetHeight = height
           void w.setSize(new LogicalSize(width, height)).then(() => {

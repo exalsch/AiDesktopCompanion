@@ -197,12 +197,12 @@ pub fn consume_leading_newlines(buf: &mut Vec<u8>) -> usize {
 
 pub fn extract_sse_data(ev_bytes: &[u8]) -> Option<String> {
   let text = String::from_utf8_lossy(ev_bytes);
-  let mut data: Option<String> = None;
+  let mut parts: Vec<String> = Vec::new();
   for line in text.lines() {
     let line = line.trim_start();
-    if let Some(rest) = line.strip_prefix("data:") { data = Some(rest.trim_start().to_string()); }
+    if let Some(rest) = line.strip_prefix("data:") { parts.push(rest.trim_start().to_string()); }
   }
-  data
+  if parts.is_empty() { None } else { Some(parts.join("\n")) }
 }
 
 // ---------------------------
