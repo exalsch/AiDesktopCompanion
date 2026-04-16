@@ -200,7 +200,7 @@ pub async fn chat_complete_with_mcp(
     break;
   }
 
-  Ok(final_text.unwrap_or_else(|| "".to_string()))
+  Ok(final_text.unwrap_or_else(|| "(Tool call loop exhausted after 6 rounds — no final response from model.)".to_string()))
 }
 
 #[derive(Debug, Deserialize)]

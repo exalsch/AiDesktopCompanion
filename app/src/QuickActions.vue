@@ -230,8 +230,8 @@ function onKeydown(e: KeyboardEvent): void {
   }
   // P/T/I: only preventDefault on keydown to suppress repeats; action fires on keyup
   // S: start recording on keydown (push-to-talk)
-  // Register global shortcut to swallow key repeats if user switches focus while holding
-  if (['p', 't', 's', 'i'].includes(key)) {
+  // Only active in home mode — info and preview have their own key handling
+  if (uiMode.value === 'home' && ['p', 't', 's', 'i'].includes(key)) {
     e.preventDefault()
     if (e.repeat) return  // skip key repeats
     if (key === 's') {
@@ -247,9 +247,8 @@ function onKeydown(e: KeyboardEvent): void {
     }
     return
   }
-  // Number keys 1–9: only preventDefault on keydown; action fires on keyup
-  // Suppress globally to prevent "111" in target apps
-  if (key >= '1' && key <= '9') {
+  // Number keys 1–9: only in home mode; action fires on keyup
+  if (uiMode.value === 'home' && key >= '1' && key <= '9') {
     e.preventDefault()
     if (e.repeat) return  // skip key repeats
     const numKey = key
@@ -286,6 +285,8 @@ function onKeyup(e: KeyboardEvent): void {
     return
   }
   // P/T/I fire on keyup so the key is already released before focus changes
+  // Only in home mode
+  if (uiMode.value !== 'home' && ['p', 't', 'i'].includes(key)) return
   if (key === 'p') { e.preventDefault(); void unsuppressKeyGlobal('P'); handleAction('prompt'); return }
   if (key === 't') { e.preventDefault(); void unsuppressKeyGlobal('T'); handleAction('tts'); return }
   if (key === 'i') { e.preventDefault(); void unsuppressKeyGlobal('I'); handleAction('image'); return }
@@ -294,10 +295,11 @@ function onKeyup(e: KeyboardEvent): void {
     if (key === 'c' && !previewBusy.value && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); void onCopy(); return }
     if (key === 'v' && !previewBusy.value && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); void onInsert(); return }
   }
-  // Number keys 1–9 trigger quick prompts on keyup
+  // Number keys 1–9 trigger quick prompts on keyup (only in home mode)
   if (key >= '1' && key <= '9') {
     e.preventDefault()
     void unsuppressKeyGlobal(key)
+    if (uiMode.value !== 'home') return
     const index = Number(key)
     dbg('number key released', index, { showPreviewInPopup: showPreviewInPopup.value })
     if (showPreviewInPopup.value) {
