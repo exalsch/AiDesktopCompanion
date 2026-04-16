@@ -67,9 +67,15 @@ function onToggle(serverId: string, tool: string, enabled: boolean) {
   emit('toggle-tool', { serverId, tool, enabled })
 }
 
+// Track whether user has scrolled up from the bottom
+const userScrolledUp = ref(false)
+function onListScroll() {
+  const el = listRef.value
+  if (!el) return
+  userScrolledUp.value = el.scrollTop + el.clientHeight < el.scrollHeight - 40
+}
+
 // Watch individual primitive values so Vue can skip callbacks when nothing changed.
-// Returning an object from the getter creates a new reference each tick, causing
-// the watcher to fire continuously and force-scrolling the user to the bottom.
 watch(
   () => {
     const len = props.messages.length
@@ -83,7 +89,7 @@ watch(
   async () => {
     await nextTick()
     const el = listRef.value
-    if (el) el.scrollTop = el.scrollHeight
+    if (el && !userScrolledUp.value) el.scrollTop = el.scrollHeight
   }
 )
 
@@ -131,7 +137,7 @@ const conversationTokenSummary = computed(() => {
     </div>
 
 
-    <div ref="listRef" class="list convo-wrap">
+    <div ref="listRef" class="list convo-wrap" @scroll="onListScroll">
       <MessageItem v-for="m in messages" :key="m.id" :message="m" :hide-tool-details="props.hideToolDetails" :is-playing="!!props.ttsPlaying && props.ttsPlayingId === m.id" @image-click="onImageClick" />
     </div>
     <div class="convo-footer">

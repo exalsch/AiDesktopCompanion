@@ -682,6 +682,7 @@ onBeforeUnmount(() => {
   try { if (unlistenFocus) unlistenFocus() } catch {}
   try { if (unlistenHide) unlistenHide() } catch {}
   try { if (resizeObserver) resizeObserver.disconnect() } catch {}
+  if (blurCloseTimer) { clearTimeout(blurCloseTimer); blurCloseTimer = null }
   // Clean up all global key suppressions
   void unsuppressAllKeys()
 })
