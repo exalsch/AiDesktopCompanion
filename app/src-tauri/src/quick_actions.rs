@@ -79,12 +79,11 @@ pub fn focus_prev_then_copy_selection(app: tauri::AppHandle, safe_mode: Option<b
   if !safe {
     #[cfg(target_os = "windows")]
     unsafe {
-      use windows::Win32::UI::WindowsAndMessaging::{SetForegroundWindow, ShowWindow, SW_RESTORE};
+      use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
       if let Ok(guard) = LAST_FOREGROUND.lock() {
         if let Some(hraw) = *guard {
           let hwnd = HWND(hraw as *mut c_void);
-          // Best-effort: restore if minimized then bring to foreground
-          let _ = ShowWindow(hwnd, SW_RESTORE);
+          // Only SetForegroundWindow — no ShowWindow(SW_RESTORE) to avoid resizing maximized windows
           let _ = SetForegroundWindow(hwnd);
           thread::sleep(Duration::from_millis(80));
         }

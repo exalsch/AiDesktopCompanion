@@ -90,6 +90,41 @@ async function unregisterSKeyGlobal(): Promise<void> {
   }
 }
 
+// Generic temporary global key suppression.
+// Registers a global shortcut for a key so it doesn't leak into other apps,
+// then auto-unregisters on keyup (via the global shortcut callback).
+const suppressedKeys = new Set<string>()
+async function suppressKeyGlobal(keyChar: string, onRelease?: () => void): Promise<void> {
+  const upper = keyChar.toUpperCase()
+  if (suppressedKeys.has(upper)) return
+  try {
+    await register(upper, (event) => {
+      if (event.state === 'Released') {
+        void unsuppressKeyGlobal(upper)
+        onRelease?.()
+      }
+    })
+    suppressedKeys.add(upper)
+    dbg(`global suppress registered: ${upper}`)
+  } catch {
+    // Best-effort; if it fails the key just leaks through
+  }
+}
+async function unsuppressKeyGlobal(keyChar: string): Promise<void> {
+  const upper = keyChar.toUpperCase()
+  if (!suppressedKeys.has(upper)) return
+  try {
+    await unregister(upper)
+    suppressedKeys.delete(upper)
+    dbg(`global suppress unregistered: ${upper}`)
+  } catch {}
+}
+async function unsuppressAllKeys(): Promise<void> {
+  for (const k of [...suppressedKeys]) {
+    await unsuppressKeyGlobal(k)
+  }
+}
+
 function clearPreviewState(): void {
   try { sessionStorage.removeItem('qa_show_preview') } catch {}
   try { sessionStorage.removeItem('qa_preview_text') } catch {}
@@ -226,15 +261,27 @@ function onKeydown(e: KeyboardEvent): void {
   }
   // P/T/I: only preventDefault on keydown to suppress repeats; action fires on keyup
   // S: start recording on keydown (push-to-talk)
+  // Register global shortcut to swallow key repeats if user switches focus while holding
   if (['p', 't', 's', 'i'].includes(key)) {
     e.preventDefault()
-    if (key === 's') void startSTT()
-    // P, T, I are handled in onKeyup
+    if (key === 's') {
+      void startSTT()
+    } else {
+      // Suppress P/T/I globally until keyup
+      void suppressKeyGlobal(key.toUpperCase(), () => {
+        // If released via global shortcut (focus switched), fire action
+        if (key === 'p') handleAction('prompt')
+        else if (key === 't') handleAction('tts')
+        else if (key === 'i') handleAction('image')
+      })
+    }
     return
   }
   // Number keys 1–9: only preventDefault on keydown; action fires on keyup
+  // Suppress globally to prevent "111" in target apps
   if (key >= '1' && key <= '9') {
     e.preventDefault()
+    void suppressKeyGlobal(key)
     return
   }
   // Escape closes the popup
@@ -259,9 +306,9 @@ function onKeyup(e: KeyboardEvent): void {
     return
   }
   // P/T/I fire on keyup so the key is already released before focus changes
-  if (key === 'p') { e.preventDefault(); handleAction('prompt'); return }
-  if (key === 't') { e.preventDefault(); handleAction('tts'); return }
-  if (key === 'i') { e.preventDefault(); handleAction('image'); return }
+  if (key === 'p') { e.preventDefault(); void unsuppressKeyGlobal('P'); handleAction('prompt'); return }
+  if (key === 't') { e.preventDefault(); void unsuppressKeyGlobal('T'); handleAction('tts'); return }
+  if (key === 'i') { e.preventDefault(); void unsuppressKeyGlobal('I'); handleAction('image'); return }
   // Preview mode hotkeys on keyup
   if (uiMode.value === 'preview' && allowPreviewHotkeys) {
     if (key === 'c' && !previewBusy.value && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); void onCopy(); return }
@@ -270,6 +317,7 @@ function onKeyup(e: KeyboardEvent): void {
   // Number keys 1–9 trigger quick prompts on keyup
   if (key >= '1' && key <= '9') {
     e.preventDefault()
+    void unsuppressKeyGlobal(key)
     const index = Number(key)
     dbg('number key released', index, { showPreviewInPopup: showPreviewInPopup.value })
     if (showPreviewInPopup.value) {
@@ -381,7 +429,10 @@ async function startSTT(): Promise<void> {
     await sttStart()
     sttRecording.value = true
     // Register global S-key shortcut to prevent "sssss" in other apps while user holds S
-    await registerSKeyGlobal()
+    await suppressKeyGlobal('S', () => {
+      // On key release via global shortcut (user switched focus while holding S)
+      if (sttRecording.value) void stopSTTAndTranscribe()
+    })
     console.info('[stt] recording started')
     // If stop was requested while we were awaiting mic permission, stop now
     if (sttStopRequested.value) {
@@ -407,7 +458,7 @@ async function stopSTTAndTranscribe(): Promise<void> {
     return
   }
   // Immediately unregister global S-key so it doesn't interfere after recording
-  await unregisterSKeyGlobal()
+  await unsuppressKeyGlobal('S')
   try {
     const res = await sttStop()
     sttRecording.value = false
@@ -490,7 +541,7 @@ async function stopSTTAndTranscribe(): Promise<void> {
 }
 
 async function cancelSTT(): Promise<void> {
-  await unregisterSKeyGlobal()
+  await unsuppressKeyGlobal('S')
   try {
     if (sttIsRecording()) await sttStop()
   } catch {}
@@ -627,8 +678,8 @@ onBeforeUnmount(() => {
   try { if (unlistenFocus) unlistenFocus() } catch {}
   try { if (unlistenHide) unlistenHide() } catch {}
   try { if (resizeObserver) resizeObserver.disconnect() } catch {}
-  // Clean up global S-key shortcut if still registered
-  void unregisterSKeyGlobal()
+  // Clean up all global key suppressions
+  void unsuppressAllKeys()
 })
 
 // Copy preview result to clipboard and close popup
