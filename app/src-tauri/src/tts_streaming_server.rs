@@ -209,7 +209,7 @@ async fn handle_tts_stream(
     body_obj.insert("model".to_string(), serde_json::Value::String(session.model.clone()));
     body_obj.insert("input".to_string(), serde_json::Value::String(session.text.clone()));
     body_obj.insert("voice".to_string(), serde_json::Value::String(session.voice.clone()));
-    body_obj.insert("format".to_string(), serde_json::Value::String(session.format.clone()));
+    body_obj.insert("response_format".to_string(), serde_json::Value::String(session.format.clone()));
     if let Some(instr) = &session.instructions {
         if !instr.trim().is_empty() {
             body_obj.insert("instructions".to_string(), serde_json::Value::String(instr.clone()));

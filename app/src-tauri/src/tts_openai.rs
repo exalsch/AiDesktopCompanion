@@ -95,7 +95,7 @@ pub fn openai_stream_start(
   };
   let m = model.unwrap_or_else(|| "gpt-4o-mini-tts".to_string());
   let v = voice.unwrap_or_else(|| "alloy".to_string());
-  let body = serde_json::json!({ "model": m, "input": text, "voice": v, "format": body_format });
+  let body = serde_json::json!({ "model": m, "input": text, "voice": v, "response_format": body_format });
 
   let (tx, rx) = oneshot::channel::<()>();
   let id = STREAM_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
@@ -332,7 +332,7 @@ pub async fn openai_synthesize_file(
   body_obj.insert("model".to_string(), serde_json::Value::String(m));
   body_obj.insert("input".to_string(), serde_json::Value::String(text));
   body_obj.insert("voice".to_string(), serde_json::Value::String(v));
-  body_obj.insert("format".to_string(), serde_json::Value::String(body_format.to_string()));
+  body_obj.insert("response_format".to_string(), serde_json::Value::String(body_format.to_string()));
   if let Some(instr) = instructions {
     if !instr.trim().is_empty() {
       body_obj.insert("instructions".to_string(), serde_json::Value::String(instr));
