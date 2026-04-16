@@ -137,9 +137,11 @@ function clearPreviewState(): void {
 // Settings-driven behavior: show result preview in popup for quick prompts
 const showPreviewInPopup = ref(false)
 // Local UI mode for this popup: 'home' shows action buttons; 'preview' shows result and copy/insert controls
-const uiMode = ref<'home' | 'preview'>('home')
+const uiMode = ref<'home' | 'preview' | 'info'>('home')
 const previewBusy = ref(false)
 const previewText = ref('')
+// Quick prompts map for info display (1-9 → prompt text)
+const quickPromptsMap = ref<Record<string, string>>({})
 // Control whether focus handler resets the UI; when we re-show for preview, we skip one reset
 const resetOnFocus = ref(true)
 // During preview capture and re-show, ignore blur-triggered auto-close
@@ -284,17 +286,22 @@ function onKeydown(e: KeyboardEvent): void {
     void suppressKeyGlobal(key)
     return
   }
-  // Escape closes the popup
+  // Escape closes the popup or goes back from info
   if (key === 'escape') {
     e.preventDefault()
     dbg('ESC pressed')
     if (sttRecording.value) {
-      // Cancel recording and close without transcribe
       void cancelSTT()
+    } else if (uiMode.value === 'info') {
+      uiMode.value = 'home'
     } else {
       clearPreviewState()
       void hidePopup('esc', true)
     }
+  }
+  // ? key toggles info panel
+  if (key === '?' || (key === '/' && e.shiftKey)) {
+    e.preventDefault()
   }
 }
 
@@ -374,6 +381,12 @@ function onKeyup(e: KeyboardEvent): void {
     }
     return
   }
+  // ? key toggles info panel on keyup
+  if (key === '?' || (key === '/' && e.shiftKey)) {
+    e.preventDefault()
+    uiMode.value = uiMode.value === 'info' ? 'home' : 'info'
+    return
+  }
 }
 
 function onWindowBlur(): void {
@@ -386,7 +399,7 @@ function onWindowBlur(): void {
     dbg('onWindowBlur timer fire', { captureInProgress: captureInProgress.value, suppress: suppressCloseUntil.value - Date.now(), uiMode: uiMode.value })
     if (captureInProgress.value) return
     if (Date.now() < suppressCloseUntil.value) return
-    if (uiMode.value === 'preview') return
+    if (uiMode.value === 'preview' || uiMode.value === 'info') return
     if (!sttRecording.value && !sttPending.value) void hidePopup('blur')
   }, 220)
 }
@@ -402,8 +415,14 @@ function onWindowFocus(): void {
       }
     }).catch(() => {})
   } catch {}
-  // If preview is active, do not reset and do not toggle resetOnFocus
-  if (uiMode.value === 'preview') return
+  // Refresh quick prompts map for info display
+  try {
+    invoke<any>('get_quick_prompts').then((v) => {
+      if (v && typeof v === 'object') quickPromptsMap.value = v
+    }).catch(() => {})
+  } catch {}
+  // If preview or info is active, do not reset
+  if (uiMode.value === 'preview' || uiMode.value === 'info') return
   if (Date.now() < skipResetUntil.value) return
   // Reset UI only for a fresh session (not when we re-show after preview capture)
   if (resetOnFocus.value) {
@@ -624,7 +643,7 @@ onMounted(() => {
         dbg('tauri://blur timer fire', { captureInProgress: captureInProgress.value, suppress: suppressCloseUntil.value - Date.now(), uiMode: uiMode.value })
         if (captureInProgress.value) return
         if (Date.now() < suppressCloseUntil.value) return
-        if (uiMode.value === 'preview') return
+        if (uiMode.value === 'preview' || uiMode.value === 'info') return
         if (!sttRecording.value && !sttPending.value) void hidePopup('tauri://blur')
       }, 220)
     }).then((un) => { unlistenBlur = () => { try { un() } catch {} } }).catch(() => {})
@@ -639,8 +658,14 @@ onMounted(() => {
           }
         }).catch(() => {})
       } catch {}
-      // If preview is active, do not reset and do not toggle resetOnFocus
-      if (uiMode.value === 'preview') return
+      // Refresh quick prompts for info display
+      try {
+        invoke<any>('get_quick_prompts').then((v) => {
+          if (v && typeof v === 'object') quickPromptsMap.value = v
+        }).catch(() => {})
+      } catch {}
+      // If preview or info is active, do not reset
+      if (uiMode.value === 'preview' || uiMode.value === 'info') return
       if (Date.now() < skipResetUntil.value) return
       if (resetOnFocus.value) {
         uiMode.value = 'home'
@@ -747,6 +772,9 @@ async function onInsert(): Promise<void> {
           <span class="letter">I</span>
           <span class="label">Image</span>
         </button>
+        <button class="qa-btn qa-info-btn" @click="uiMode = 'info'" aria-label="Info (?)" title="Show quick prompt assignments">
+          <span class="letter">?</span>
+        </button>
       </div>
       <div class="qa-hint">
         <span v-if="sttRecording" class="rec">
@@ -755,6 +783,24 @@ async function onInsert(): Promise<void> {
           <span v-else> Press 1–9 for post-processing (0 = off)</span>
         </span>
         <span v-else>Press P / T / S / I or 1–9 for quick prompts. Esc to close.</span>
+      </div>
+    </template>
+
+    <template v-else-if="uiMode === 'info'">
+      <div class="qa-info">
+        <div class="qa-info-header">
+          <span class="qa-info-title">Quick Prompt Assignments</span>
+          <button class="icon-btn" title="Back (Esc)" aria-label="Back" @click="uiMode = 'home'">✕</button>
+        </div>
+        <div class="qa-info-list">
+          <div v-for="n in 9" :key="n" class="qa-info-row">
+            <span class="qa-info-key">{{ n }}</span>
+            <span class="qa-info-prompt" :class="{ empty: !quickPromptsMap[String(n)] }">
+              {{ quickPromptsMap[String(n)] ? quickPromptsMap[String(n)] : '(empty)' }}
+            </span>
+          </div>
+        </div>
+        <div class="qa-hint">Press a number key to run. Hold S + number for STT with post-processing.</div>
       </div>
     </template>
 
@@ -812,6 +858,7 @@ async function onInsert(): Promise<void> {
 }
 .qa-btn:hover { background: var(--adc-accent); border-color: var(--adc-accent); color: #fff; }
 
+.qa-info-btn { padding: 10px 10px; min-width: 0; }
 .letter {
   font-weight: 800;
   text-decoration: underline; /* mnemonic underline */
@@ -829,4 +876,13 @@ async function onInsert(): Promise<void> {
 .icon-btn:hover { background: var(--adc-accent); border-color: var(--adc-accent); color: #fff; }
 .qa-result-body { max-width: 640px; max-height: 360px; overflow: auto; border: 1px solid var(--adc-border); border-radius: 8px; padding: 8px; background: var(--adc-surface); }
 .qa-pre { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; margin: 0; }
+
+.qa-info { display: flex; flex-direction: column; gap: 6px; min-width: 280px; max-width: 480px; }
+.qa-info-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.qa-info-title { font-weight: 700; font-size: 13px; }
+.qa-info-list { display: flex; flex-direction: column; gap: 3px; }
+.qa-info-row { display: flex; gap: 8px; align-items: baseline; font-size: 12px; }
+.qa-info-key { font-weight: 800; min-width: 16px; text-align: center; color: var(--adc-accent, #4a9eff); }
+.qa-info-prompt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 400px; }
+.qa-info-prompt.empty { color: var(--adc-fg-muted); font-style: italic; }
 </style>
