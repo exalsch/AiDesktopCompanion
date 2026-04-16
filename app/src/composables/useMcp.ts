@@ -35,9 +35,8 @@ export function useMcp(settings: any, showToast: (msg: string, kind?: 'error' | 
     } catch (err) {
       const msg = typeof err === 'string' ? err : (err && (err as any).message) ? (err as any).message : 'Unknown error'
       s.error = msg
-      showToast(`Connect failed: ${msg}`, 'error')
-    } finally {
       s.connecting = false
+      showToast(`Connect failed: ${msg}`, 'error')
     }
   }
 

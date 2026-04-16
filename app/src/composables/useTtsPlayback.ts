@@ -126,14 +126,15 @@ export function useTtsPlayback(notify?: NotifyFn) {
                   notify?.('Failed to load synthesized audio in this format.', 'error')
                 }
               }
-              a.play().catch(async () => {
+              a.play().then(() => {
+                speaking.value = true
+              }).catch(async () => {
                 const recovered = await tryWavFallback()
                 if (!recovered) {
                   speaking.value = false
                   notify?.('Failed to play synthesized audio in this format.', 'error')
                 }
               })
-              speaking.value = true
               a.onended = async () => {
                 speaking.value = false
                 const p = lastPlayTempPath.value
@@ -163,7 +164,7 @@ export function useTtsPlayback(notify?: NotifyFn) {
       } else {
         await stopProxyStreaming()
         const a = playerRef.value
-        if (a) { a.pause(); a.currentTime = 0 }
+        if (a) { a.pause(); a.currentTime = 0; a.onended = null; a.onerror = null }
         const p = lastPlayTempPath.value
         if (p) {
           try { await invoke<boolean>('tts_delete_temp_wav', { path: p }) } catch {}

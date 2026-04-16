@@ -38,7 +38,10 @@ pub async fn ensure_streaming_server() -> Result<(), String> {
   if need_init {
     let server = TtsStreamingServer::new().await.map_err(|e| format!("init streaming server failed: {}", e))?;
     let mut guard = TTS_STREAMING_SERVER.lock().map_err(|_| "Mutex poisoned")?;
-    *guard = Some(server);
+    // Double-check: another task may have initialized while we awaited
+    if guard.is_none() {
+      *guard = Some(server);
+    }
   }
   Ok(())
 }
@@ -156,7 +159,7 @@ pub fn spawn_speech_stream(
   on_remove: impl FnOnce(u64) + Send + 'static,
 ) {
   tauri::async_runtime::spawn(async move {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).connect_timeout(std::time::Duration::from_secs(10)).build().unwrap_or_else(|_| reqwest::Client::new());
     let resp_res = client
       .post("https://api.openai.com/v1/audio/speech")
       .bearer_auth(key)
@@ -214,7 +217,7 @@ pub fn spawn_responses_stream(
   on_remove: impl FnOnce(u64) + Send + 'static,
 ) {
   tauri::async_runtime::spawn(async move {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).connect_timeout(std::time::Duration::from_secs(10)).build().unwrap_or_else(|_| reqwest::Client::new());
     let resp_res = client
       .post("https://api.openai.com/v1/responses")
       .bearer_auth(key)
@@ -320,7 +323,7 @@ pub async fn openai_synthesize_file(
   };
   let m = model.unwrap_or_else(|| "gpt-4o-mini-tts".to_string());
   let v = voice.unwrap_or_else(|| "alloy".to_string());
-  let client = reqwest::Client::new();
+  let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).connect_timeout(std::time::Duration::from_secs(10)).build().unwrap_or_else(|_| reqwest::Client::new());
   let mut body_obj = serde_json::Map::new();
   body_obj.insert("model".to_string(), serde_json::Value::String(m));
   body_obj.insert("input".to_string(), serde_json::Value::String(text));
@@ -373,12 +376,16 @@ pub async fn openai_synthesize_file(
   let mut path = std::env::temp_dir(); path.push(file_name); let target = path.to_string_lossy().to_string();
   let bytes_to_write = resp.bytes().await.map_err(|e| format!("bytes error: {e}"))?;
 
-  if ext == "wav" {
+  let write_result = if ext == "wav" {
     let r = rate.unwrap_or(0).clamp(-10, 10);
     let vol = volume.unwrap_or(100).min(100);
-    write_pcm16_wav_from_any(&bytes_to_write, &target, r, vol)?;
+    write_pcm16_wav_from_any(&bytes_to_write, &target, r, vol)
   } else {
-    std::fs::write(&target, &bytes_to_write).map_err(|e| format!("write failed: {e}"))?;
+    std::fs::write(&target, &bytes_to_write).map_err(|e| format!("write failed: {e}"))
+  };
+  if let Err(e) = write_result {
+    let _ = std::fs::remove_file(&target);
+    return Err(e);
   }
   Ok(target)
 }

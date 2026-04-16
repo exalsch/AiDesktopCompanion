@@ -67,15 +67,18 @@ function onToggle(serverId: string, tool: string, enabled: boolean) {
   emit('toggle-tool', { serverId, tool, enabled })
 }
 
+// Watch individual primitive values so Vue can skip callbacks when nothing changed.
+// Returning an object from the getter creates a new reference each tick, causing
+// the watcher to fire continuously and force-scrolling the user to the bottom.
 watch(
   () => {
     const len = props.messages.length
     const last = len > 0 ? props.messages[len - 1] : null
-    return {
+    return [
       len,
-      lastText: last?.text,
-      lastToolStatus: last?.tool?.status,
-    }
+      last?.text,
+      last?.tool?.status,
+    ] as const
   },
   async () => {
     await nextTick()

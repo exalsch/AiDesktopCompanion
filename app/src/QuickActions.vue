@@ -22,7 +22,7 @@ async function hidePopup(reason?: string, force: boolean = false): Promise<void>
     lastHideReason.value = reason || ''
     // Hard guard: during preview we do not allow auto-close unless explicitly forced
     if (!force) {
-      if (uiMode.value === 'preview' || captureInProgress.value || Date.now() < suppressCloseUntil.value) {
+      if (uiMode.value === 'preview' || uiMode.value === 'info' || captureInProgress.value || Date.now() < suppressCloseUntil.value) {
         dbg('hidePopup() suppressed', { uiMode: uiMode.value, captureInProgress: captureInProgress.value, suppress: suppressCloseUntil.value - Date.now() })
         return
       }

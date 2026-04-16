@@ -23,12 +23,24 @@ export function useConversationPersist(settingsPersistConversations: Ref<boolean
     if (!settingsPersistConversations.value) return
     if (saveDebounce) clearTimeout(saveDebounce)
     saveDebounce = setTimeout(async () => {
+      saveDebounce = 0
       try {
         await invoke<string>('save_conversation_state', { state: getPersistState() })
       } catch (e) {
         console.warn('[persist] save failed', e)
       }
     }, 300)
+  }
+
+  /** Flush pending debounced persist save immediately */
+  function flushPersist() {
+    if (saveDebounce) {
+      clearTimeout(saveDebounce)
+      saveDebounce = 0
+      if (settingsPersistConversations.value) {
+        invoke<string>('save_conversation_state', { state: getPersistState() }).catch(e => console.warn('[persist] flush failed', e))
+      }
+    }
   }
 
   function registerConversationPersist() {
@@ -46,5 +58,5 @@ export function useConversationPersist(settingsPersistConversations: Ref<boolean
     return () => { try { stopFns.forEach(s => s()) } catch {} }
   }
 
-  return { loadPersistedConversation, registerConversationPersist }
+  return { loadPersistedConversation, registerConversationPersist, flushPersist }
 }

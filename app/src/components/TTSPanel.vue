@@ -155,6 +155,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   if (cleanupTimer) clearInterval(cleanupTimer)
+  if (saveDebounce) { clearTimeout(saveDebounce); saveDebounce = 0 }
   if (speaking.value) onStop().catch(() => {})
 })
 

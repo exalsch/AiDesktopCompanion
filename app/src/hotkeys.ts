@@ -21,9 +21,11 @@ export async function checkShortcutAvailable(shortcut: string): Promise<boolean>
   const s = (shortcut || '').trim().replace(/\bWin\b/gi, 'Super')
   if (!s) return false
   try {
-    // If we already have it, consider it available
+    // If we already own this shortcut, it's available
+    if (currentShortcut === s) return true
+    // If someone else holds it, it's NOT available
     const already = await isRegistered(s).catch(() => false)
-    if (already) return true
+    if (already) return false
     // Temporary registration check
     await register(s, () => {})
     const ok = await isRegistered(s).catch(() => false)

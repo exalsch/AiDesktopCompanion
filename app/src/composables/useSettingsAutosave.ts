@@ -98,5 +98,19 @@ export function useSettingsAutosave(settings: any, showToast: (msg: string, kind
     }
   }
 
-  return { setLoaded }
+  /** Flush any pending debounced save immediately */
+  function flush() {
+    if (timer) {
+      clearTimeout(timer)
+      timer = 0
+      save().catch(err => console.warn('[settings] auto-save flush failed', err))
+    }
+  }
+
+  /** Cancel pending save without executing */
+  function cancel() {
+    if (timer) { clearTimeout(timer); timer = 0 }
+  }
+
+  return { setLoaded, flush, cancel }
 }

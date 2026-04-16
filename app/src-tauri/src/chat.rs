@@ -62,7 +62,7 @@ pub async fn chat_complete_with_mcp(
     mcp::build_openai_tools_from_mcp(&*map).await
   };
 
-  let client = reqwest::Client::new();
+  let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).connect_timeout(std::time::Duration::from_secs(10)).build().unwrap_or_else(|_| reqwest::Client::new());
   // Determine whether tools are allowed by scanning system messages for a no-tools directive
   let mut allow_tools = true;
   for m in norm_msgs.iter() {
@@ -279,7 +279,7 @@ pub async fn chat_complete(
     norm_msgs.push(serde_json::json!({ "role": r, "content": content_value }));
   }
 
-  let client = reqwest::Client::new();
+  let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).connect_timeout(std::time::Duration::from_secs(10)).build().unwrap_or_else(|_| reqwest::Client::new());
   // Prepend a short system directive to improve first-call argument completeness
   let sys_tool_guidance = serde_json::json!({
     "role": "system",

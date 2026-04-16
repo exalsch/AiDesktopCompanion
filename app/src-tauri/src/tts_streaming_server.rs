@@ -68,6 +68,7 @@ impl TtsStreamingServer {
         let sessions_for_cleanup = sessions.clone();
         tokio::spawn(async move {
             let ttl = Duration::from_secs(60);
+            let started_ttl = Duration::from_secs(300); // 5 min for active sessions
             loop {
                 tokio::time::sleep(Duration::from_secs(60)).await;
                 let mut to_remove: Vec<String> = Vec::new();
@@ -76,6 +77,8 @@ impl TtsStreamingServer {
                     for (k, v) in guard.iter() {
                         let age = v.created_at.elapsed();
                         if age > ttl && !v.started.load(Ordering::SeqCst) {
+                            to_remove.push(k.clone());
+                        } else if age > started_ttl && v.started.load(Ordering::SeqCst) {
                             to_remove.push(k.clone());
                         }
                     }
@@ -193,7 +196,11 @@ async fn handle_tts_stream(
     started_flag.store(true, Ordering::SeqCst);
     
     // Create OpenAI request
-    let client = Client::new();
+    let client = Client::builder()
+        .timeout(Duration::from_secs(120))
+        .connect_timeout(Duration::from_secs(10))
+        .build()
+        .unwrap_or_else(|_| Client::new());
     // Build JSON body, omitting 'instructions' when not provided
     let mut body_obj = serde_json::Map::new();
     body_obj.insert("model".to_string(), serde_json::Value::String(session.model.clone()));
