@@ -251,6 +251,7 @@ pub fn spawn_responses_stream(
 
     let mut stream = resp.bytes_stream();
     let mut buf: Vec<u8> = Vec::new();
+    let mut done = false;
     loop {
       tokio::select! {
         _ = &mut rx => { let _ = app.emit("tts:stream:cancelled", serde_json::json!({ "id": id })); break; }
@@ -263,25 +264,28 @@ pub fn spawn_responses_stream(
                   let ev_bytes = buf.drain(..pos).collect::<Vec<u8>>();
                   let _ = consume_leading_newlines(&mut buf);
                   if let Some(data_json) = extract_sse_data(&ev_bytes) {
-                    if data_json.trim() == "[DONE]" { let _ = app.emit("tts:stream:end", serde_json::json!({ "id": id })); break; }
+                    if data_json.trim() == "[DONE]" { let _ = app.emit("tts:stream:end", serde_json::json!({ "id": id })); done = true; break; }
                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&data_json) {
                       let typ = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                      if typ == "response.output_audio.delta" {
+                      // OpenAI Responses API uses "response.audio.delta" for audio chunks
+                      if typ == "response.audio.delta" || typ == "response.output_audio.delta" {
                         let b64 = val.get("delta").and_then(|v| v.as_str())
                           .or_else(|| val.get("audio").and_then(|v| v.as_str()))
                           .unwrap_or("");
                         if !b64.is_empty() { let _ = app.emit("tts:stream:chunk", serde_json::json!({ "id": id, "data": b64 })); }
                       } else if typ == "response.completed" {
                         let _ = app.emit("tts:stream:end", serde_json::json!({ "id": id }));
+                        done = true;
                         break;
                       }
                     }
                   }
                 } else { break; }
               }
+              if done { break; }
             }
             Some(Err(e)) => { emit_err(format!("stream error: {e}")); break; }
-            None => { let _ = app.emit("tts:stream:end", serde_json::json!({ "id": id })); break; }
+            None => { if !done { let _ = app.emit("tts:stream:end", serde_json::json!({ "id": id })); } break; }
           }
         }
       }

@@ -16,7 +16,12 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 
 static DEFAULT_MODEL_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin";
 
-static CLIENT: Lazy<reqwest::Client> = Lazy::new(|| reqwest::Client::new());
+static CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
+  reqwest::Client::builder()
+    .connect_timeout(std::time::Duration::from_secs(30))
+    .build()
+    .unwrap_or_else(|_| reqwest::Client::new())
+});
 
 pub(crate) fn models_dir() -> Option<PathBuf> {
   #[cfg(target_os = "windows")]
@@ -96,6 +101,8 @@ async fn ensure_model_file() -> Result<PathBuf, String> {
   let mut f = fs::File::create(&tmp).map_err(|e| format!("write tmp failed: {e}"))?;
   f.write_all(&bytes).map_err(|e| format!("write tmp failed: {e}"))?;
   drop(f);
+  #[cfg(target_os = "windows")]
+  { if path.exists() { let _ = fs::remove_file(&path); } }
   fs::rename(&tmp, &path).map_err(|e| format!("rename model failed: {e}"))?;
   Ok(path)
 }
@@ -135,6 +142,8 @@ pub async fn prefetch_model_with_progress(app: tauri::AppHandle, url_opt: Option
     let _ = app.emit("stt-model-download", serde_json::json!({"kind":"progress","received":received,"total":total}));
   }
   drop(f);
+  #[cfg(target_os = "windows")]
+  { if path.exists() { let _ = fs::remove_file(&path); } }
   fs::rename(&tmp, &path).map_err(|e| format!("rename model failed: {e}"))?;
   let p = path.to_string_lossy().to_string();
   let _ = app.emit("stt-model-download", serde_json::json!({"kind":"done","path":p}));

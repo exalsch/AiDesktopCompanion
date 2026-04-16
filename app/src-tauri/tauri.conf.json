@@ -45,7 +45,6 @@
       "csp": {
         "default-src": ["'self'", "asset:", "http://asset.localhost"],
         "script-src": ["'self'", "'wasm-unsafe-eval'"],
-        "script-src-elem": ["'self'", "'wasm-unsafe-eval'"],
         "connect-src": ["'self'", "ipc:", "http://ipc.localhost", "https://api.openai.com", "asset:", "http://asset.localhost", "http://127.0.0.1"],
         "img-src": ["'self'", "asset:", "http://asset.localhost", "blob:", "data:"],
         "media-src": ["'self'", "asset:", "http://asset.localhost", "blob:", "data:", "http://127.0.0.1"],

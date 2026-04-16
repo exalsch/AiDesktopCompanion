@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use hyper::{Body, Request, Response, Server, StatusCode, Method};
@@ -33,10 +32,13 @@ impl TtsStreamingServer {
     pub async fn new() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let sessions = Arc::new(Mutex::new(HashMap::new()));
         
-        // Find available port
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-        let port = listener.local_addr()?.port();
-        drop(listener);
+        // Find available port and bind once — no TOCTOU gap
+        let std_listener = std::net::TcpListener::bind("127.0.0.1:0")
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
+        std_listener.set_nonblocking(true)
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
+        let port = std_listener.local_addr()
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?.port();
         
         let server = TtsStreamingServer {
             port,
@@ -54,8 +56,9 @@ impl TtsStreamingServer {
             }
         });
         
-        let addr = SocketAddr::from(([127, 0, 0, 1], port));
-        let server_future = Server::bind(&addr).serve(make_svc);
+        let server_future = Server::from_tcp(std_listener)
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?
+            .serve(make_svc);
         
         // Spawn server in background
         tokio::spawn(async move {
