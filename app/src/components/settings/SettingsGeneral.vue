@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
+import { ref, watch, computed, onBeforeUnmount } from 'vue'
 import { checkShortcutAvailable } from '../../hotkeys'
 import { invoke } from '@tauri-apps/api/core'
 
@@ -142,6 +142,10 @@ async function cleanupIdleTtsProxy() {
     ttsQA_Busy.value = false
   }
 }
+
+onBeforeUnmount(() => {
+  if (checkTimer) clearTimeout(checkTimer)
+})
 </script>
 
 <template>
@@ -210,7 +214,7 @@ async function cleanupIdleTtsProxy() {
     </div>
 
     <div class="settings-row col">
-      <label class="label">Temperature: {{ props.settings.temperature.toFixed(2) }}</label>
+      <label class="label">Temperature: {{ Number(props.settings.temperature).toFixed(2) }}</label>
       <input type="range" min="0" max="2" step="0.05" v-model.number="props.settings.temperature" />
       <div class="settings-hint">Lower = deterministic, Higher = creative. Default 1.0</div>
     </div>

@@ -97,7 +97,7 @@ function formatHistoryTimestamp(ts: number): string {
         class="item"
         :class="{ active: isActive(it.id) }"
         :title="it.tooltip"
-        @dblclick="openConversation(it.id)"
+        @click="openConversation(it.id)"
       >
         <div class="title-line">
           <span class="title">{{ it.title }}</span>
@@ -115,8 +115,9 @@ function formatHistoryTimestamp(ts: number): string {
         </div>
         <div v-if="it.subtitle" class="subtitle">{{ it.subtitle }}</div>
       </div>
-      <!-- Confirm Delete Modal -->
-      <div v-if="confirmUi.open" class="modal-backdrop" @click.self="cancelDelete()">
+    </div>
+    <!-- Confirm Delete Modal — outside list for correct stacking -->
+    <div v-if="confirmUi.open" class="modal-backdrop" @click.self="cancelDelete()">
         <div class="modal">
           <div class="modal-header">
             <div class="modal-title">Delete conversation?</div>
@@ -131,7 +132,6 @@ function formatHistoryTimestamp(ts: number): string {
           </div>
         </div>
       </div>
-    </div>
   </div>
 </template>
 

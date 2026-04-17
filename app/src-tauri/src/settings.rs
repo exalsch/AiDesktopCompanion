@@ -15,7 +15,11 @@ pub fn get_temperature_from_settings_or_env() -> Option<f32> {
 #[tauri::command]
 pub async fn list_openai_models() -> Result<Vec<String>, String> {
   let key = get_api_key_from_settings_or_env()?;
-  let client = reqwest::Client::new();
+  let client = reqwest::Client::builder()
+    .timeout(std::time::Duration::from_secs(15))
+    .connect_timeout(std::time::Duration::from_secs(10))
+    .build()
+    .unwrap_or_else(|_| reqwest::Client::new());
   let resp = client
     .get("https://api.openai.com/v1/models")
     .bearer_auth(key)

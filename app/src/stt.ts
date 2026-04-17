@@ -19,12 +19,17 @@ export async function startRecording(preferredMime = 'audio/webm;codecs=opus'): 
   }
   mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
   chunks = []
-  recorder = new MediaRecorder(mediaStream, { mimeType: mime })
-  recorder.ondataavailable = (e) => {
-    if (e.data && e.data.size > 0) chunks.push(e.data)
+  try {
+    recorder = new MediaRecorder(mediaStream, { mimeType: mime })
+    recorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) chunks.push(e.data)
+    }
+    recorder.start()
+    recording = true
+  } catch (e) {
+    cleanup()
+    throw e
   }
-  recorder.start()
-  recording = true
 }
 
 export async function stopRecording(): Promise<{ blob: Blob, mime: string } | null> {
@@ -32,7 +37,13 @@ export async function stopRecording(): Promise<{ blob: Blob, mime: string } | nu
   const mime = recorder.mimeType
   const r = recorder
   return await new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      console.warn('[stt] onstop timeout — forcing cleanup')
+      cleanup()
+      resolve(null)
+    }, 5000)
     r.onstop = async () => {
+      clearTimeout(timeout)
       try {
         const blob = new Blob(chunks, { type: mime })
         resolve({ blob, mime })
@@ -43,7 +54,14 @@ export async function stopRecording(): Promise<{ blob: Blob, mime: string } | nu
         cleanup()
       }
     }
-    r.stop()
+    try {
+      r.stop()
+    } catch (e) {
+      clearTimeout(timeout)
+      console.error('[stt] recorder.stop() failed', e)
+      cleanup()
+      resolve(null)
+    }
     // Let recorder flush; tracks will be stopped in cleanup
   })
 }
@@ -65,7 +83,12 @@ export async function transcodeToWav16kMono(blob: Blob): Promise<Uint8Array> {
   const arrayBuf = await blob.arrayBuffer()
   // Decode using a regular AudioContext first to leverage platform decoders
   const ac = new (window.AudioContext || (window as any).webkitAudioContext)()
-  const decoded = await ac.decodeAudioData(arrayBuf.slice(0) as ArrayBuffer)
+  let decoded: AudioBuffer
+  try {
+    decoded = await ac.decodeAudioData(arrayBuf.slice(0) as ArrayBuffer)
+  } finally {
+    try { await ac.close() } catch {}
+  }
   const duration = decoded.duration
   const targetSampleRate = 16000
   // Number of frames at 16kHz
@@ -76,6 +99,7 @@ export async function transcodeToWav16kMono(blob: Blob): Promise<Uint8Array> {
   src.connect(oac.destination)
   src.start(0)
   const rendered = await oac.startRendering()
+  // OfflineAudioContext auto-closes after rendering — no explicit close() needed
   const ch = rendered.getChannelData(0)
   return encodeWav16kMonoFromFloat32(ch, targetSampleRate)
 }

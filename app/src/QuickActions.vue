@@ -3,7 +3,9 @@ import { onMounted, onBeforeUnmount, ref } from 'vue'
 import { getCurrentWebviewWindow, WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { LogicalSize } from '@tauri-apps/api/dpi'
 import { invoke } from '@tauri-apps/api/core'
+import { emit as emitTauri } from '@tauri-apps/api/event'
 import { startRecording as sttStart, stopRecording as sttStop, isRecording as sttIsRecording, transcodeToWav16kMono } from './stt'
+import { register, unregister } from '@tauri-apps/plugin-global-shortcut'
 
 // Debug helper (enable by setting sessionStorage.setItem('qa_debug', '1'))
 const isDev = (import.meta as any)?.env?.DEV === true
@@ -20,7 +22,7 @@ async function hidePopup(reason?: string, force: boolean = false): Promise<void>
     lastHideReason.value = reason || ''
     // Hard guard: during preview we do not allow auto-close unless explicitly forced
     if (!force) {
-      if (uiMode.value === 'preview' || captureInProgress.value || Date.now() < suppressCloseUntil.value) {
+      if (uiMode.value === 'preview' || uiMode.value === 'info' || captureInProgress.value || Date.now() < suppressCloseUntil.value) {
         dbg('hidePopup() suppressed', { uiMode: uiMode.value, captureInProgress: captureInProgress.value, suppress: suppressCloseUntil.value - Date.now() })
         return
       }
@@ -30,13 +32,7 @@ async function hidePopup(reason?: string, force: boolean = false): Promise<void>
       await w.hide()
       dbg('hidePopup -> hidden')
     } catch (e) {
-      console.warn('[quick-actions] hide failed, trying close()', e)
-      try {
-        await w.close()
-        dbg('hidePopup -> closed')
-      } catch (e2) {
-        console.error('[quick-actions] close failed', e2)
-      }
+      console.warn('[quick-actions] hide failed', e)
     }
   } catch (err) {
     // Fail loud in dev, but don't crash UI
@@ -55,11 +51,46 @@ async function onClosePreview(): Promise<void> {
 
 const sttRecording = ref(false)
 const sttPending = ref(false) // true while requesting mic permission / starting
+const sttStopRequested = ref(false) // true if stop was requested while pending
 const sttPostProcessQuickPromptIndex = ref<number | null>(null)
 const rootRef = ref<HTMLElement | null>(null)
 const debugOn = ref(false)
 const lastHideReason = ref('')
 const allowPreviewHotkeys = true
+
+// Generic temporary global key suppression.
+// Registers a global shortcut for a key so it doesn't leak into other apps,
+// then auto-unregisters on keyup (via the global shortcut callback).
+const suppressedKeys = new Set<string>()
+async function suppressKeyGlobal(keyChar: string, onRelease?: () => void): Promise<void> {
+  const upper = keyChar.toUpperCase()
+  if (suppressedKeys.has(upper)) return
+  try {
+    await register(upper, (event) => {
+      if (event.state === 'Released') {
+        void unsuppressKeyGlobal(upper)
+        onRelease?.()
+      }
+    })
+    suppressedKeys.add(upper)
+    dbg(`global suppress registered: ${upper}`)
+  } catch {
+    // Best-effort; if it fails the key just leaks through
+  }
+}
+async function unsuppressKeyGlobal(keyChar: string): Promise<void> {
+  const upper = keyChar.toUpperCase()
+  if (!suppressedKeys.has(upper)) return
+  try {
+    await unregister(upper)
+  } catch {}
+  suppressedKeys.delete(upper)  // always clean up tracking regardless of unregister success
+}
+async function unsuppressAllKeys(): Promise<void> {
+  for (const k of [...suppressedKeys]) {
+    await unsuppressKeyGlobal(k)
+  }
+}
 
 function clearPreviewState(): void {
   try { sessionStorage.removeItem('qa_show_preview') } catch {}
@@ -73,9 +104,11 @@ function clearPreviewState(): void {
 // Settings-driven behavior: show result preview in popup for quick prompts
 const showPreviewInPopup = ref(false)
 // Local UI mode for this popup: 'home' shows action buttons; 'preview' shows result and copy/insert controls
-const uiMode = ref<'home' | 'preview'>('home')
+const uiMode = ref<'home' | 'preview' | 'info'>('home')
 const previewBusy = ref(false)
 const previewText = ref('')
+// Quick prompts map for info display (1-9 → prompt text)
+const quickPromptsMap = ref<Record<string, string>>({})
 // Control whether focus handler resets the UI; when we re-show for preview, we skip one reset
 const resetOnFocus = ref(true)
 // During preview capture and re-show, ignore blur-triggered auto-close
@@ -86,7 +119,11 @@ const captureInProgress = ref(false)
 const skipResetUntil = ref(0)
 let unlistenBlur: null | (() => void) = null
 let unlistenFocus: null | (() => void) = null
+let unlistenHide: null | (() => void) = null
 let blurCloseTimer: number | null = null
+let resizeObserver: ResizeObserver | null = null
+let lastSetWidth = 0
+let lastSetHeight = 0
 
 async function handleAction(action: 'prompt' | 'tts' | 'stt' | 'image'): Promise<void> {
   dbg('handleAction', action)
@@ -157,6 +194,13 @@ async function handleAction(action: 'prompt' | 'tts' | 'stt' | 'image'): Promise
 }
 
 function onKeydown(e: KeyboardEvent): void {
+  // Intercept Alt+F4 — hide instead of close to keep window alive and avoid reload flicker
+  if (e.key === 'F4' && e.altKey) {
+    e.preventDefault()
+    void hidePopup('alt-f4', true)
+    return
+  }
+
   // Only react to single keys when this window is focused
   const key = e.key.toLowerCase()
 
@@ -180,24 +224,84 @@ function onKeydown(e: KeyboardEvent): void {
     } catch {}
     return
   }
-  // In preview mode, handle copy/insert hotkeys
+  // In preview mode, suppress C/V key repeats on keydown; actions fire on keyup
+  if (uiMode.value === 'preview' && allowPreviewHotkeys) {
+    if ((key === 'c' || key === 'v') && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); return }
+  }
+  // P/T/I: only preventDefault on keydown to suppress repeats; action fires on keyup
+  // S: start recording on keydown (push-to-talk)
+  // Only active in home mode — info and preview have their own key handling
+  if (uiMode.value === 'home' && ['p', 't', 's', 'i'].includes(key)) {
+    e.preventDefault()
+    if (e.repeat) return  // skip key repeats
+    if (key === 's') {
+      void startSTT()
+    } else {
+      // Suppress P/T/I globally until keyup
+      void suppressKeyGlobal(key.toUpperCase(), () => {
+        // If released via global shortcut (focus switched), fire action
+        if (key === 'p') handleAction('prompt')
+        else if (key === 't') handleAction('tts')
+        else if (key === 'i') handleAction('image')
+      })
+    }
+    return
+  }
+  // Number keys 1–9: only in home mode; action fires on keyup
+  if (uiMode.value === 'home' && key >= '1' && key <= '9') {
+    e.preventDefault()
+    if (e.repeat) return  // skip key repeats
+    const numKey = key
+    void suppressKeyGlobal(key, () => {
+      // Fire the quick prompt action if released via global shortcut (focus switched)
+      onKeyup(new KeyboardEvent('keyup', { key: numKey }))
+    })
+    return
+  }
+  // Escape closes the popup or goes back from info
+  if (key === 'escape') {
+    e.preventDefault()
+    dbg('ESC pressed')
+    if (sttRecording.value) {
+      void cancelSTT()
+    } else if (uiMode.value === 'info') {
+      uiMode.value = 'home'
+    } else {
+      clearPreviewState()
+      void hidePopup('esc', true)
+    }
+  }
+  // ? key toggles info panel
+  if (key === '?' || (key === '/' && e.shiftKey)) {
+    e.preventDefault()
+  }
+}
+
+function onKeyup(e: KeyboardEvent): void {
+  const key = e.key.toLowerCase()
+  if (key === 's') {
+    e.preventDefault()
+    void stopSTTAndTranscribe()
+    return
+  }
+  // P/T/I fire on keyup so the key is already released before focus changes
+  // Only in home mode
+  if (uiMode.value !== 'home' && ['p', 't', 'i'].includes(key)) return
+  if (key === 'p') { e.preventDefault(); void unsuppressKeyGlobal('P'); handleAction('prompt'); return }
+  if (key === 't') { e.preventDefault(); void unsuppressKeyGlobal('T'); handleAction('tts'); return }
+  if (key === 'i') { e.preventDefault(); void unsuppressKeyGlobal('I'); handleAction('image'); return }
+  // Preview mode hotkeys on keyup
   if (uiMode.value === 'preview' && allowPreviewHotkeys) {
     if (key === 'c' && !previewBusy.value && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); void onCopy(); return }
     if (key === 'v' && !previewBusy.value && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); void onInsert(); return }
   }
-  if (['p', 't', 's', 'i'].includes(key)) {
-    e.preventDefault()
-    if (key === 'p') handleAction('prompt')
-    else if (key === 't') handleAction('tts')
-    else if (key === 's') void startSTT()
-    else if (key === 'i') handleAction('image')
-    return
-  }
-  // Number keys 1–9 trigger quick prompts (future)
+  // Number keys 1–9 trigger quick prompts on keyup (only in home mode)
   if (key >= '1' && key <= '9') {
     e.preventDefault()
+    void unsuppressKeyGlobal(key)
+    if (uiMode.value !== 'home') return
     const index = Number(key)
-    dbg('number key pressed', index, { showPreviewInPopup: showPreviewInPopup.value })
+    dbg('number key released', index, { showPreviewInPopup: showPreviewInPopup.value })
     if (showPreviewInPopup.value) {
       // Show preview UI and keep this window visible; backend briefly refocuses previous app to copy selection
       uiMode.value = 'preview'
@@ -250,26 +354,13 @@ function onKeydown(e: KeyboardEvent): void {
       void hidePopup('non-preview quick prompt path')
       void invoke('run_quick_prompt', { index, safe_mode: false })
     }
+    return
   }
-  // Escape closes the popup
-  if (key === 'escape') {
+  // ? key toggles info panel on keyup
+  if (key === '?' || (key === '/' && e.shiftKey)) {
     e.preventDefault()
-    dbg('ESC pressed')
-    if (sttRecording.value) {
-      // Cancel recording and close without transcribe
-      void cancelSTT()
-    } else {
-      clearPreviewState()
-      void hidePopup('esc', true)
-    }
-  }
-}
-
-function onKeyup(e: KeyboardEvent): void {
-  const key = e.key.toLowerCase()
-  if (key === 's') {
-    e.preventDefault()
-    void stopSTTAndTranscribe()
+    uiMode.value = uiMode.value === 'info' ? 'home' : 'info'
+    return
   }
 }
 
@@ -283,7 +374,7 @@ function onWindowBlur(): void {
     dbg('onWindowBlur timer fire', { captureInProgress: captureInProgress.value, suppress: suppressCloseUntil.value - Date.now(), uiMode: uiMode.value })
     if (captureInProgress.value) return
     if (Date.now() < suppressCloseUntil.value) return
-    if (uiMode.value === 'preview') return
+    if (uiMode.value === 'preview' || uiMode.value === 'info') return
     if (!sttRecording.value && !sttPending.value) void hidePopup('blur')
   }, 220)
 }
@@ -299,8 +390,14 @@ function onWindowFocus(): void {
       }
     }).catch(() => {})
   } catch {}
-  // If preview is active, do not reset and do not toggle resetOnFocus
-  if (uiMode.value === 'preview') return
+  // Refresh quick prompts map for info display
+  try {
+    invoke<any>('get_quick_prompts').then((v) => {
+      if (v && typeof v === 'object') quickPromptsMap.value = v
+    }).catch(() => {})
+  } catch {}
+  // If preview or info is active, do not reset
+  if (uiMode.value === 'preview' || uiMode.value === 'info') return
   if (Date.now() < skipResetUntil.value) return
   // Reset UI only for a fresh session (not when we re-show after preview capture)
   if (resetOnFocus.value) {
@@ -321,10 +418,21 @@ async function startSTT(): Promise<void> {
   if (sttRecording.value || sttIsRecording() || sttPending.value) return
   try {
     sttPending.value = true
+    sttStopRequested.value = false
     sttPostProcessQuickPromptIndex.value = null
     await sttStart()
     sttRecording.value = true
+    // Register global S-key shortcut to prevent "sssss" in other apps while user holds S
+    await suppressKeyGlobal('S', () => {
+      // On key release via global shortcut (user switched focus while holding S)
+      if (sttRecording.value) void stopSTTAndTranscribe()
+    })
     console.info('[stt] recording started')
+    // If stop was requested while we were awaiting mic permission, stop now
+    if (sttStopRequested.value) {
+      sttStopRequested.value = false
+      void stopSTTAndTranscribe()
+    }
   } catch (err) {
     console.error('[stt] start failed', err)
     // Close popup so user can retry
@@ -336,7 +444,16 @@ async function startSTT(): Promise<void> {
 }
 
 async function stopSTTAndTranscribe(): Promise<void> {
-  if (!sttRecording.value) return
+  if (!sttRecording.value) {
+    // If we're still pending (mic permission), flag for deferred stop
+    if (sttPending.value) {
+      sttStopRequested.value = true
+    }
+    return
+  }
+  sttRecording.value = false  // eagerly claim to prevent concurrent entry
+  // Immediately unregister global S-key so it doesn't interfere after recording
+  await unsuppressKeyGlobal('S')
   try {
     const res = await sttStop()
     sttRecording.value = false
@@ -370,10 +487,20 @@ async function stopSTTAndTranscribe(): Promise<void> {
         payloadBytes = new Uint8Array(await blob.arrayBuffer())
         payloadMime = mime
       }
+      // Resolve quick prompt text (if any) BEFORE the transcribe call so we can combine into one LLM roundtrip
+      let promptOverride: string | undefined
+      if (typeof quickPromptIndex === 'number' && quickPromptIndex >= 1 && quickPromptIndex <= 9) {
+        try {
+          const map = await invoke<any>('get_quick_prompts')
+          const qp = String(map?.[String(quickPromptIndex)] || '').trim()
+          if (qp) promptOverride = qp
+        } catch {}
+      }
       const sttResult = await invoke<any>('stt_transcribe', {
         audio: Array.from(payloadBytes),
         mime: payloadMime,
-        applyPostProcess: false,
+        applyPostProcess: !promptOverride,
+        ...(promptOverride ? { promptOverride } : {}),
       })
       if (typeof sttResult === 'string') {
         text = sttResult
@@ -382,30 +509,26 @@ async function stopSTTAndTranscribe(): Promise<void> {
       } else {
         text = ''
       }
-
-      if (text.trim().length > 0 && typeof quickPromptIndex === 'number' && quickPromptIndex >= 1 && quickPromptIndex <= 9) {
-        const map = await invoke<any>('get_quick_prompts')
-        const quickPromptText = String(map?.[String(quickPromptIndex)] || '').trim()
-        if (quickPromptText) {
-          const pp = await invoke<any>('stt_post_process_text', {
-            text,
-            promptOverride: quickPromptText,
-          })
-          const ppText = String(pp?.final_text || '').trim()
-          if (ppText) {
-            text = ppText
-          }
-        }
-      }
     } catch (err) {
       const msg = typeof err === 'string' ? err : (err && (err as any).message) ? (err as any).message : 'Unknown STT error'
       console.error('[stt] transcribe failed:', msg, err)
       return
     }
-    // Only paste non-empty transcription into the currently focused application.
+    // Only paste non-empty transcription into the previously focused application.
+    // Put result in clipboard first as safety net, then try auto-paste.
+    // insert_text_into_focused_app does its own clipboard save/restore cycle,
+    // so the text survives either way.
     if (text && text.trim().length > 0) {
-      // Use aggressive copy-restore (safe_mode=false) so the clipboard is restored after paste.
-      await invoke('insert_text_into_focused_app', { text, safe_mode: false })
+      // Safety: always put text on clipboard first
+      try { await invoke('copy_text_to_clipboard', { text }) } catch {}
+      // Try auto-paste into the previously focused app
+      try {
+        await invoke('refocus_previous_app')
+        await new Promise((r) => setTimeout(r, 80))
+        await invoke('insert_text_into_focused_app', { text, safe_mode: false })
+      } catch {
+        // Auto-paste failed — text is already on clipboard from above
+      }
     }
   } finally {
     sttRecording.value = false
@@ -413,6 +536,7 @@ async function stopSTTAndTranscribe(): Promise<void> {
 }
 
 async function cancelSTT(): Promise<void> {
+  await unsuppressKeyGlobal('S')
   try {
     if (sttIsRecording()) await sttStop()
   } catch {}
@@ -427,7 +551,7 @@ onMounted(() => {
   window.addEventListener('focus', onWindowFocus)
   window.addEventListener('mouseup', onWindowMouseup)
 
-  // Auto-size the popup to fit content (avoid scrollbars)
+  // Fit window to content — only resize when size actually changes to avoid loops
   try {
     const el = rootRef.value
     if (el) {
@@ -436,18 +560,21 @@ onMounted(() => {
         const rect = el.getBoundingClientRect()
         const width = Math.ceil(rect.width)
         const height = Math.ceil(rect.height)
-        try {
-          // Avoid unhandled promise rejection when permission core:window:allow-set-size is not granted
-          void w.setSize(new LogicalSize(width, height)).catch(() => {})
-        } catch {}
+        if (Math.abs(width - lastSetWidth) > 1 || Math.abs(height - lastSetHeight) > 1) {
+          lastSetWidth = width
+          lastSetHeight = height
+          void w.setSize(new LogicalSize(width, height)).then(() => {
+            // After resize, clamp position so the window stays on-screen
+            void invoke('clamp_quick_actions_to_screen').catch(() => {})
+          }).catch(() => {})
+        }
       }
-      // Initial sizing after mount
-      applySize()
-      // Observe for dynamic size changes (e.g., recording hint)
+      // Initial fit after mount
+      requestAnimationFrame(() => applySize())
+      // Re-fit when content changes (e.g. recording hint, preview result)
       const ro = new ResizeObserver(() => applySize())
       ro.observe(el)
-      // Stop observing on unload
-      window.addEventListener('beforeunload', () => { try { ro.disconnect() } catch {} })
+      resizeObserver = ro
     }
   } catch {}
 
@@ -492,13 +619,12 @@ onMounted(() => {
         dbg('tauri://blur timer fire', { captureInProgress: captureInProgress.value, suppress: suppressCloseUntil.value - Date.now(), uiMode: uiMode.value })
         if (captureInProgress.value) return
         if (Date.now() < suppressCloseUntil.value) return
-        if (uiMode.value === 'preview') return
+        if (uiMode.value === 'preview' || uiMode.value === 'info') return
         if (!sttRecording.value && !sttPending.value) void hidePopup('tauri://blur')
       }, 220)
     }).then((un) => { unlistenBlur = () => { try { un() } catch {} } }).catch(() => {})
     w.listen('tauri://focus', () => {
-      // Mirror onWindowFocus logic
-      captureInProgress.value = false
+      // DO NOT reset captureInProgress here — only the preview flow's finally block should clear it
       dbg('tauri://focus')
       try {
         invoke<any>('get_settings').then((v) => {
@@ -508,8 +634,14 @@ onMounted(() => {
           }
         }).catch(() => {})
       } catch {}
-      // If preview is active, do not reset and do not toggle resetOnFocus
-      if (uiMode.value === 'preview') return
+      // Refresh quick prompts for info display
+      try {
+        invoke<any>('get_quick_prompts').then((v) => {
+          if (v && typeof v === 'object') quickPromptsMap.value = v
+        }).catch(() => {})
+      } catch {}
+      // If preview or info is active, do not reset
+      if (uiMode.value === 'preview' || uiMode.value === 'info') return
       if (Date.now() < skipResetUntil.value) return
       if (resetOnFocus.value) {
         uiMode.value = 'home'
@@ -527,8 +659,17 @@ onMounted(() => {
       try { sessionStorage.removeItem('qa_show_preview') } catch {}
       try { sessionStorage.removeItem('qa_preview_text') } catch {}
       resetOnFocus.value = true
+    }).then((un) => { unlistenHide = () => { try { un() } catch {} } }).catch(() => {})
+
+    // Intercept close (Alt+F4) — hide instead of destroy to avoid reload flicker
+    w.onCloseRequested(async (event) => {
+      event.preventDefault()
+      await hidePopup('close-requested', true)
     }).catch(() => {})
   } catch {}
+
+  // Signal to popup.ts that content is rendered and ready to show
+  try { emitTauri('qa:ready', {}) } catch {}
 })
 
 onBeforeUnmount(() => {
@@ -539,14 +680,20 @@ onBeforeUnmount(() => {
   window.removeEventListener('mouseup', onWindowMouseup)
   try { if (unlistenBlur) unlistenBlur() } catch {}
   try { if (unlistenFocus) unlistenFocus() } catch {}
+  try { if (unlistenHide) unlistenHide() } catch {}
+  try { if (resizeObserver) resizeObserver.disconnect() } catch {}
+  if (blurCloseTimer) { clearTimeout(blurCloseTimer); blurCloseTimer = null }
+  // Clean up all global key suppressions
+  void unsuppressAllKeys()
 })
 
 // Copy preview result to clipboard and close popup
 async function onCopy(): Promise<void> {
   if (previewBusy.value) { dbg('onCopy ignored (busy)'); return }
+  const text = previewText.value || ''
+  if (!text.trim()) { dbg('onCopy ignored (empty text)'); return }
   dbg('onCopy start')
   try {
-    const text = previewText.value || ''
     await invoke('copy_text_to_clipboard', { text })
     dbg('onCopy backend done')
   } catch (err) {
@@ -560,9 +707,10 @@ async function onCopy(): Promise<void> {
 // Insert preview result into previously focused app: hide popup -> wait -> paste via backend
 async function onInsert(): Promise<void> {
   if (previewBusy.value) { dbg('onInsert ignored (busy)'); return }
+  const text = previewText.value || ''
+  if (!text.trim()) { dbg('onInsert ignored (empty text)'); return }
   dbg('onInsert start')
   try {
-    const text = previewText.value || ''
     // Hide first to return focus to previous app
     clearPreviewState()
     await hidePopup('insert', true)
@@ -601,12 +749,35 @@ async function onInsert(): Promise<void> {
           <span class="letter">I</span>
           <span class="label">Image</span>
         </button>
+        <button class="qa-btn qa-info-btn" @click="uiMode = 'info'" aria-label="Info (?)" title="Show quick prompt assignments">
+          <span class="letter">?</span>
+        </button>
       </div>
       <div class="qa-hint">
         <span v-if="sttRecording" class="rec">
-          ● Recording... Release S or mouse to transcribe. Press 1–9 to apply that Quick Prompt as post-processing (0 = no post-processing).
+          ● Recording...
+          <span v-if="sttPostProcessQuickPromptIndex"> → Quick Prompt #{{ sttPostProcessQuickPromptIndex }}</span>
+          <span v-else> Press 1–9 for post-processing (0 = off)</span>
         </span>
         <span v-else>Press P / T / S / I or 1–9 for quick prompts. Esc to close.</span>
+      </div>
+    </template>
+
+    <template v-else-if="uiMode === 'info'">
+      <div class="qa-info">
+        <div class="qa-info-header">
+          <span class="qa-info-title">Quick Prompt Assignments</span>
+          <button class="icon-btn" title="Back (Esc)" aria-label="Back" @click="uiMode = 'home'">✕</button>
+        </div>
+        <div class="qa-info-list">
+          <div v-for="n in 9" :key="n" class="qa-info-row">
+            <span class="qa-info-key">{{ n }}</span>
+            <span class="qa-info-prompt" :class="{ empty: !quickPromptsMap[String(n)] }">
+              {{ quickPromptsMap[String(n)] ? quickPromptsMap[String(n)] : '(empty)' }}
+            </span>
+          </div>
+        </div>
+        <div class="qa-hint">Press a number key to run. Hold S + number for STT with post-processing.</div>
       </div>
     </template>
 
@@ -631,8 +802,8 @@ async function onInsert(): Promise<void> {
 <style scoped>
 .qa-root {
   height: max-content; /* shrink-wrap */
+  width: max-content; /* shrink-wrap horizontally */
   display: grid;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 10px;
@@ -663,6 +834,7 @@ async function onInsert(): Promise<void> {
 }
 .qa-btn:hover { background: var(--adc-accent); border-color: var(--adc-accent); color: #fff; }
 
+.qa-info-btn { padding: 10px 10px; min-width: 0; }
 .letter {
   font-weight: 800;
   text-decoration: underline; /* mnemonic underline */
@@ -680,4 +852,13 @@ async function onInsert(): Promise<void> {
 .icon-btn:hover { background: var(--adc-accent); border-color: var(--adc-accent); color: #fff; }
 .qa-result-body { max-width: 640px; max-height: 360px; overflow: auto; border: 1px solid var(--adc-border); border-radius: 8px; padding: 8px; background: var(--adc-surface); }
 .qa-pre { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; margin: 0; }
+
+.qa-info { display: flex; flex-direction: column; gap: 6px; min-width: 280px; max-width: 480px; }
+.qa-info-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.qa-info-title { font-weight: 700; font-size: 13px; }
+.qa-info-list { display: flex; flex-direction: column; gap: 3px; }
+.qa-info-row { display: flex; gap: 8px; align-items: baseline; font-size: 12px; }
+.qa-info-key { font-weight: 800; min-width: 16px; text-align: center; color: var(--adc-accent, #4a9eff); }
+.qa-info-prompt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 400px; }
+.qa-info-prompt.empty { color: var(--adc-fg-muted); font-style: italic; }
 </style>

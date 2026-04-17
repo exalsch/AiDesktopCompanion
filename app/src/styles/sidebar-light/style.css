@@ -15,6 +15,9 @@
   --adc-danger: #c62828;
   --adc-sidebar-bg: #eef4ff;
   --adc-focus-ring: rgba(46, 92, 255, 0.18);
+  --adc-hover: rgba(0, 0, 0, 0.06);
+  --adc-surface-2: #f0f4fa;
+  --content-max: 860px;
   /* Assistant bubble theme variables */
   --adc-assistant-bubble-bg: #f6f9ff; /* subtle blue-tinted surface for assistant */
   --adc-assistant-bubble-border: var(--adc-border);

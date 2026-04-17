@@ -30,9 +30,10 @@ const props = defineProps<{
     <div v-for="(s, i) in props.settings.mcp_servers" :key="s.id || i" class="settings-section" style="margin-top:8px;">
       <div class="settings-row">
         <label class="label" style="width:100px;">Name</label>
-        <input class="input" v-model="s.id" placeholder="my-server" />
-        <span class="settings-hint">Used as key for events/commands.</span>
+        <input class="input" v-model="s.id" placeholder="my-server" @input="s.id = s.id.replace(/[^a-zA-Z0-9_-]/g, '')" />
+        <span class="settings-hint">Used as key. Only letters, numbers, hyphens, underscores.</span>
       </div>
+      <div v-if="s.id && s.id.includes('__')" class="settings-hint error">Name must not contain double underscores (__)</div>
       <div class="settings-row">
         <label class="label" style="width:100px;">Transport</label>
         <select class="input" v-model="s.transport">
@@ -83,12 +84,12 @@ const props = defineProps<{
           <span style="margin-left:6px;">{{ s.status }}</span>
           <span v-if="s.error" class="settings-hint error" style="margin-left:10px;">{{ s.error }}</span>
         </div>
-        <div style="display:flow; gap:8px;">
+        <div style="display:flex; gap:8px;">
           <button class="btn" :disabled="s.connecting" @click="(s.status === 'connected') ? props.onDisconnect(s) : props.onConnect(s)">
             {{ s.connecting ? 'Connecting…' : (s.status === 'connected' ? 'Disconnect' : 'Connect') }}
           </button>
-          <button class="btn" @click="props.onPing(s)">Ping</button>
-          <button class="btn" @click="s.toolsOpen ? (s.toolsOpen = false) : props.onListTools(s)">{{ s.toolsOpen ? 'Hide Tools' : 'List Tools' }}</button>
+          <button class="btn" :disabled="s.status !== 'connected'" @click="props.onPing(s)">Ping</button>
+          <button class="btn" :disabled="s.status !== 'connected'" @click="s.toolsOpen ? (s.toolsOpen = false) : props.onListTools(s)">{{ s.toolsOpen ? 'Hide Tools' : 'List Tools' }}</button>
           <button class="btn danger" @click="props.onRemove(i)">Remove</button>
         </div>
       </div>

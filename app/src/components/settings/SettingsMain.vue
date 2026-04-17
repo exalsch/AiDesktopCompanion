@@ -23,6 +23,7 @@ const props = defineProps<{
   onValidateEnvJsonInput: (server: any) => any
   onCallTool: (payload: any) => any
   selectedToolObj: (server: any) => any
+  notify?: (msg: string, kind?: 'error' | 'success', ms?: number) => void
 }>()
 
 async function refreshMcpStatuses() {
@@ -67,6 +68,7 @@ watch(() => props.settingsSubview, (sub) => { if (sub === 'MCP Servers') { refre
       :settings="props.settings"
       :models="props.models"
       :onRefreshModels="props.onRefreshModels"
+      :notify="props.notify"
     />
 
     <SettingsMcpServers

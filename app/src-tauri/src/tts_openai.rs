@@ -38,7 +38,10 @@ pub async fn ensure_streaming_server() -> Result<(), String> {
   if need_init {
     let server = TtsStreamingServer::new().await.map_err(|e| format!("init streaming server failed: {}", e))?;
     let mut guard = TTS_STREAMING_SERVER.lock().map_err(|_| "Mutex poisoned")?;
-    *guard = Some(server);
+    // Double-check: another task may have initialized while we awaited
+    if guard.is_none() {
+      *guard = Some(server);
+    }
   }
   Ok(())
 }
@@ -92,7 +95,7 @@ pub fn openai_stream_start(
   };
   let m = model.unwrap_or_else(|| "gpt-4o-mini-tts".to_string());
   let v = voice.unwrap_or_else(|| "alloy".to_string());
-  let body = serde_json::json!({ "model": m, "input": text, "voice": v, "format": body_format });
+  let body = serde_json::json!({ "model": m, "input": text, "voice": v, "response_format": body_format });
 
   let (tx, rx) = oneshot::channel::<()>();
   let id = STREAM_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
@@ -156,7 +159,7 @@ pub fn spawn_speech_stream(
   on_remove: impl FnOnce(u64) + Send + 'static,
 ) {
   tauri::async_runtime::spawn(async move {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).connect_timeout(std::time::Duration::from_secs(10)).build().unwrap_or_else(|_| reqwest::Client::new());
     let resp_res = client
       .post("https://api.openai.com/v1/audio/speech")
       .bearer_auth(key)
@@ -214,7 +217,7 @@ pub fn spawn_responses_stream(
   on_remove: impl FnOnce(u64) + Send + 'static,
 ) {
   tauri::async_runtime::spawn(async move {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).connect_timeout(std::time::Duration::from_secs(10)).build().unwrap_or_else(|_| reqwest::Client::new());
     let resp_res = client
       .post("https://api.openai.com/v1/responses")
       .bearer_auth(key)
@@ -248,6 +251,7 @@ pub fn spawn_responses_stream(
 
     let mut stream = resp.bytes_stream();
     let mut buf: Vec<u8> = Vec::new();
+    let mut done = false;
     loop {
       tokio::select! {
         _ = &mut rx => { let _ = app.emit("tts:stream:cancelled", serde_json::json!({ "id": id })); break; }
@@ -260,25 +264,28 @@ pub fn spawn_responses_stream(
                   let ev_bytes = buf.drain(..pos).collect::<Vec<u8>>();
                   let _ = consume_leading_newlines(&mut buf);
                   if let Some(data_json) = extract_sse_data(&ev_bytes) {
-                    if data_json.trim() == "[DONE]" { let _ = app.emit("tts:stream:end", serde_json::json!({ "id": id })); break; }
+                    if data_json.trim() == "[DONE]" { let _ = app.emit("tts:stream:end", serde_json::json!({ "id": id })); done = true; break; }
                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&data_json) {
                       let typ = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                      if typ == "response.output_audio.delta" {
+                      // OpenAI Responses API uses "response.audio.delta" for audio chunks
+                      if typ == "response.audio.delta" || typ == "response.output_audio.delta" {
                         let b64 = val.get("delta").and_then(|v| v.as_str())
                           .or_else(|| val.get("audio").and_then(|v| v.as_str()))
                           .unwrap_or("");
                         if !b64.is_empty() { let _ = app.emit("tts:stream:chunk", serde_json::json!({ "id": id, "data": b64 })); }
                       } else if typ == "response.completed" {
                         let _ = app.emit("tts:stream:end", serde_json::json!({ "id": id }));
+                        done = true;
                         break;
                       }
                     }
                   }
                 } else { break; }
               }
+              if done { break; }
             }
             Some(Err(e)) => { emit_err(format!("stream error: {e}")); break; }
-            None => { let _ = app.emit("tts:stream:end", serde_json::json!({ "id": id })); break; }
+            None => { if !done { let _ = app.emit("tts:stream:end", serde_json::json!({ "id": id })); } break; }
           }
         }
       }
@@ -320,12 +327,12 @@ pub async fn openai_synthesize_file(
   };
   let m = model.unwrap_or_else(|| "gpt-4o-mini-tts".to_string());
   let v = voice.unwrap_or_else(|| "alloy".to_string());
-  let client = reqwest::Client::new();
+  let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).connect_timeout(std::time::Duration::from_secs(10)).build().unwrap_or_else(|_| reqwest::Client::new());
   let mut body_obj = serde_json::Map::new();
   body_obj.insert("model".to_string(), serde_json::Value::String(m));
   body_obj.insert("input".to_string(), serde_json::Value::String(text));
   body_obj.insert("voice".to_string(), serde_json::Value::String(v));
-  body_obj.insert("format".to_string(), serde_json::Value::String(body_format.to_string()));
+  body_obj.insert("response_format".to_string(), serde_json::Value::String(body_format.to_string()));
   if let Some(instr) = instructions {
     if !instr.trim().is_empty() {
       body_obj.insert("instructions".to_string(), serde_json::Value::String(instr));
@@ -373,12 +380,16 @@ pub async fn openai_synthesize_file(
   let mut path = std::env::temp_dir(); path.push(file_name); let target = path.to_string_lossy().to_string();
   let bytes_to_write = resp.bytes().await.map_err(|e| format!("bytes error: {e}"))?;
 
-  if ext == "wav" {
+  let write_result = if ext == "wav" {
     let r = rate.unwrap_or(0).clamp(-10, 10);
     let vol = volume.unwrap_or(100).min(100);
-    write_pcm16_wav_from_any(&bytes_to_write, &target, r, vol)?;
+    write_pcm16_wav_from_any(&bytes_to_write, &target, r, vol)
   } else {
-    std::fs::write(&target, &bytes_to_write).map_err(|e| format!("write failed: {e}"))?;
+    std::fs::write(&target, &bytes_to_write).map_err(|e| format!("write failed: {e}"))
+  };
+  if let Err(e) = write_result {
+    let _ = std::fs::remove_file(&target);
+    return Err(e);
   }
   Ok(target)
 }

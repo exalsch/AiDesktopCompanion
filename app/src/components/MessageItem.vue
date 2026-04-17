@@ -1,3 +1,66 @@
+<script lang="ts">
+// ── Module-level singleton: shared across ALL MessageItem instances ──
+// One MarkdownIt + DOMPurify + highlight.js — not re-created per component.
+
+let _mdReady: Promise<(src: string) => string> | null = null
+
+function _escapeHtml(s: string): string {
+  return (s ?? '')
+    .replaceAll(/&/g, '&amp;')
+    .replaceAll(/</g, '&lt;')
+    .replaceAll(/>/g, '&gt;')
+}
+
+function initMarkdownSingleton(): Promise<(src: string) => string> {
+  if (_mdReady) return _mdReady
+  _mdReady = (async () => {
+    try {
+      const [{ default: MarkdownIt }, { default: DOMPurify }] = await Promise.all([
+        import('markdown-it'),
+        import('dompurify'),
+      ])
+
+      let hljs: any | undefined
+      try {
+        const mod = await import('highlight.js/lib/common')
+        hljs = (mod as any).default || (mod as any)
+      } catch {
+        hljs = undefined
+      }
+
+      const md = new MarkdownIt({
+        linkify: true,
+        breaks: true,
+        highlight: (code: string, lang: string) => {
+          try {
+            if (hljs) {
+              if (lang && hljs.getLanguage(lang)) {
+                return `<pre class="hljs"><code>${hljs.highlight(code, { language: lang }).value}</code></pre>`
+              }
+              return `<pre class="hljs"><code>${hljs.highlightAuto(code).value}</code></pre>`
+            }
+          } catch {}
+          return `<pre class="md-pre"><code>${_escapeHtml(code)}</code></pre>`
+        },
+      })
+      return (src: string) => DOMPurify.sanitize(md.render(src))
+    } catch {
+      // Fallback returned if dynamic imports fail — allows retry on next call.
+      _mdReady = null
+      return (src: string) => _basicFallback(src)
+    }
+  })()
+  return _mdReady as Promise<(src: string) => string>
+}
+
+// Minimal fallback for when markdown-it/dompurify fail to load (module-level accessible)
+function _basicFallback(input: string): string {
+  let s = (input ?? '').replace(/\r\n/g, '\n')
+  s = _escapeHtml(s)
+  return s.split(/\n\n+/).map(p => `<p>${p.replace(/\n/g, '<br/>')}</p>`).join('')
+}
+</script>
+
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import type { Message } from '../state/conversation'
@@ -12,9 +75,8 @@ const emit = defineEmits<{
   (e: 'image-click', payload: { images: { path: string; src: string }[]; index: number }): void
 }>()
 
-// Markdown renderer function ref. It is initialized dynamically to avoid
-// hard dependency on external libraries at build time.
-const renderMarkdown = ref<(src: string) => string>(() => basicMarkdownFallback(''))
+// Markdown renderer ref. Starts with fallback, upgraded once singleton resolves.
+const renderMarkdown = ref<(src: string) => string>((src: string) => basicMarkdownFallback(src))
 
 // Token tooltip per message (approximate or tokenizer-based)
 const { settings } = useSettings()
@@ -41,42 +103,9 @@ const messageTokenTitle = computed(() => {
 })
 
 onMounted(async () => {
-  try {
-    // Dynamically import markdown-it and dompurify if available
-    const [{ default: MarkdownIt }, { default: DOMPurify }] = await Promise.all([
-      import('markdown-it'),
-      import('dompurify'),
-    ])
-
-    // Try to import highlight.js and a theme (optional)
-    let hljs: any | undefined
-    try {
-      const mod = await import('highlight.js/lib/common')
-      hljs = (mod as any).default || (mod as any)
-    } catch {
-      hljs = undefined
-    }
-
-    const md = new MarkdownIt({
-      linkify: true,
-      breaks: true,
-      highlight: (code: string, lang: string) => {
-        try {
-          if (hljs) {
-            if (lang && hljs.getLanguage(lang)) {
-              return `<pre class="hljs"><code>${hljs.highlight(code, { language: lang }).value}</code></pre>`
-            }
-            return `<pre class="hljs"><code>${hljs.highlightAuto(code).value}</code></pre>`
-          }
-        } catch {}
-        return `<pre class="md-pre"><code>${escapeHtml(code)}</code></pre>`
-      },
-    })
-    renderMarkdown.value = (src: string) => DOMPurify.sanitize(md.render(src))
-  } catch {
-    // Fallback keeps app functional without dependencies installed
-    renderMarkdown.value = (src: string) => basicMarkdownFallback(src)
-  }
+  // All instances share the same singleton — no duplicate MarkdownIt/DOMPurify/hljs.
+  const renderer = await initMarkdownSingleton()
+  if (renderer) renderMarkdown.value = renderer
 })
 
 // Copy and Read Aloud actions
@@ -164,9 +193,12 @@ function basicMarkdownFallback(input: string): string {
   let s = input ?? ''
   s = s.replace(/\r\n/g, '\n')
 
+  // Escape HTML FIRST to prevent XSS
+  s = escape(s)
+
   // Fenced code blocks ```
   s = s.replace(/```([\s\S]*?)```/g, (_, code: string) => {
-    return `<pre class="md-pre"><code>${escape(code)}</code></pre>`
+    return `<pre class="md-pre"><code>${code}</code></pre>`
   })
 
   // Headings
@@ -180,7 +212,7 @@ function basicMarkdownFallback(input: string): string {
   // Lists (very minimal: consecutive lines starting with - or *)
   s = s.replace(/(?:^(?:-|\*)\s+.+\n?)+/gm, (block: string) => {
     const items = block.trim().split(/\n/).map(l => l.replace(/^(?:-|\*)\s+/, ''))
-    return `<ul class="md-ul">${items.map(it => `<li>${escape(it)}</li>`).join('')}</ul>`
+    return `<ul class="md-ul">${items.map(it => `<li>${it}</li>`).join('')}</ul>`
   })
 
   // Inline code

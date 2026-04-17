@@ -79,12 +79,11 @@ pub fn focus_prev_then_copy_selection(app: tauri::AppHandle, safe_mode: Option<b
   if !safe {
     #[cfg(target_os = "windows")]
     unsafe {
-      use windows::Win32::UI::WindowsAndMessaging::{SetForegroundWindow, ShowWindow, SW_RESTORE};
+      use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
       if let Ok(guard) = LAST_FOREGROUND.lock() {
         if let Some(hraw) = *guard {
           let hwnd = HWND(hraw as *mut c_void);
-          // Best-effort: restore if minimized then bring to foreground
-          let _ = ShowWindow(hwnd, SW_RESTORE);
+          // Only SetForegroundWindow — no ShowWindow(SW_RESTORE) to avoid resizing maximized windows
           let _ = SetForegroundWindow(hwnd);
           thread::sleep(Duration::from_millis(80));
         }
@@ -111,6 +110,24 @@ pub fn focus_prev_then_copy_selection(app: tauri::AppHandle, safe_mode: Option<b
   }
 
   Ok(selection)
+}
+
+/// Refocus the previously stored foreground window (from prepare_quick_actions).
+/// Used to restore focus to the correct app before pasting STT results.
+#[tauri::command]
+pub fn refocus_previous_app() -> Result<(), String> {
+  #[cfg(target_os = "windows")]
+  unsafe {
+    use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
+    if let Ok(guard) = LAST_FOREGROUND.lock() {
+      if let Some(hraw) = *guard {
+        let hwnd = HWND(hraw as *mut c_void);
+        // Only SetForegroundWindow — no ShowWindow(SW_RESTORE) to avoid resizing maximized windows
+        let _ = SetForegroundWindow(hwnd);
+      }
+    }
+  }
+  Ok(())
 }
 
 /// Set clipboard text directly. Used by Quick Actions result preview 'Copy' action.
@@ -155,22 +172,120 @@ pub fn insert_text_into_focused_app(text: String, safe_mode: Option<bool>) -> Re
   Ok(())
 }
 
-// Window positioning near cursor
+// Window positioning near cursor (caret-first, mouse fallback, screen-edge clamping)
 #[tauri::command]
 pub fn position_quick_actions(app: tauri::AppHandle) -> Result<(), String> {
   #[cfg(target_os = "windows")]
   {
     use windows::Win32::Foundation::POINT;
-    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
-    unsafe {
-      let mut pt = POINT { x: 0, y: 0 };
-      if let Err(e) = GetCursorPos(&mut pt) { return Err(format!("GetCursorPos failed: {e}")); }
-      let x = pt.x + 12; let y = pt.y + 12;
-      if let Some(win) = app.get_webview_window("quick-actions") {
-        let _ = win.set_position(tauri::Position::Physical(PhysicalPosition::new(x, y)));
+    use windows::Win32::UI::WindowsAndMessaging::{
+      GetCursorPos, GetGUIThreadInfo, GetSystemMetrics, GetForegroundWindow,
+      GetWindowThreadProcessId, GUITHREADINFO, SM_CXVIRTUALSCREEN,
+      SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+    };
+
+    // Wrap everything in catch_unwind so a panic never kills the app
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+      unsafe {
+        let mut pt = POINT { x: 0, y: 0 };
+        let mut use_caret = false;
+
+        // Try caret position from the foreground window's GUI thread
+        let fg = GetForegroundWindow();
+        if !fg.0.is_null() {
+          let tid = GetWindowThreadProcessId(fg, None);
+          if tid != 0 {
+            let mut gui = GUITHREADINFO {
+              cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+              ..std::mem::zeroed()
+            };
+            if GetGUIThreadInfo(tid, &mut gui).is_ok() {
+              let caret = gui.rcCaret;
+              if caret.right > caret.left && caret.bottom > caret.top && !gui.hwndCaret.0.is_null() {
+                let mut caret_pt = POINT { x: caret.left, y: caret.bottom };
+                use windows::Win32::Graphics::Gdi::ClientToScreen;
+                if ClientToScreen(gui.hwndCaret, &mut caret_pt).as_bool() {
+                  pt = caret_pt;
+                  use_caret = true;
+                }
+              }
+            }
+          }
+        }
+
+        // Fallback: mouse cursor + small offset
+        if !use_caret {
+          let _ = GetCursorPos(&mut pt);
+          pt.x += 12;
+          pt.y += 12;
+        }
+
+        // Clamp to virtual screen bounds
+        let screen_x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        let screen_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        let screen_w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        let screen_h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        let popup_w = 380;
+        let popup_h = 95;
+
+        let x = pt.x.max(screen_x).min(screen_x + screen_w - popup_w);
+        let y = pt.y.max(screen_y).min(screen_y + screen_h - popup_h);
+
+        (x, y)
       }
-      Ok(())
+    }));
+
+    let (x, y) = match result {
+      Ok(pos) => pos,
+      Err(_) => {
+        // Panic fallback: center-ish on primary monitor
+        log::warn!("position_quick_actions: panic caught, using fallback position");
+        (200, 200)
+      }
+    };
+
+    if let Some(win) = app.get_webview_window("quick-actions") {
+      let _ = win.set_position(tauri::Position::Physical(PhysicalPosition::new(x, y)));
     }
+    Ok(())
+  }
+  #[cfg(not(target_os = "windows"))]
+  { Ok(()) }
+}
+
+/// Clamp the quick-actions window to screen bounds after a resize.
+/// Reads the current window position and size, then adjusts position if any part is off-screen.
+#[tauri::command]
+pub fn clamp_quick_actions_to_screen(app: tauri::AppHandle) -> Result<(), String> {
+  #[cfg(target_os = "windows")]
+  {
+    use windows::Win32::UI::WindowsAndMessaging::{
+      GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+      SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+    };
+    if let Some(win) = app.get_webview_window("quick-actions") {
+      let pos = win.outer_position().map_err(|e| format!("{e}"))?;
+      let size = win.outer_size().map_err(|e| format!("{e}"))?;
+      unsafe {
+        let screen_x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        let screen_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        let screen_w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        let screen_h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        let w = size.width as i32;
+        let h = size.height as i32;
+        let mut x = pos.x;
+        let mut y = pos.y;
+        let mut changed = false;
+        if x + w > screen_x + screen_w { x = screen_x + screen_w - w; changed = true; }
+        if y + h > screen_y + screen_h { y = screen_y + screen_h - h; changed = true; }
+        if x < screen_x { x = screen_x; changed = true; }
+        if y < screen_y { y = screen_y; changed = true; }
+        if changed {
+          let _ = win.set_position(tauri::Position::Physical(PhysicalPosition::new(x, y)));
+        }
+      }
+    }
+    Ok(())
   }
   #[cfg(not(target_os = "windows"))]
   { Ok(()) }

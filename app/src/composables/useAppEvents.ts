@@ -1,6 +1,7 @@
 import { listen } from '@tauri-apps/api/event'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
+import { nextTick } from 'vue'
 
 // Types for dependency injection
 export interface UseAppEventsDeps {
@@ -68,6 +69,8 @@ export function useAppEvents(deps: UseAppEventsDeps) {
         const src = convertFileSrc(p.path)
         // Route to composer attachments UI
         ui.activeSection = 'Prompt'
+        ui.promptSubview = 'Chat'
+        await nextTick()
         try { (composerRef.value as any)?.addImage?.(p.path, src) } catch (err) {
           // Only show an error toast if adding the image fails
           try { showToast('Failed to attach captured image to prompt.', 'error') } catch {}
@@ -201,7 +204,7 @@ export function useAppEvents(deps: UseAppEventsDeps) {
     })
     unsubs.push(u11)
 
-    return () => { try { unsubs.forEach(u => u()) } catch {} }
+    return () => { for (const u of unsubs) { try { u() } catch {} } }
   }
 
   return { registerAppEvents }

@@ -13,11 +13,9 @@ import conversation, { appendMessage, clearAllConversations, newConversation, up
 import { onMounted, onBeforeUnmount, reactive, ref, watch, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { getVersion } from '@tauri-apps/api/app'
-import { applyGlobalHotkey, checkShortcutAvailable } from './hotkeys'
 import { useToast } from './composables/useToast'
 import { useQuickPrompts } from './composables/useQuickPrompts'
 import { useSettings } from './composables/useSettings'
-import { parseArgs, normalizeEnvInput, parseJsonObject } from './composables/utils'
 import { useMcp } from './composables/useMcp'
 import { useTtsBackground } from './composables/useTtsBackground'
 import { useAppEvents } from './composables/useAppEvents'
@@ -75,8 +73,6 @@ let unsubs: Array<() => void> = []
 onMounted(async () => {
   // For QuickActions popup, strip global app padding/min-width via body class
   try { addBodyClass() } catch {}
-  // Apply current style immediately for fast first paint.
-  try { applyStyleCss(settings.ui_style) } catch {}
   try {
     const unsubApp = await registerAppEvents()
     const unsubTtsBg = await registerBackgroundTtsEvents()
@@ -89,8 +85,6 @@ onMounted(async () => {
   }
   // Load prompt settings on mount
   try { await loadSettings() } catch {} finally { setSettingsLoaded(true) }
-  // Re-apply style after settings load in case user configured a different theme.
-  try { applyStyleCss(settings.ui_style) } catch {}
 
   // Defer non-critical startup work to keep UI responsive.
   setTimeout(() => {
@@ -117,6 +111,8 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  try { flushSettings() } catch {}
+  try { flushPersist() } catch {}
   try { unsubs.forEach(u => u()); } finally { unsubs = [] }
   try { removeBodyClass() } catch {}
 })
@@ -127,7 +123,6 @@ onBeforeUnmount(() => {
 const qp = useQuickPrompts(composerInput as any, composerRef as any)
 const quickPrompts = qp.quickPrompts
 const loadQuickPrompts = qp.loadQuickPrompts
-const insertQuickPrompt = qp.insertQuickPrompt
 const activeQuickPrompt = qp.activeQuickPrompt
 const selectedSystemPrompt = qp.selectedSystemPrompt
 // Combine system prompt for chat: when a quick prompt is active, prefer the
@@ -151,12 +146,12 @@ const { settings, models, loadSettings } = useSettings()
 // Aggregate busy state now that models is available
 const { busy, isBusy } = useBusy(computed(() => models.loading))
 // Conversation persistence via composable
-const { loadPersistedConversation, registerConversationPersist } = useConversationPersist(computed(() => settings.persist_conversations), showToast)
+const { loadPersistedConversation, registerConversationPersist, flushPersist } = useConversationPersist(computed(() => settings.persist_conversations), showToast)
 // Theme/style loader via composable
-const { applyStyleCss } = useThemeStyle(computed(() => settings.ui_style))
+useThemeStyle(computed(() => settings.ui_style))
 
 // Initialize settings auto-save (silent on success)
-const { setLoaded: setSettingsLoaded } = useSettingsAutosave(settings as any, showToast)
+const { setLoaded: setSettingsLoaded, flush: flushSettings } = useSettingsAutosave(settings as any, showToast)
 // Manual save helper (with success toast)
 const { saveSettingsNow } = useSettingsSave(settings as any, showToast)
 
@@ -357,7 +352,7 @@ async function autoConnectServers() {
         :prompt-subview="ui.promptSubview"
         :settings-subview="ui.settingsSubview"
         :sidebar-open="layout.sidebarOpen"
-        :busy="isBusy()"
+        :busy="isBusy"
         @toggle-sidebar="layout.sidebarOpen = !layout.sidebarOpen"
         @set-section="setSection($event)"
         @open-history="ui.activeSection = 'Prompt'; ui.promptSubview = 'History'"
@@ -368,13 +363,11 @@ async function autoConnectServers() {
         <div class="main-content">
           <template v-if="ui.activeSection === 'Prompt'">          
             <div class="section"><div class="section-title">Prompt</div></div>
-            <template v-if="ui.promptSubview === 'History'">
-              <div class="section">
-                <div class="section-title">History</div>
-                <ConversationHistory @open="ui.activeSection = 'Prompt'; ui.promptSubview = 'Chat'" />
-              </div>
-            </template>
-            <template v-else>
+            <div v-if="ui.promptSubview === 'History'" class="section">
+              <div class="section-title">History</div>
+              <ConversationHistory @open="ui.activeSection = 'Prompt'; ui.promptSubview = 'Chat'" />
+            </div>
+            <div v-show="ui.promptSubview !== 'History'">
               <PromptMain
                 ref="composerRef"
                 :messages="conversation.currentConversation.messages"
@@ -391,7 +384,7 @@ async function autoConnectServers() {
                 @toggle-quick-prompt="toggleQuickPrompt"
                 @busy="busy.prompt = $event"
               />
-            </template>
+            </div>
           </template>
 
           <div v-if="ui.activeSection === 'Assistant'" class="section">
@@ -427,6 +420,7 @@ async function autoConnectServers() {
               :onValidateEnvJsonInput="mcp.validateEnvJsonInput"
               :onCallTool="mcp.callTool"
               :selectedToolObj="mcp.selectedToolObj"
+              :notify="showToast"
             />
           </div>
         </div>
@@ -434,7 +428,6 @@ async function autoConnectServers() {
     </div>
     
     <div class="version-badge" v-if="appVersion">v{{ appVersion }}</div>
-    </div>
 
     <!-- Hidden background TTS controller (non-disruptive) -->
     <div style="position: fixed; width: 0; height: 0; overflow: hidden; opacity: 0; pointer-events: none;">
@@ -443,6 +436,7 @@ async function autoConnectServers() {
 
     <!-- Toast -->
     <div v-if="toast.visible" class="toast" :class="toast.kind">{{ toast.message }}</div>
+    </div>
 
 </template>
 
@@ -457,7 +451,7 @@ async function autoConnectServers() {
 .settings { margin: 0px auto; max-width: none; color: var(--adc-fg); }
 .settings-section { border: 1px solid var(--adc-border); border-radius: 10px; padding: 14px; background: var(--adc-surface); }
 .settings-title { font-weight: 700; margin-bottom: 8px; }
-.settings-row { display: flow; gap: 10px; align-items: center; margin: 8px 0; }
+.settings-row { display: flex; gap: 10px; align-items: center; margin: 8px 0; }
 .settings-row.col { flex-direction: column; align-items: flex-start; }
 .settings-hint { font-size: 12px; color: var(--adc-fg-muted); margin-top: 6px; }
 .btn { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-accent); color: #fff; cursor: pointer; }

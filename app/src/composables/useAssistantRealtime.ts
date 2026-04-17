@@ -117,6 +117,7 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
 
   async function connect(params: ConnectParams = {}) {
     try {
+      handledUserItems.clear()
       // Create RTCPeerConnection
       const pc = new RTCPeerConnection({
         iceServers: [
@@ -412,6 +413,7 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     } catch {}
     pcRef.value = null
     try { if (remoteAudioEl) (remoteAudioEl as any).srcObject = null } catch {}
+    handledUserItems.clear()
     try { opts.onDisconnected?.() } catch {}
   }
 

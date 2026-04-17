@@ -144,7 +144,7 @@ defineExpose({
     <div class="hint" :title="tokenHint">{{ tokenHint }}</div>
     <div class="row">
       <div class="hint">Press Enter to send</div>
-      <button class="send" :disabled="sending || !input.trim()" @click="onSend">
+      <button class="send" :disabled="sending || (!input.trim() && pendingImageCount === 0)" @click="onSend">
         {{ sending ? 'Sending…' : 'Send' }}
       </button>
     </div>

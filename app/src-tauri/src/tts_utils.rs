@@ -197,12 +197,12 @@ pub fn consume_leading_newlines(buf: &mut Vec<u8>) -> usize {
 
 pub fn extract_sse_data(ev_bytes: &[u8]) -> Option<String> {
   let text = String::from_utf8_lossy(ev_bytes);
-  let mut data: Option<String> = None;
+  let mut parts: Vec<String> = Vec::new();
   for line in text.lines() {
     let line = line.trim_start();
-    if let Some(rest) = line.strip_prefix("data:") { data = Some(rest.trim_start().to_string()); }
+    if let Some(rest) = line.strip_prefix("data:") { parts.push(rest.trim_start().to_string()); }
   }
-  data
+  if parts.is_empty() { None } else { Some(parts.join("\n")) }
 }
 
 // ---------------------------
@@ -217,7 +217,8 @@ pub fn delete_temp_wav(path: String) -> Result<bool, String> {
   let file_canon = std::fs::canonicalize(&file_path).map_err(|e| format!("canonicalize failed: {e}"))?;
   if !file_canon.starts_with(&temp_canon) { return Err("Refusing to delete non-temp file".into()); }
   let fname = file_canon.file_name().and_then(|s| s.to_str()).ok_or_else(|| "Invalid file name".to_string())?;
-  if !(fname.starts_with("aidc_tts_") && fname.ends_with(".wav")) { return Err("Refusing to delete unexpected file".into()); }
+  let valid_ext = fname.ends_with(".wav") || fname.ends_with(".mp3") || fname.ends_with(".opus") || fname.ends_with(".ogg");
+  if !(fname.starts_with("aidc_tts_") && valid_ext) { return Err("Refusing to delete unexpected file".into()); }
   match fs::remove_file(&file_canon) { Ok(_) => Ok(true), Err(e) => { if e.kind() == std::io::ErrorKind::NotFound { Ok(false) } else { Err(format!("remove failed: {e}")) } } }
 }
 
@@ -231,8 +232,12 @@ pub fn cleanup_stale_tts_wavs(max_age_minutes: Option<u64>) -> Result<u32, Strin
     if let Ok(de) = ent {
       let p = de.path();
       if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
-        if name.starts_with("aidc_tts_") && name.to_ascii_lowercase().ends_with(".wav") {
-          if let Ok(md) = de.metadata() { if let Ok(modified) = md.modified() { if modified < cutoff { let _ = fs::remove_file(&p).map(|_| { removed = removed.saturating_add(1); }); } } }
+        if name.starts_with("aidc_tts_") {
+          let lower = name.to_ascii_lowercase();
+          let valid_ext = lower.ends_with(".wav") || lower.ends_with(".mp3") || lower.ends_with(".opus") || lower.ends_with(".ogg");
+          if valid_ext {
+            if let Ok(md) = de.metadata() { if let Ok(modified) = md.modified() { if modified < cutoff { let _ = fs::remove_file(&p).map(|_| { removed = removed.saturating_add(1); }); } } }
+          }
         }
       }
     }

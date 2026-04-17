@@ -116,7 +116,7 @@ pub async fn run_quick_prompt(app: tauri::AppHandle, index: u8, safe_mode: Optio
   });
   if let Some(t) = temp { if let serde_json::Value::Object(ref mut m) = body { m.insert("temperature".to_string(), serde_json::json!(t)); } }
 
-  let client = reqwest::Client::new();
+  let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).connect_timeout(std::time::Duration::from_secs(10)).build().unwrap_or_else(|_| reqwest::Client::new());
   let resp = client
     .post("https://api.openai.com/v1/chat/completions")
     .bearer_auth(key)
@@ -239,7 +239,7 @@ pub async fn run_quick_prompt_result(app: tauri::AppHandle, index: u8, safe_mode
   });
   if let Some(t) = temp { if let serde_json::Value::Object(ref mut m) = body { m.insert("temperature".to_string(), serde_json::json!(t)); } }
 
-  let client = reqwest::Client::new();
+  let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).connect_timeout(std::time::Duration::from_secs(10)).build().unwrap_or_else(|_| reqwest::Client::new());
   let resp = client
     .post("https://api.openai.com/v1/chat/completions")
     .bearer_auth(key)
@@ -325,7 +325,7 @@ pub async fn run_quick_prompt_with_selection(app: tauri::AppHandle, index: u8, s
   });
   if let Some(t) = temp { if let serde_json::Value::Object(ref mut m) = body { m.insert("temperature".to_string(), serde_json::json!(t)); } }
 
-  let client = reqwest::Client::new();
+  let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).connect_timeout(std::time::Duration::from_secs(10)).build().unwrap_or_else(|_| reqwest::Client::new());
   let resp = client
     .post("https://api.openai.com/v1/chat/completions")
     .bearer_auth(key)
@@ -510,6 +510,10 @@ pub fn save_quick_prompts(map: serde_json::Value) -> Result<String, String> {
 
   let pretty = serde_json::to_string_pretty(&serde_json::Value::Object(obj))
     .map_err(|e| format!("Serialize prompts failed: {e}"))?;
-  fs::write(&path, pretty).map_err(|e| format!("Write config failed: {e}"))?;
+  let tmp_path = path.with_extension("json.tmp");
+  fs::write(&tmp_path, &pretty).map_err(|e| format!("Write config failed: {e}"))?;
+  #[cfg(target_os = "windows")]
+  { if path.exists() { let _ = fs::remove_file(&path); } }
+  fs::rename(&tmp_path, &path).map_err(|e| format!("Rename config failed: {e}"))?;
   Ok(path.to_string_lossy().to_string())
 }

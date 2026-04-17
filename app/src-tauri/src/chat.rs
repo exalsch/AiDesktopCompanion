@@ -34,8 +34,16 @@ pub async fn chat_complete_with_mcp(
           match p {
             FrontendPart::InputText { text } => { out_parts.push(serde_json::json!({ "type": "text", "text": text })); }
             FrontendPart::InputImage { path, mime } => {
+              // Validate image path is within temp directory to prevent path traversal
+              let file_path = std::path::PathBuf::from(&path);
+              let temp_dir = std::env::temp_dir();
+              let temp_canon = std::fs::canonicalize(&temp_dir).unwrap_or(temp_dir.clone());
+              let file_canon = std::fs::canonicalize(&file_path).map_err(|e| format!("Invalid image path '{}': {}", path, e))?;
+              if !file_canon.starts_with(&temp_canon) {
+                return Err(format!("Image path '{}' is outside temp directory — refusing to read", path));
+              }
               let mime_final = mime.or_else(|| guess_mime_from_path_rs(&path).map(|s| s.to_string())).ok_or_else(|| format!("Missing/unknown image MIME for: {}", path))?;
-              let bytes = fs::read(&path).map_err(|e| format!("Failed to read image '{}': {}", path, e))?;
+              let bytes = fs::read(&file_canon).map_err(|e| format!("Failed to read image '{}': {}", path, e))?;
               let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
               let url = format!("data:{};base64,{}", mime_final, b64);
               out_parts.push(serde_json::json!({ "type": "image_url", "image_url": { "url": url } }));
@@ -54,7 +62,7 @@ pub async fn chat_complete_with_mcp(
     mcp::build_openai_tools_from_mcp(&*map).await
   };
 
-  let client = reqwest::Client::new();
+  let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).connect_timeout(std::time::Duration::from_secs(10)).build().unwrap_or_else(|_| reqwest::Client::new());
   // Determine whether tools are allowed by scanning system messages for a no-tools directive
   let mut allow_tools = true;
   for m in norm_msgs.iter() {
@@ -128,7 +136,11 @@ pub async fn chat_complete_with_mcp(
       // Append assistant message with tool_calls to history
       let mut assistant_msg = serde_json::Map::new();
       assistant_msg.insert("role".to_string(), serde_json::Value::String("assistant".to_string()));
-      if let Some(c) = content_str_opt.as_ref() { assistant_msg.insert("content".to_string(), serde_json::Value::String(c.clone())); }
+      // Always include content — OpenAI requires it even when null
+      assistant_msg.insert("content".to_string(),
+        content_str_opt.as_ref()
+          .map(|c| serde_json::Value::String(c.clone()))
+          .unwrap_or(serde_json::Value::Null));
       assistant_msg.insert("tool_calls".to_string(), serde_json::Value::Array(tool_calls.clone()));
       msgs_for_oai.push(serde_json::Value::Object(assistant_msg));
 
@@ -188,7 +200,7 @@ pub async fn chat_complete_with_mcp(
     break;
   }
 
-  Ok(final_text.unwrap_or_else(|| "".to_string()))
+  Ok(final_text.unwrap_or_else(|| "(Tool call loop exhausted after 6 rounds — no final response from model.)".to_string()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -243,10 +255,18 @@ pub async fn chat_complete(
               out_parts.push(serde_json::json!({ "type": "text", "text": text }));
             }
             FrontendPart::InputImage { path, mime } => {
+              // Validate image path is within temp directory to prevent path traversal
+              let file_path = std::path::PathBuf::from(&path);
+              let temp_dir = std::env::temp_dir();
+              let temp_canon = std::fs::canonicalize(&temp_dir).unwrap_or(temp_dir.clone());
+              let file_canon = std::fs::canonicalize(&file_path).map_err(|e| format!("Invalid image path '{}': {}", path, e))?;
+              if !file_canon.starts_with(&temp_canon) {
+                return Err(format!("Image path '{}' is outside temp directory — refusing to read", path));
+              }
               let mime_final = mime
                 .or_else(|| guess_mime_from_path_rs(&path).map(|s| s.to_string()))
                 .ok_or_else(|| format!("Missing/unknown image MIME for: {}", path))?;
-              let bytes = fs::read(&path).map_err(|e| format!("Failed to read image '{}': {}", path, e))?;
+              let bytes = fs::read(&file_canon).map_err(|e| format!("Failed to read image '{}': {}", path, e))?;
               let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
               let url = format!("data:{};base64,{}", mime_final, b64);
               out_parts.push(serde_json::json!({ "type": "image_url", "image_url": { "url": url } }));
@@ -259,7 +279,7 @@ pub async fn chat_complete(
     norm_msgs.push(serde_json::json!({ "role": r, "content": content_value }));
   }
 
-  let client = reqwest::Client::new();
+  let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).connect_timeout(std::time::Duration::from_secs(10)).build().unwrap_or_else(|_| reqwest::Client::new());
   // Prepend a short system directive to improve first-call argument completeness
   let sys_tool_guidance = serde_json::json!({
     "role": "system",

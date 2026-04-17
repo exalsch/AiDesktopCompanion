@@ -55,7 +55,16 @@ export function useTtsBackground(ttsBgRef: Ref<any>) {
     })
     unsubs.push(uSpeaking)
 
-    return () => { try { unsubs.forEach(u => u()) } catch {} }
+    return () => {
+      for (const u of unsubs) { try { u() } catch {} }
+      // Stop in-progress background playback on cleanup
+      try {
+        const c = ttsBgRef.value as any
+        if (c?.stop) Promise.resolve(c.stop()).catch(() => {})
+      } catch {}
+      ttsBg.playing = false
+      ttsBg.currentMessageId = ''
+    }
   }
 
   return { ttsBg, registerBackgroundTtsEvents }

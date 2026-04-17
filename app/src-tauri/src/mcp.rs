@@ -1,11 +1,18 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use tokio::sync::Mutex as AsyncMutex;
 use rmcp::service::{RunningService, RoleClient, DynService};
 use rmcp::service::ServiceExt;
 use rmcp::transport::{TokioChildProcess, streamable_http_client::StreamableHttpClientTransport};
 use tokio::process::Command as TokioCommand;
 use tauri::Emitter;
+use once_cell::sync::Lazy;
+
+/// Reverse lookup: sanitized fn_name → (original_server_id, original_tool_name)
+/// Populated by `build_openai_tools_from_mcp`, consumed by `parse_mcp_fn_call_name`.
+static FN_REVERSE_MAP: Lazy<StdMutex<std::collections::HashMap<String, (String, String)>>> =
+  Lazy::new(|| StdMutex::new(std::collections::HashMap::new()));
 
 #[cfg(target_os = "windows")]
 pub fn resolve_windows_program(prog: &str, cwd: Option<&str>) -> Option<String> {
@@ -217,8 +224,32 @@ pub fn sanitize_fn_name(s: &str) -> String {
   out
 }
 
+/// Sanitize a single component (server ID or tool name) by collapsing consecutive underscores.
+/// Use this on individual parts BEFORE joining with the `__` separator.
+fn sanitize_fn_component(s: &str) -> String {
+  let raw = sanitize_fn_name(s);
+  let mut collapsed = String::with_capacity(raw.len());
+  let mut prev_underscore = false;
+  for ch in raw.chars() {
+    if ch == '_' {
+      if !prev_underscore { collapsed.push(ch); }
+      prev_underscore = true;
+    } else {
+      collapsed.push(ch);
+      prev_underscore = false;
+    }
+  }
+  collapsed
+}
+
 pub fn parse_mcp_fn_call_name(name: &str) -> Option<(String, String)> {
-  // Expected format: mcp__{serverId}__{toolName}
+  // First try reverse lookup (exact match from build_openai_tools_from_mcp)
+  if let Ok(map) = FN_REVERSE_MAP.lock() {
+    if let Some((server_id, tool_name)) = map.get(name) {
+      return Some((server_id.clone(), tool_name.clone()));
+    }
+  }
+  // Fallback: parse the sanitized format mcp__{serverId}__{toolName}
   if !name.starts_with("mcp__") { return None; }
   let rest = &name[5..];
   if let Some(idx) = rest.find("__") {
@@ -286,7 +317,13 @@ pub async fn build_openai_tools_from_mcp(
             if params.get("type").and_then(|x| x.as_str()).is_none() { if let Some(obj) = params.as_object_mut() { obj.insert("type".to_string(), serde_json::json!("object")); } }
             if params.get("properties").is_none() { if let Some(obj) = params.as_object_mut() { obj.insert("properties".to_string(), serde_json::json!({})); } }
             if params.get("additionalProperties").is_none() { if let Some(obj) = params.as_object_mut() { obj.insert("additionalProperties".to_string(), serde_json::json!(true)); } }
-            let fn_name = sanitize_fn_name(&format!("mcp__{}__{}", server_id, name));
+            let fn_name = format!("mcp__{}__{}",
+              sanitize_fn_component(server_id),
+              sanitize_fn_component(name));
+            // Populate reverse lookup so parse_mcp_fn_call_name can recover original names
+            if let Ok(mut rmap) = FN_REVERSE_MAP.lock() {
+              rmap.insert(fn_name.clone(), (server_id.clone(), name.to_string()));
+            }
             let inputs_summary = summarize_input_schema(&params);
             let desc_aug = if desc.is_empty() {
               if inputs_summary.is_empty() { format!("MCP tool '{}' from server '{}'.", name, server_id) }

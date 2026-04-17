@@ -23,6 +23,7 @@ export function useConversationPersist(settingsPersistConversations: Ref<boolean
     if (!settingsPersistConversations.value) return
     if (saveDebounce) clearTimeout(saveDebounce)
     saveDebounce = setTimeout(async () => {
+      saveDebounce = 0
       try {
         await invoke<string>('save_conversation_state', { state: getPersistState() })
       } catch (e) {
@@ -31,10 +32,25 @@ export function useConversationPersist(settingsPersistConversations: Ref<boolean
     }, 300)
   }
 
+  /** Flush pending debounced persist save immediately */
+  function flushPersist() {
+    if (saveDebounce) {
+      clearTimeout(saveDebounce)
+      saveDebounce = 0
+      if (settingsPersistConversations.value) {
+        invoke<string>('save_conversation_state', { state: getPersistState() }).catch(e => console.warn('[persist] flush failed', e))
+      }
+    }
+  }
+
   function registerConversationPersist() {
     const stopFns: Array<() => void> = []
-    // Persist when messages change
-    stopFns.push(watch(() => conversation.currentConversation.messages.length, () => schedulePersistSave()))
+    // Deep watch on current conversation to catch message content changes (streaming, tool results)
+    stopFns.push(watch(
+      () => conversation.currentConversation,
+      () => schedulePersistSave(),
+      { deep: true }
+    ))
     // Persist when switching current conversation (so currentId is saved)
     stopFns.push(watch(() => conversation.currentConversation.id, () => schedulePersistSave()))
     // Persist when conversations are added/removed
@@ -42,5 +58,5 @@ export function useConversationPersist(settingsPersistConversations: Ref<boolean
     return () => { try { stopFns.forEach(s => s()) } catch {} }
   }
 
-  return { loadPersistedConversation, registerConversationPersist }
+  return { loadPersistedConversation, registerConversationPersist, flushPersist }
 }

@@ -19,12 +19,13 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <aside class="sidebar" :class="{ collapsed: !props.sidebarOpen }">
-    <button class="burger" title="Toggle menu" @click="$emit('toggle-sidebar')">☰</button>
+  <aside class="sidebar" :class="{ collapsed: !props.sidebarOpen }" role="navigation" aria-label="Main navigation">
+    <button class="burger" title="Toggle menu" :aria-expanded="props.sidebarOpen" @click="$emit('toggle-sidebar')">☰</button>
     <template v-for="s in props.sections" :key="s">
       <button
         class="side-tab"
         :class="{ active: props.activeSection === s }"
+        :aria-current="props.activeSection === s ? 'page' : undefined"
         @click="$emit('set-section', s)"
         :title="s"
       >
@@ -78,6 +79,7 @@ const emit = defineEmits<{
         v-if="s === 'Prompt'"
         class="side-subtab"
         :class="{ active: props.activeSection === 'Prompt' && props.promptSubview === 'History' }"
+        :aria-current="props.activeSection === 'Prompt' && props.promptSubview === 'History' ? 'page' : undefined"
         @click="$emit('open-history')"
         title="Conversation History"
       >
@@ -95,6 +97,7 @@ const emit = defineEmits<{
         v-if="s === 'Settings'"
         class="side-subtab"
         :class="{ active: props.activeSection === 'Settings' && props.settingsSubview === 'General' }"
+        :aria-current="props.activeSection === 'Settings' && props.settingsSubview === 'General' ? 'page' : undefined"
         @click="$emit('set-settings-subview', 'General')"
         title="General Settings"
       >
@@ -116,6 +119,7 @@ const emit = defineEmits<{
         v-if="s === 'Settings'"
         class="side-subtab"
         :class="{ active: props.activeSection === 'Settings' && props.settingsSubview === 'Speech To Text' }"
+        :aria-current="props.activeSection === 'Settings' && props.settingsSubview === 'Speech To Text' ? 'page' : undefined"
         @click="$emit('set-settings-subview', 'Speech To Text')"
         title="Speech To Text"
       >
@@ -131,6 +135,7 @@ const emit = defineEmits<{
         v-if="s === 'Settings'"
         class="side-subtab"
         :class="{ active: props.activeSection === 'Settings' && props.settingsSubview === 'Quick Prompts' }"
+        :aria-current="props.activeSection === 'Settings' && props.settingsSubview === 'Quick Prompts' ? 'page' : undefined"
         @click="$emit('set-settings-subview', 'Quick Prompts')"
         title="Quick Prompts"
       >
@@ -143,6 +148,7 @@ const emit = defineEmits<{
         v-if="s === 'Settings'"
         class="side-subtab"
         :class="{ active: props.activeSection === 'Settings' && props.settingsSubview === 'MCP Servers' }"
+        :aria-current="props.activeSection === 'Settings' && props.settingsSubview === 'MCP Servers' ? 'page' : undefined"
         @click="$emit('set-settings-subview', 'MCP Servers')"
         title="MCP Servers"
       >

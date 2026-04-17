@@ -14,7 +14,12 @@ use serde_json::json;
 use tauri::Emitter;
 
 #[cfg(feature = "local-stt")]
-static CLIENT: Lazy<reqwest::Client> = Lazy::new(|| reqwest::Client::new());
+static CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
+  reqwest::Client::builder()
+    .connect_timeout(std::time::Duration::from_secs(30))
+    .build()
+    .unwrap_or_else(|_| reqwest::Client::new())
+});
 
 #[cfg(feature = "local-stt")]
 struct ParakeetAsrCache {
@@ -120,6 +125,8 @@ async fn download_file_with_progress(app: Option<&tauri::AppHandle>, url: &str, 
     }
   }
   drop(f);
+  #[cfg(target_os = "windows")]
+  { if path.exists() { let _ = fs::remove_file(path); } }
   fs::rename(&tmp, path).map_err(|e| format!("rename model failed: {e}"))?;
 
   if let Some(app) = app {

@@ -24,10 +24,15 @@ function load(src: string) {
       cache[src].height = img.naturalHeight || img.height || 0
       cache[src].ok = (cache[src].width > 0 && cache[src].height > 0)
       cache[src].loaded = true
+      // Release closure references so the Image can be GC'd
+      img.onload = null
+      img.onerror = null
     }
     img.onerror = () => {
       cache[src].ok = false
       cache[src].loaded = true
+      img.onload = null
+      img.onerror = null
     }
     img.src = src
   } catch {

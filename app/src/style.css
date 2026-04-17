@@ -13,6 +13,13 @@
   --adc-border-strong: #2c2c36;
   --adc-danger: #a42828;
   --adc-sidebar-bg: #1b1b22;
+  --adc-focus-ring: rgba(46, 92, 255, 0.22);
+  --adc-hover: rgba(255, 255, 255, 0.06);
+  --adc-surface-2: #2a2a34;
+  --content-max: 860px;
+  --adc-assistant-bubble-bg: var(--adc-surface);
+  --adc-assistant-bubble-border: var(--adc-border);
+  --adc-assistant-bubble-fg: var(--adc-fg);
 
 
   color-scheme: light dark;
@@ -71,6 +78,12 @@ button:focus-visible {
   max-width: none;
   min-width: 760px;  
   text-align: center;
+}
+
+/* Sub-windows (QuickActions, CaptureOverlay) must not inherit main window min-width */
+html.sub-window #app {
+  min-width: 0;
+  padding: 0;
 }
 
 /* The app uses explicit themes; the prefers-color-scheme block is not needed. */

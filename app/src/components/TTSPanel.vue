@@ -94,6 +94,7 @@ async function loadTtsSettings() {
         if (['wav','mp3','opus'].includes(f)) form.openaiFormat = f as any
       }
       if (typeof (v as any).tts_openai_streaming === 'boolean') form.openaiStreaming = !!(v as any).tts_openai_streaming
+      if (typeof (v as any).tts_openai_instructions === 'string') form.openaiInstructions = (v as any).tts_openai_instructions
     }
   } catch {}
 }
@@ -154,6 +155,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   if (cleanupTimer) clearInterval(cleanupTimer)
+  if (saveDebounce) { clearTimeout(saveDebounce); saveDebounce = 0 }
   if (speaking.value) onStop().catch(() => {})
 })
 
@@ -243,12 +245,12 @@ const ttsTokenHint = computed(() => formatTokenInfo([{ label: 'text', tokens: tt
         </div>
         <div v-if="err" class="hint error">{{ err }}</div>
       </div>
-      <div class="cell" v-else>        
       <div class="cell" v-if="engine === 'openai'">
         <label class="label">Voice tone (optional)</label>
         <input class="input" v-model="form.openaiInstructions" placeholder="e.g. Cheerful and positive tone" />
         <div class="hint">Optional hint sent to OpenAI to influence speaking style/tone.</div>
       </div>
+      <div class="cell" v-if="engine === 'openai'">
         <label class="label">Model (OpenAI)</label>
         <input class="input" v-model="form.openaiModel" list="openai-models" placeholder="gpt-4o-mini-tts" />
         <datalist id="openai-models">
