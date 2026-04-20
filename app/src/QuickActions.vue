@@ -247,8 +247,8 @@ function onKeydown(e: KeyboardEvent): void {
     }
     return
   }
-  // Number keys 1–9: only in home mode and not during STT recording; action fires on keyup
-  if (uiMode.value === 'home' && !sttRecording.value && !sttPending.value && key >= '1' && key <= '9') {
+  // Number keys 1–9: active in home and info mode (not during STT recording); action fires on keyup
+  if ((uiMode.value === 'home' || uiMode.value === 'info') && !sttRecording.value && !sttPending.value && key >= '1' && key <= '9') {
     e.preventDefault()
     if (e.repeat) return  // skip key repeats
     const numKey = key
@@ -295,13 +295,15 @@ function onKeyup(e: KeyboardEvent): void {
     if (key === 'c' && !previewBusy.value && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); void onCopy(); return }
     if (key === 'v' && !previewBusy.value && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); void onInsert(); return }
   }
-  // Number keys 1–9 trigger quick prompts on keyup (only in home mode, not during STT recording)
+  // Number keys 1–9 trigger quick prompts on keyup (home and info mode, not during STT recording)
   if (key >= '1' && key <= '9') {
     e.preventDefault()
     void unsuppressKeyGlobal(key)
-    if (uiMode.value !== 'home') return
+    if (uiMode.value !== 'home' && uiMode.value !== 'info') return
     // During STT recording, number keys are for post-processing selection (handled in keydown) — don't fire quick prompt
     if (sttRecording.value || sttPending.value) return
+    // Switch back to home if in info mode
+    if (uiMode.value === 'info') uiMode.value = 'home'
     const index = Number(key)
     dbg('number key released', index, { showPreviewInPopup: showPreviewInPopup.value })
     if (showPreviewInPopup.value) {
@@ -779,7 +781,7 @@ async function onInsert(): Promise<void> {
             </span>
           </div>
         </div>
-        <div class="qa-hint">Press a number key to run. Hold S + number for STT with post-processing.</div>
+        <div class="qa-hint">Press 1–9 to run. Hold S + number for STT with post-processing. Esc to go back.</div>
       </div>
     </template>
 
