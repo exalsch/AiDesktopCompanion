@@ -555,6 +555,13 @@ onMounted(() => {
   window.addEventListener('focus', onWindowFocus)
   window.addEventListener('mouseup', onWindowMouseup)
 
+  // Clean up any stale global shortcuts from a previous window load/crash.
+  // The OS keeps them registered even if our JS state was lost on reload.
+  const keysToClean = ['S', 'P', 'T', 'I', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+  for (const k of keysToClean) {
+    unregister(k).catch(() => {})
+  }
+
   // Fit window to content — only resize when size actually changes to avoid loops
   try {
     const el = rootRef.value
