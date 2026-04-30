@@ -233,6 +233,17 @@ function onKeydown(e: KeyboardEvent): void {
     return
   }
 
+  // Ctrl+L: dump key log to clipboard for debugging
+  if (e.key.toLowerCase() === 'l' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault()
+    const log = sessionStorage.getItem('qa_key_log') || '(empty)'
+    const summary = `suppressedKeys: [${[...suppressedKeys].join(',')}]\nsttRecording: ${sttRecording.value}\nsttPending: ${sttPending.value}\nuiMode: ${uiMode.value}\n\n${log}`
+    invoke('copy_text_to_clipboard', { text: summary }).then(() => {
+      keyLog('LOG DUMPED TO CLIPBOARD via Ctrl+L')
+    }).catch(() => {})
+    return
+  }
+
   // Only react to single keys when this window is focused
   const key = e.key.toLowerCase()
 
