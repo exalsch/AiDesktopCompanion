@@ -62,34 +62,66 @@ const allowPreviewHotkeys = true
 // Registers a global shortcut for a key so it doesn't leak into other apps,
 // then auto-unregisters on keyup (via the global shortcut callback).
 const suppressedKeys = new Set<string>()
+
+// Persistent key-suppression log for debugging stuck-key issues.
+// Viewable via sessionStorage.getItem('qa_key_log') in DevTools.
+function keyLog(msg: string): void {
+  const ts = new Date().toISOString().slice(11, 23)
+  const line = `[${ts}] ${msg}`
+  console.info('[QA-keys]', msg)
+  try {
+    const prev = sessionStorage.getItem('qa_key_log') || ''
+    // Keep last 80 lines to avoid unbounded growth
+    const lines = prev ? prev.split('\n') : []
+    lines.push(line)
+    if (lines.length > 80) lines.splice(0, lines.length - 80)
+    sessionStorage.setItem('qa_key_log', lines.join('\n'))
+  } catch {}
+}
+
 async function suppressKeyGlobal(keyChar: string, onRelease?: () => void): Promise<void> {
   const upper = keyChar.toUpperCase()
-  if (suppressedKeys.has(upper)) return
+  if (suppressedKeys.has(upper)) {
+    keyLog(`suppress(${upper}) SKIP — already in Set`)
+    return
+  }
   try {
+    keyLog(`suppress(${upper}) registering...`)
     await register(upper, (event) => {
+      keyLog(`global-callback(${upper}) state=${event.state}`)
       if (event.state === 'Released') {
         void unsuppressKeyGlobal(upper)
         onRelease?.()
       }
     })
     suppressedKeys.add(upper)
-    dbg(`global suppress registered: ${upper}`)
-  } catch {
-    // Best-effort; if it fails the key just leaks through
+    keyLog(`suppress(${upper}) OK — Set: [${[...suppressedKeys].join(',')}]`)
+  } catch (err) {
+    keyLog(`suppress(${upper}) FAILED: ${err}`)
   }
 }
 async function unsuppressKeyGlobal(keyChar: string): Promise<void> {
   const upper = keyChar.toUpperCase()
-  if (!suppressedKeys.has(upper)) return
+  if (!suppressedKeys.has(upper)) {
+    keyLog(`unsuppress(${upper}) SKIP — not in Set`)
+    return
+  }
   try {
+    keyLog(`unsuppress(${upper}) unregistering...`)
     await unregister(upper)
-  } catch {}
-  suppressedKeys.delete(upper)  // always clean up tracking regardless of unregister success
+    keyLog(`unsuppress(${upper}) OK`)
+  } catch (err) {
+    keyLog(`unsuppress(${upper}) unregister FAILED: ${err}`)
+  }
+  suppressedKeys.delete(upper)
+  keyLog(`unsuppress(${upper}) Set after: [${[...suppressedKeys].join(',')}]`)
 }
 async function unsuppressAllKeys(): Promise<void> {
+  keyLog(`unsuppressAll — Set: [${[...suppressedKeys].join(',')}]`)
   for (const k of [...suppressedKeys]) {
     await unsuppressKeyGlobal(k)
   }
+  keyLog(`unsuppressAll done — Set: [${[...suppressedKeys].join(',')}]`)
 }
 
 function clearPreviewState(): void {
@@ -419,7 +451,11 @@ function onWindowMouseup(): void {
 }
 
 async function startSTT(): Promise<void> {
-  if (sttRecording.value || sttIsRecording() || sttPending.value) return
+  if (sttRecording.value || sttIsRecording() || sttPending.value) {
+    keyLog(`startSTT SKIP — recording=${sttRecording.value} isRecording=${sttIsRecording()} pending=${sttPending.value}`)
+    return
+  }
+  keyLog('startSTT begin')
   try {
     sttPending.value = true
     sttStopRequested.value = false
@@ -449,12 +485,13 @@ async function startSTT(): Promise<void> {
 
 async function stopSTTAndTranscribe(): Promise<void> {
   if (!sttRecording.value) {
-    // If we're still pending (mic permission), flag for deferred stop
+    keyLog(`stopSTT SKIP — recording=false, pending=${sttPending.value}`)
     if (sttPending.value) {
       sttStopRequested.value = true
     }
     return
   }
+  keyLog('stopSTT begin — eagerly setting recording=false')
   sttRecording.value = false  // eagerly claim to prevent concurrent entry
   // Immediately unregister global S-key so it doesn't interfere after recording
   await unsuppressKeyGlobal('S')
@@ -540,6 +577,7 @@ async function stopSTTAndTranscribe(): Promise<void> {
 }
 
 async function cancelSTT(): Promise<void> {
+  keyLog('cancelSTT')
   await unsuppressKeyGlobal('S')
   try {
     if (sttIsRecording()) await sttStop()
@@ -558,6 +596,7 @@ onMounted(() => {
   // Clean up any stale global shortcuts from a previous window load/crash.
   // The OS keeps them registered even if our JS state was lost on reload.
   const keysToClean = ['S', 'P', 'T', 'I', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+  keyLog(`mount cleanup — unregistering stale keys: [${keysToClean.join(',')}]`)
   for (const k of keysToClean) {
     unregister(k).catch(() => {})
   }
@@ -695,6 +734,7 @@ onBeforeUnmount(() => {
   try { if (resizeObserver) resizeObserver.disconnect() } catch {}
   if (blurCloseTimer) { clearTimeout(blurCloseTimer); blurCloseTimer = null }
   // Clean up all global key suppressions
+  keyLog('onBeforeUnmount — cleaning up')
   void unsuppressAllKeys()
 })
 
