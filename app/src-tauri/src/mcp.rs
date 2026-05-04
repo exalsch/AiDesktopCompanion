@@ -292,8 +292,8 @@ pub fn summarize_input_schema(schema: &serde_json::Value) -> String {
 pub async fn build_openai_tools_from_mcp(
   clients: &std::collections::HashMap<String, Arc<RunningService<RoleClient, Box<dyn DynService<RoleClient>>>>>
 ) -> Vec<serde_json::Value> {
-  // Clear stale entries from previous builds to prevent routing to disconnected servers
-  if let Ok(mut map) = FN_REVERSE_MAP.lock() { map.clear(); }
+  // Build into a new map, then swap atomically to avoid TOCTOU race with concurrent parse_mcp_fn_call_name
+  let mut new_reverse_map: std::collections::HashMap<String, (String, String)> = std::collections::HashMap::new();
   let mut out: Vec<serde_json::Value> = Vec::new();
   let disabled_map = crate::config::get_disabled_tools_map();
   for (server_id, svc) in clients.iter() {
@@ -323,9 +323,7 @@ pub async fn build_openai_tools_from_mcp(
               sanitize_fn_component(server_id),
               sanitize_fn_component(name));
             // Populate reverse lookup so parse_mcp_fn_call_name can recover original names
-            if let Ok(mut rmap) = FN_REVERSE_MAP.lock() {
-              rmap.insert(fn_name.clone(), (server_id.clone(), name.to_string()));
-            }
+            new_reverse_map.insert(fn_name.clone(), (server_id.clone(), name.to_string()));
             let inputs_summary = summarize_input_schema(&params);
             let desc_aug = if desc.is_empty() {
               if inputs_summary.is_empty() { format!("MCP tool '{}' from server '{}'.", name, server_id) }
@@ -343,5 +341,7 @@ pub async fn build_openai_tools_from_mcp(
       }
     }
   }
+  // Atomically swap the reverse map to avoid TOCTOU with concurrent parse_mcp_fn_call_name
+  if let Ok(mut rmap) = FN_REVERSE_MAP.lock() { *rmap = new_reverse_map; }
   out
 }
