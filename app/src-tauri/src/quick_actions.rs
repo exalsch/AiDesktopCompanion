@@ -319,15 +319,33 @@ pub fn capture_region(app: tauri::AppHandle, x: i32, y: i32, width: i32, height:
 /// Returns the full path of the written file.
 #[tauri::command]
 pub fn dump_key_log(text: String) -> Result<String, String> {
-  let dir = if let Ok(appdata) = std::env::var("APPDATA") {
-    let mut p = std::path::PathBuf::from(appdata);
-    p.push("AiDesktopCompanion");
-    p
-  } else {
-    return Err("APPDATA not set".into());
-  };
+  let dir = {
+    #[cfg(target_os = "windows")]
+    {
+      std::env::var("APPDATA").ok().map(|a| {
+        let mut p = std::path::PathBuf::from(a);
+        p.push("AiDesktopCompanion");
+        p
+      })
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+      std::env::var("HOME").ok().map(|h| {
+        let mut p = std::path::PathBuf::from(h);
+        p.push(".config");
+        p.push("AiDesktopCompanion");
+        p
+      })
+    }
+  }.ok_or_else(|| "Config directory not available".to_string())?;
   let _ = std::fs::create_dir_all(&dir);
   let path = dir.join("qa_key_log.txt");
+  // Truncate if file exceeds 1MB to prevent unbounded growth
+  if let Ok(meta) = std::fs::metadata(&path) {
+    if meta.len() > 1_048_576 {
+      let _ = std::fs::remove_file(&path);
+    }
+  }
   // Append with timestamp header
   let header = format!("\n===== {} =====\n", chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"));
   let content = format!("{}{}\n", header, text);

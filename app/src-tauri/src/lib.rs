@@ -1,4 +1,4 @@
-// AiDesktopCompanion v0.1.10 build20
+// AiDesktopCompanion v0.1.10 build21
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()

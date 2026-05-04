@@ -21,6 +21,7 @@ fn build_transcriptions_url(base_url: &str) -> String {
 /// Transcribe audio bytes using OpenAI Whisper API (expects WEBM/Opus by default).
 /// Returns the transcribed text on success.
 pub async fn transcribe(key: Option<String>, base_url: String, model: String, audio: Vec<u8>, mime: String) -> Result<String, String> {
+  if audio.is_empty() { return Err("Audio data is empty".into()); }
   // Build multipart form: model + file
   let file_name = if mime.contains("webm") { "audio.webm" } else { "audio.bin" };
   let part = reqwest::multipart::Part::bytes(audio)

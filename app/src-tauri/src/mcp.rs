@@ -292,6 +292,8 @@ pub fn summarize_input_schema(schema: &serde_json::Value) -> String {
 pub async fn build_openai_tools_from_mcp(
   clients: &std::collections::HashMap<String, Arc<RunningService<RoleClient, Box<dyn DynService<RoleClient>>>>>
 ) -> Vec<serde_json::Value> {
+  // Clear stale entries from previous builds to prevent routing to disconnected servers
+  if let Ok(mut map) = FN_REVERSE_MAP.lock() { map.clear(); }
   let mut out: Vec<serde_json::Value> = Vec::new();
   let disabled_map = crate::config::get_disabled_tools_map();
   for (server_id, svc) in clients.iter() {

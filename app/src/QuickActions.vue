@@ -299,7 +299,7 @@ function onKeydown(e: KeyboardEvent): void {
     return
   }
   // Number keys 1–9: active in home and info mode (not during STT recording); action fires on keyup
-  if ((uiMode.value === 'home' || uiMode.value === 'info') && !sttRecording.value && !sttPending.value && key >= '1' && key <= '9') {
+  if ((uiMode.value === 'home' || uiMode.value === 'info') && !sttRecording.value && !sttPending.value && !previewBusy.value && key >= '1' && key <= '9') {
     e.preventDefault()
     if (e.repeat) return  // skip key repeats
     const numKey = key
@@ -349,10 +349,14 @@ function onKeyup(e: KeyboardEvent): void {
   // Number keys 1–9 trigger quick prompts on keyup (home and info mode, not during STT recording)
   if (key >= '1' && key <= '9') {
     e.preventDefault()
+    // If key was already unsuppressed by the global callback, skip to prevent double-fire
+    if (!suppressedKeys.has(key)) return
     void unsuppressKeyGlobal(key)
     if (uiMode.value !== 'home' && uiMode.value !== 'info') return
     // During STT recording, number keys are for post-processing selection (handled in keydown) — don't fire quick prompt
     if (sttRecording.value || sttPending.value) return
+    // Prevent concurrent invocations
+    if (previewBusy.value) return
     // Switch back to home if in info mode
     if (uiMode.value === 'info') uiMode.value = 'home'
     const index = Number(key)
@@ -765,11 +769,12 @@ onBeforeUnmount(() => {
   try { if (unlistenBlur) unlistenBlur() } catch {}
   try { if (unlistenFocus) unlistenFocus() } catch {}
   try { if (unlistenHide) unlistenHide() } catch {}
-  try { if (resizeObserver) resizeObserver.disconnect() } catch {}
+  try { if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null } } catch {}
   if (blurCloseTimer) { clearTimeout(blurCloseTimer); blurCloseTimer = null }
-  // Clean up all global key suppressions
-  keyLog('onBeforeUnmount — cleaning up')
+  // Clean up all global key suppressions + Ctrl+L debug shortcut
+  keyLog('onBeforeUnmount -- cleaning up')
   void unsuppressAllKeys()
+  unregister('CommandOrControl+L').catch(() => {})
 })
 
 // Copy preview result to clipboard and close popup
