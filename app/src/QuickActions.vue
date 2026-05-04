@@ -233,7 +233,7 @@ function onKeydown(e: KeyboardEvent): void {
     return
   }
 
-  // Ctrl+L: dump key log to clipboard for debugging
+  // Ctrl+L: dump key log to clipboard for debugging (works in ALL modes including recording)
   if (e.key.toLowerCase() === 'l' && (e.ctrlKey || e.metaKey)) {
     e.preventDefault()
     const log = sessionStorage.getItem('qa_key_log') || '(empty)'
@@ -478,6 +478,20 @@ async function startSTT(): Promise<void> {
       // On key release via global shortcut (user switched focus while holding S)
       if (sttRecording.value) void stopSTTAndTranscribe()
     })
+    // Register Ctrl+L as global shortcut during recording so user can dump log
+    // even when popup has no focus (S is globally captured -> focus stays on prev app)
+    try {
+      await register('CommandOrControl+L', () => {
+        const log = sessionStorage.getItem('qa_key_log') || '(empty)'
+        const summary = `[GLOBAL Ctrl+L DUMP]\nsuppressedKeys: [${[...suppressedKeys].join(',')}]\nsttRecording: ${sttRecording.value}\nsttPending: ${sttPending.value}\nuiMode: ${uiMode.value}\n\n${log}`
+        invoke('copy_text_to_clipboard', { text: summary }).then(() => {
+          keyLog('LOG DUMPED TO CLIPBOARD via global Ctrl+L')
+        }).catch(() => {})
+      })
+      keyLog('registered global Ctrl+L for STT debug dump')
+    } catch (err) {
+      keyLog(`global Ctrl+L register FAILED: ${err}`)
+    }
     console.info('[stt] recording started')
     // If stop was requested while we were awaiting mic permission, stop now
     if (sttStopRequested.value) {
@@ -502,10 +516,19 @@ async function stopSTTAndTranscribe(): Promise<void> {
     }
     return
   }
-  keyLog('stopSTT begin — eagerly setting recording=false')
+  keyLog('stopSTT begin -- eagerly setting recording=false')
   sttRecording.value = false  // eagerly claim to prevent concurrent entry
-  // Immediately unregister global S-key so it doesn't interfere after recording
+  // Immediately unregister global S-key and Ctrl+L debug shortcut
   await unsuppressKeyGlobal('S')
+  try { await unregister('CommandOrControl+L') } catch {}
+  keyLog('unregistered global Ctrl+L')
+  // Auto-dump key log on every STT stop for diagnostics
+  try {
+    const log = sessionStorage.getItem('qa_key_log') || '(empty)'
+    const summary = `[AUTO-DUMP stopSTT]\nsuppressedKeys: [${[...suppressedKeys].join(',')}]\nsttRecording: ${sttRecording.value}\nsttPending: ${sttPending.value}\nuiMode: ${uiMode.value}\n\n${log}`
+    await invoke('copy_text_to_clipboard', { text: summary })
+    keyLog('AUTO-DUMP to clipboard on STT stop')
+  } catch {}
   try {
     const res = await sttStop()
     sttRecording.value = false
@@ -590,6 +613,7 @@ async function stopSTTAndTranscribe(): Promise<void> {
 async function cancelSTT(): Promise<void> {
   keyLog('cancelSTT')
   await unsuppressKeyGlobal('S')
+  try { await unregister('CommandOrControl+L') } catch {}
   try {
     if (sttIsRecording()) await sttStop()
   } catch {}
@@ -607,10 +631,12 @@ onMounted(() => {
   // Clean up any stale global shortcuts from a previous window load/crash.
   // The OS keeps them registered even if our JS state was lost on reload.
   const keysToClean = ['S', 'P', 'T', 'I', '1', '2', '3', '4', '5', '6', '7', '8', '9']
-  keyLog(`mount cleanup — unregistering stale keys: [${keysToClean.join(',')}]`)
+  keyLog(`mount cleanup -- unregistering stale keys: [${keysToClean.join(',')}]`)
   for (const k of keysToClean) {
     unregister(k).catch(() => {})
   }
+  // Also clean up Ctrl+L debug shortcut in case it was left from a crash
+  unregister('CommandOrControl+L').catch(() => {})
 
   // Fit window to content — only resize when size actually changes to avoid loops
   try {
