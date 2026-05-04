@@ -522,13 +522,6 @@ async function stopSTTAndTranscribe(): Promise<void> {
   await unsuppressKeyGlobal('S')
   try { await unregister('CommandOrControl+L') } catch {}
   keyLog('unregistered global Ctrl+L')
-  // Auto-dump key log on every STT stop for diagnostics
-  try {
-    const log = sessionStorage.getItem('qa_key_log') || '(empty)'
-    const summary = `[AUTO-DUMP stopSTT]\nsuppressedKeys: [${[...suppressedKeys].join(',')}]\nsttRecording: ${sttRecording.value}\nsttPending: ${sttPending.value}\nuiMode: ${uiMode.value}\n\n${log}`
-    await invoke('copy_text_to_clipboard', { text: summary })
-    keyLog('AUTO-DUMP to clipboard on STT stop')
-  } catch {}
   try {
     const res = await sttStop()
     sttRecording.value = false
