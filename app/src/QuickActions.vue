@@ -79,6 +79,18 @@ function keyLog(msg: string): void {
   } catch {}
 }
 
+// Dump key log to file via backend (no clipboard conflict)
+async function dumpKeyLogToFile(trigger: string): Promise<void> {
+  const log = sessionStorage.getItem('qa_key_log') || '(empty)'
+  const summary = `[${trigger}]\nsuppressedKeys: [${[...suppressedKeys].join(',')}]\nsttRecording: ${sttRecording.value}\nsttPending: ${sttPending.value}\nuiMode: ${uiMode.value}\n\n${log}`
+  try {
+    const path = await invoke<string>('dump_key_log', { text: summary })
+    keyLog(`LOG DUMPED TO FILE via ${trigger}: ${path}`)
+  } catch (err) {
+    keyLog(`LOG DUMP FAILED: ${err}`)
+  }
+}
+
 async function suppressKeyGlobal(keyChar: string, onRelease?: () => void): Promise<void> {
   const upper = keyChar.toUpperCase()
   if (suppressedKeys.has(upper)) {
@@ -233,14 +245,10 @@ function onKeydown(e: KeyboardEvent): void {
     return
   }
 
-  // Ctrl+L: dump key log to clipboard for debugging (works in ALL modes including recording)
+  // Ctrl+L: dump key log to file for debugging (works in ALL modes including recording)
   if (e.key.toLowerCase() === 'l' && (e.ctrlKey || e.metaKey)) {
     e.preventDefault()
-    const log = sessionStorage.getItem('qa_key_log') || '(empty)'
-    const summary = `suppressedKeys: [${[...suppressedKeys].join(',')}]\nsttRecording: ${sttRecording.value}\nsttPending: ${sttPending.value}\nuiMode: ${uiMode.value}\n\n${log}`
-    invoke('copy_text_to_clipboard', { text: summary }).then(() => {
-      keyLog('LOG DUMPED TO CLIPBOARD via Ctrl+L')
-    }).catch(() => {})
+    void dumpKeyLogToFile('local Ctrl+L')
     return
   }
 
@@ -482,11 +490,7 @@ async function startSTT(): Promise<void> {
     // even when popup has no focus (S is globally captured -> focus stays on prev app)
     try {
       await register('CommandOrControl+L', () => {
-        const log = sessionStorage.getItem('qa_key_log') || '(empty)'
-        const summary = `[GLOBAL Ctrl+L DUMP]\nsuppressedKeys: [${[...suppressedKeys].join(',')}]\nsttRecording: ${sttRecording.value}\nsttPending: ${sttPending.value}\nuiMode: ${uiMode.value}\n\n${log}`
-        invoke('copy_text_to_clipboard', { text: summary }).then(() => {
-          keyLog('LOG DUMPED TO CLIPBOARD via global Ctrl+L')
-        }).catch(() => {})
+        void dumpKeyLogToFile('global Ctrl+L during STT')
       })
       keyLog('registered global Ctrl+L for STT debug dump')
     } catch (err) {

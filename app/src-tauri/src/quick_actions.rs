@@ -314,6 +314,33 @@ pub fn capture_region(app: tauri::AppHandle, x: i32, y: i32, width: i32, height:
 }
 
 // TTS selection flow (moved from lib.rs)
+
+/// Dump debug text to a log file in the app config directory.
+/// Returns the full path of the written file.
+#[tauri::command]
+pub fn dump_key_log(text: String) -> Result<String, String> {
+  let dir = if let Ok(appdata) = std::env::var("APPDATA") {
+    let mut p = std::path::PathBuf::from(appdata);
+    p.push("AiDesktopCompanion");
+    p
+  } else {
+    return Err("APPDATA not set".into());
+  };
+  let _ = std::fs::create_dir_all(&dir);
+  let path = dir.join("qa_key_log.txt");
+  // Append with timestamp header
+  let header = format!("\n===== {} =====\n", chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"));
+  let content = format!("{}{}\n", header, text);
+  use std::io::Write;
+  let mut f = std::fs::OpenOptions::new()
+    .create(true)
+    .append(true)
+    .open(&path)
+    .map_err(|e| format!("open failed: {e}"))?;
+  f.write_all(content.as_bytes()).map_err(|e| format!("write failed: {e}"))?;
+  Ok(path.to_string_lossy().to_string())
+}
+
 #[tauri::command]
 pub async fn tts_selection(app: tauri::AppHandle, safe_mode: Option<bool>) -> Result<String, String> {
   let safe = safe_mode.unwrap_or(false);
