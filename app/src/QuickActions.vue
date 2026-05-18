@@ -62,34 +62,78 @@ const allowPreviewHotkeys = true
 // Registers a global shortcut for a key so it doesn't leak into other apps,
 // then auto-unregisters on keyup (via the global shortcut callback).
 const suppressedKeys = new Set<string>()
+
+// Persistent key-suppression log for debugging stuck-key issues.
+// Viewable via sessionStorage.getItem('qa_key_log') in DevTools.
+function keyLog(msg: string): void {
+  const ts = new Date().toISOString().slice(11, 23)
+  const line = `[${ts}] ${msg}`
+  console.info('[QA-keys]', msg)
+  try {
+    const prev = sessionStorage.getItem('qa_key_log') || ''
+    // Keep last 80 lines to avoid unbounded growth
+    const lines = prev ? prev.split('\n') : []
+    lines.push(line)
+    if (lines.length > 80) lines.splice(0, lines.length - 80)
+    sessionStorage.setItem('qa_key_log', lines.join('\n'))
+  } catch {}
+}
+
+// Dump key log to file via backend (no clipboard conflict)
+async function dumpKeyLogToFile(trigger: string): Promise<void> {
+  const log = sessionStorage.getItem('qa_key_log') || '(empty)'
+  const summary = `[${trigger}]\nsuppressedKeys: [${[...suppressedKeys].join(',')}]\nsttRecording: ${sttRecording.value}\nsttPending: ${sttPending.value}\nuiMode: ${uiMode.value}\n\n${log}`
+  try {
+    const path = await invoke<string>('dump_key_log', { text: summary })
+    keyLog(`LOG DUMPED TO FILE via ${trigger}: ${path}`)
+  } catch (err) {
+    keyLog(`LOG DUMP FAILED: ${err}`)
+  }
+}
+
 async function suppressKeyGlobal(keyChar: string, onRelease?: () => void): Promise<void> {
   const upper = keyChar.toUpperCase()
-  if (suppressedKeys.has(upper)) return
+  if (suppressedKeys.has(upper)) {
+    keyLog(`suppress(${upper}) SKIP — already in Set`)
+    return
+  }
   try {
+    keyLog(`suppress(${upper}) registering...`)
     await register(upper, (event) => {
+      keyLog(`global-callback(${upper}) state=${event.state}`)
       if (event.state === 'Released') {
         void unsuppressKeyGlobal(upper)
         onRelease?.()
       }
     })
     suppressedKeys.add(upper)
-    dbg(`global suppress registered: ${upper}`)
-  } catch {
-    // Best-effort; if it fails the key just leaks through
+    keyLog(`suppress(${upper}) OK — Set: [${[...suppressedKeys].join(',')}]`)
+  } catch (err) {
+    keyLog(`suppress(${upper}) FAILED: ${err}`)
   }
 }
 async function unsuppressKeyGlobal(keyChar: string): Promise<void> {
   const upper = keyChar.toUpperCase()
-  if (!suppressedKeys.has(upper)) return
+  if (!suppressedKeys.has(upper)) {
+    keyLog(`unsuppress(${upper}) SKIP — not in Set`)
+    return
+  }
   try {
+    keyLog(`unsuppress(${upper}) unregistering...`)
     await unregister(upper)
-  } catch {}
-  suppressedKeys.delete(upper)  // always clean up tracking regardless of unregister success
+    keyLog(`unsuppress(${upper}) OK`)
+  } catch (err) {
+    keyLog(`unsuppress(${upper}) unregister FAILED: ${err}`)
+  }
+  suppressedKeys.delete(upper)
+  keyLog(`unsuppress(${upper}) Set after: [${[...suppressedKeys].join(',')}]`)
 }
 async function unsuppressAllKeys(): Promise<void> {
+  keyLog(`unsuppressAll — Set: [${[...suppressedKeys].join(',')}]`)
   for (const k of [...suppressedKeys]) {
     await unsuppressKeyGlobal(k)
   }
+  keyLog(`unsuppressAll done — Set: [${[...suppressedKeys].join(',')}]`)
 }
 
 function clearPreviewState(): void {
@@ -201,6 +245,13 @@ function onKeydown(e: KeyboardEvent): void {
     return
   }
 
+  // Ctrl+L: dump key log to file for debugging (works in ALL modes including recording)
+  if (e.key.toLowerCase() === 'l' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault()
+    void dumpKeyLogToFile('local Ctrl+L')
+    return
+  }
+
   // Only react to single keys when this window is focused
   const key = e.key.toLowerCase()
 
@@ -247,8 +298,8 @@ function onKeydown(e: KeyboardEvent): void {
     }
     return
   }
-  // Number keys 1–9: only in home mode; action fires on keyup
-  if (uiMode.value === 'home' && key >= '1' && key <= '9') {
+  // Number keys 1–9: active in home and info mode (not during STT recording); action fires on keyup
+  if ((uiMode.value === 'home' || uiMode.value === 'info') && !sttRecording.value && !sttPending.value && !previewBusy.value && key >= '1' && key <= '9') {
     e.preventDefault()
     if (e.repeat) return  // skip key repeats
     const numKey = key
@@ -295,11 +346,19 @@ function onKeyup(e: KeyboardEvent): void {
     if (key === 'c' && !previewBusy.value && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); void onCopy(); return }
     if (key === 'v' && !previewBusy.value && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); void onInsert(); return }
   }
-  // Number keys 1–9 trigger quick prompts on keyup (only in home mode)
+  // Number keys 1–9 trigger quick prompts on keyup (home and info mode, not during STT recording)
   if (key >= '1' && key <= '9') {
     e.preventDefault()
+    // If key was already unsuppressed by the global callback, skip to prevent double-fire
+    if (!suppressedKeys.has(key)) return
     void unsuppressKeyGlobal(key)
-    if (uiMode.value !== 'home') return
+    if (uiMode.value !== 'home' && uiMode.value !== 'info') return
+    // During STT recording, number keys are for post-processing selection (handled in keydown) — don't fire quick prompt
+    if (sttRecording.value || sttPending.value) return
+    // Prevent concurrent invocations
+    if (previewBusy.value) return
+    // Switch back to home if in info mode
+    if (uiMode.value === 'info') uiMode.value = 'home'
     const index = Number(key)
     dbg('number key released', index, { showPreviewInPopup: showPreviewInPopup.value })
     if (showPreviewInPopup.value) {
@@ -415,7 +474,11 @@ function onWindowMouseup(): void {
 }
 
 async function startSTT(): Promise<void> {
-  if (sttRecording.value || sttIsRecording() || sttPending.value) return
+  if (sttRecording.value || sttIsRecording() || sttPending.value) {
+    keyLog(`startSTT SKIP — recording=${sttRecording.value} isRecording=${sttIsRecording()} pending=${sttPending.value}`)
+    return
+  }
+  keyLog('startSTT begin')
   try {
     sttPending.value = true
     sttStopRequested.value = false
@@ -427,6 +490,16 @@ async function startSTT(): Promise<void> {
       // On key release via global shortcut (user switched focus while holding S)
       if (sttRecording.value) void stopSTTAndTranscribe()
     })
+    // Register Ctrl+L as global shortcut during recording so user can dump log
+    // even when popup has no focus (S is globally captured -> focus stays on prev app)
+    try {
+      await register('CommandOrControl+L', () => {
+        void dumpKeyLogToFile('global Ctrl+L during STT')
+      })
+      keyLog('registered global Ctrl+L for STT debug dump')
+    } catch (err) {
+      keyLog(`global Ctrl+L register FAILED: ${err}`)
+    }
     console.info('[stt] recording started')
     // If stop was requested while we were awaiting mic permission, stop now
     if (sttStopRequested.value) {
@@ -445,15 +518,18 @@ async function startSTT(): Promise<void> {
 
 async function stopSTTAndTranscribe(): Promise<void> {
   if (!sttRecording.value) {
-    // If we're still pending (mic permission), flag for deferred stop
+    keyLog(`stopSTT SKIP — recording=false, pending=${sttPending.value}`)
     if (sttPending.value) {
       sttStopRequested.value = true
     }
     return
   }
+  keyLog('stopSTT begin -- eagerly setting recording=false')
   sttRecording.value = false  // eagerly claim to prevent concurrent entry
-  // Immediately unregister global S-key so it doesn't interfere after recording
+  // Immediately unregister global S-key and Ctrl+L debug shortcut
   await unsuppressKeyGlobal('S')
+  try { await unregister('CommandOrControl+L') } catch {}
+  keyLog('unregistered global Ctrl+L')
   try {
     const res = await sttStop()
     sttRecording.value = false
@@ -536,7 +612,9 @@ async function stopSTTAndTranscribe(): Promise<void> {
 }
 
 async function cancelSTT(): Promise<void> {
+  keyLog('cancelSTT')
   await unsuppressKeyGlobal('S')
+  try { await unregister('CommandOrControl+L') } catch {}
   try {
     if (sttIsRecording()) await sttStop()
   } catch {}
@@ -550,6 +628,16 @@ onMounted(() => {
   window.addEventListener('blur', onWindowBlur)
   window.addEventListener('focus', onWindowFocus)
   window.addEventListener('mouseup', onWindowMouseup)
+
+  // Clean up any stale global shortcuts from a previous window load/crash.
+  // The OS keeps them registered even if our JS state was lost on reload.
+  const keysToClean = ['S', 'P', 'T', 'I', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+  keyLog(`mount cleanup -- unregistering stale keys: [${keysToClean.join(',')}]`)
+  for (const k of keysToClean) {
+    unregister(k).catch(() => {})
+  }
+  // Also clean up Ctrl+L debug shortcut in case it was left from a crash
+  unregister('CommandOrControl+L').catch(() => {})
 
   // Fit window to content — only resize when size actually changes to avoid loops
   try {
@@ -681,10 +769,12 @@ onBeforeUnmount(() => {
   try { if (unlistenBlur) unlistenBlur() } catch {}
   try { if (unlistenFocus) unlistenFocus() } catch {}
   try { if (unlistenHide) unlistenHide() } catch {}
-  try { if (resizeObserver) resizeObserver.disconnect() } catch {}
+  try { if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null } } catch {}
   if (blurCloseTimer) { clearTimeout(blurCloseTimer); blurCloseTimer = null }
-  // Clean up all global key suppressions
+  // Clean up all global key suppressions + Ctrl+L debug shortcut
+  keyLog('onBeforeUnmount -- cleaning up')
   void unsuppressAllKeys()
+  unregister('CommandOrControl+L').catch(() => {})
 })
 
 // Copy preview result to clipboard and close popup
@@ -777,7 +867,7 @@ async function onInsert(): Promise<void> {
             </span>
           </div>
         </div>
-        <div class="qa-hint">Press a number key to run. Hold S + number for STT with post-processing.</div>
+        <div class="qa-hint">Press 1–9 to run. Hold S + number for STT with post-processing. Esc to go back.</div>
       </div>
     </template>
 

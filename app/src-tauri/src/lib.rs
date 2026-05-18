@@ -1,4 +1,4 @@
-// AiDesktopCompanion v0.1.10 build12
+// AiDesktopCompanion v0.1.10 build22
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -131,6 +131,7 @@ pub fn run() {
       quick_actions::size_overlay_to_virtual_screen,
       quick_actions::capture_region,
       quick_actions::copy_text_to_clipboard,
+      quick_actions::dump_key_log,
       quick_actions::refocus_previous_app,
       mcp_connect,
       mcp_disconnect,

@@ -47,6 +47,8 @@ pub async fn ensure_streaming_server() -> Result<(), String> {
 }
 
 pub async fn create_stream_session(text: String, voice: Option<String>, model: Option<String>, format: Option<String>, instructions: Option<String>, api_key: String) -> Result<String, String> {
+  if text.trim().is_empty() { return Err("Text is empty".into()); }
+  if text.len() > OPENAI_TTS_MAX_INPUT_CHARS { return Err(format!("Text exceeds TTS limit of {} characters", OPENAI_TTS_MAX_INPUT_CHARS)); }
   ensure_streaming_server().await?;
   let guard = TTS_STREAMING_SERVER.lock().map_err(|_| "Mutex poisoned")?;
   let server = guard.as_ref().ok_or_else(|| "TTS streaming server not available".to_string())?;
@@ -88,6 +90,8 @@ pub fn openai_stream_start(
   model: Option<String>,
   format: Option<String>,
 ) -> Result<u64, String> {
+  if text.trim().is_empty() { return Err("Text is empty".into()); }
+  if text.len() > OPENAI_TTS_MAX_INPUT_CHARS { return Err(format!("Text exceeds TTS limit of {} characters", OPENAI_TTS_MAX_INPUT_CHARS)); }
   let fmt = format.unwrap_or_else(|| "opus".to_string());
   let (accept, body_format, mime): (&'static str, &'static str, &'static str) = match fmt.as_str() {
     "mp3" => ("audio/mpeg", "mp3", "audio/mpeg"),
@@ -125,6 +129,8 @@ pub fn responses_stream_start(
   model: Option<String>,
   format: Option<String>,
 ) -> Result<u64, String> {
+  if text.trim().is_empty() { return Err("Text is empty".into()); }
+  if text.len() > OPENAI_TTS_MAX_INPUT_CHARS { return Err(format!("Text exceeds TTS limit of {} characters", OPENAI_TTS_MAX_INPUT_CHARS)); }
   let fmt = format.unwrap_or_else(|| "opus".to_string());
   let req_model = model.unwrap_or_else(|| "gpt-4o-mini-tts".to_string());
   let m = if req_model.contains("tts") { "gpt-4o-realtime-preview".to_string() } else { req_model };

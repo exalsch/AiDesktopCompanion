@@ -14,6 +14,7 @@ static TTS_CHILD: Lazy<Mutex<Option<std::process::Child>>> = Lazy::new(|| Mutex:
 
 #[cfg(target_os = "windows")]
 pub fn local_tts_start(text: String, voice: Option<String>, rate: Option<i32>, volume: Option<u8>) -> Result<(), String> {
+  if text.trim().is_empty() { return Err("Text is empty".into()); }
   if let Ok(mut guard) = TTS_CHILD.lock() {
     if let Some(mut c) = guard.take() { let _ = c.kill(); let _ = c.wait(); }
   }
@@ -144,6 +145,7 @@ pub fn local_speak_blocking(_text: String, _voice: String, _rate: i32, _vol: u8)
 
 #[cfg(target_os = "windows")]
 pub fn local_tts_synthesize_wav(text: String, voice: Option<String>, rate: Option<i32>, volume: Option<u8>) -> Result<String, String> {
+  if text.trim().is_empty() { return Err("Text is empty".into()); }
   let v = voice.unwrap_or_default();
   let v_escaped = ps_escape_single_quoted(&v);
   let r = rate.unwrap_or(-2).clamp(-10, 10);

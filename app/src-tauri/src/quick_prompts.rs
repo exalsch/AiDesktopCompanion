@@ -36,6 +36,7 @@ pub fn quick_prompts_config_path() -> Option<PathBuf> {
 // Uses aggressive copy-restore by default unless safe_mode is true.
 #[tauri::command]
 pub async fn run_quick_prompt(app: tauri::AppHandle, index: u8, safe_mode: Option<bool>) -> Result<(), String> {
+  if index < 1 || index > 9 { return Err("Quick prompt index must be 1-9".into()); }
   let safe = safe_mode.unwrap_or(false);
 
   // Capture selection text (duplication kept for clarity and simplicity)
@@ -164,6 +165,7 @@ pub async fn run_quick_prompt(app: tauri::AppHandle, index: u8, safe_mode: Optio
 /// `run_quick_prompt`.
 #[tauri::command]
 pub async fn run_quick_prompt_result(app: tauri::AppHandle, index: u8, safe_mode: Option<bool>) -> Result<String, String> {
+  if index < 1 || index > 9 { return Err("Quick prompt index must be 1-9".into()); }
   let safe = safe_mode.unwrap_or(false);
 
   // Capture selection text (duplication kept for clarity and simplicity)
@@ -272,6 +274,7 @@ pub async fn run_quick_prompt_result(app: tauri::AppHandle, index: u8, safe_mode
 /// inline preview flows when the frontend has already captured the selection.
 #[tauri::command]
 pub async fn run_quick_prompt_with_selection(app: tauri::AppHandle, index: u8, selection: String) -> Result<String, String> {
+  if index < 1 || index > 9 { return Err("Quick prompt index must be 1-9".into()); }
   // If empty selection, return a friendly message for the preview UI.
   if selection.trim().is_empty() {
     return Ok("No selection. Type your input or paste it here.".to_string());

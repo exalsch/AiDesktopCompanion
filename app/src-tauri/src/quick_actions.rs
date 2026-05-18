@@ -314,27 +314,76 @@ pub fn capture_region(app: tauri::AppHandle, x: i32, y: i32, width: i32, height:
 }
 
 // TTS selection flow (moved from lib.rs)
+
+/// Dump debug text to a log file in the app config directory.
+/// Returns the full path of the written file.
+#[tauri::command]
+pub fn dump_key_log(text: String) -> Result<String, String> {
+  let dir = {
+    #[cfg(target_os = "windows")]
+    {
+      std::env::var("APPDATA").ok().map(|a| {
+        let mut p = std::path::PathBuf::from(a);
+        p.push("AiDesktopCompanion");
+        p
+      })
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+      std::env::var("HOME").ok().map(|h| {
+        let mut p = std::path::PathBuf::from(h);
+        p.push(".config");
+        p.push("AiDesktopCompanion");
+        p
+      })
+    }
+  }.ok_or_else(|| "Config directory not available".to_string())?;
+  let _ = std::fs::create_dir_all(&dir);
+  let path = dir.join("qa_key_log.txt");
+  // Truncate if file exceeds 1MB to prevent unbounded growth
+  if let Ok(meta) = std::fs::metadata(&path) {
+    if meta.len() > 1_048_576 {
+      let _ = std::fs::remove_file(&path);
+    }
+  }
+  // Append with timestamp header
+  let header = format!("\n===== {} =====\n", chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"));
+  let content = format!("{}{}\n", header, text);
+  use std::io::Write;
+  let mut f = std::fs::OpenOptions::new()
+    .create(true)
+    .append(true)
+    .open(&path)
+    .map_err(|e| format!("open failed: {e}"))?;
+  f.write_all(content.as_bytes()).map_err(|e| format!("write failed: {e}"))?;
+  Ok(path.to_string_lossy().to_string())
+}
+
 #[tauri::command]
 pub async fn tts_selection(app: tauri::AppHandle, safe_mode: Option<bool>) -> Result<String, String> {
   let safe = safe_mode.unwrap_or(false);
 
-  // Capture selection text similar to prompt_action
-  let mut clipboard = Clipboard::new().map_err(|e| format!("clipboard init failed: {e}"))?;
-  let previous_text = if !safe { clipboard.get_text().ok() } else { None };
+  // Clipboard + Enigo + sleep are blocking — run on a dedicated thread to avoid starving the async runtime
+  let selection = tokio::task::spawn_blocking(move || -> Result<String, String> {
+    let mut clipboard = Clipboard::new().map_err(|e| format!("clipboard init failed: {e}"))?;
+    let previous_text = if !safe { clipboard.get_text().ok() } else { None };
 
-  if !safe {
-    let mut enigo = Enigo::new();
-    enigo.key_down(Key::Control);
-    enigo.key_click(Key::Layout('c'));
-    enigo.key_up(Key::Control);
-    thread::sleep(Duration::from_millis(120));
-  }
+    if !safe {
+      let mut enigo = Enigo::new();
+      enigo.key_down(Key::Control);
+      enigo.key_click(Key::Layout('c'));
+      enigo.key_up(Key::Control);
+      thread::sleep(Duration::from_millis(120));
+    }
 
-  let selection = clipboard.get_text().unwrap_or_default();
+    let selection = clipboard.get_text().unwrap_or_default();
 
-  if !safe {
-    if let Some(prev) = previous_text { let _ = clipboard.set_text(prev); }
-  }
+    if !safe {
+      if let Some(prev) = previous_text { let _ = clipboard.set_text(prev); }
+    }
+
+    Ok(selection)
+  }).await.map_err(|e| format!("spawn_blocking failed: {e}"))??;
 
   if selection.trim().is_empty() {
     let _ = app.emit("tts:error", serde_json::json!({ "message": "No text selected" }));
@@ -362,10 +411,13 @@ pub async fn tts_selection(app: tauri::AppHandle, safe_mode: Option<bool>) -> Re
     }
     Ok("ok".into())
   } else {
+    // local_speak_blocking is blocking — run on dedicated thread
     #[cfg(target_os = "windows")]
     {
       let voice = settings.get("tts_voice_local").and_then(|x| x.as_str()).unwrap_or("").to_string();
-      crate::tts::local_speak_blocking(selection, voice, rate, vol)?;
+      tokio::task::spawn_blocking(move || {
+        crate::tts::local_speak_blocking(selection, voice, rate, vol)
+      }).await.map_err(|e| format!("spawn_blocking failed: {e}"))??;
       Ok("ok".into())
     }
     #[cfg(not(target_os = "windows"))]
