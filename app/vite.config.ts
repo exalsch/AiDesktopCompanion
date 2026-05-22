@@ -11,6 +11,11 @@ export default defineConfig({
   optimizeDeps: {
     include: [],
   },
+  server: {
+    watch: {
+      ignored: ['**/src-tauri/target/**'],
+    },
+  },
   build: {
     rollupOptions: {
       output: {

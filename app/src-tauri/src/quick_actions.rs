@@ -14,6 +14,24 @@ use windows::Win32::Foundation::HWND;
 // briefly return focus to it to capture selection without hiding the QA window.
 #[cfg(target_os = "windows")]
 static LAST_FOREGROUND: Lazy<Mutex<Option<isize>>> = Lazy::new(|| Mutex::new(None));
+static LAST_SELECTED_TEXT: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new(String::new()));
+
+pub fn last_selected_text() -> String {
+  LAST_SELECTED_TEXT
+    .lock()
+    .map(|g| g.clone())
+    .unwrap_or_default()
+}
+
+#[cfg(target_os = "windows")]
+pub fn last_foreground_handle_raw() -> Option<isize> {
+  LAST_FOREGROUND.lock().ok().and_then(|g| *g)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn last_foreground_handle_raw() -> Option<isize> {
+  None
+}
 
 // UI actions and quick insertions
 
@@ -57,6 +75,9 @@ pub fn prompt_action(app: tauri::AppHandle, safe_mode: Option<bool>) -> Result<S
 /// the QA window.
 #[tauri::command]
 pub fn prepare_quick_actions() -> Result<(), String> {
+  if let Ok(mut guard) = LAST_SELECTED_TEXT.lock() {
+    guard.clear();
+  }
   #[cfg(target_os = "windows")]
   unsafe {
     use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
@@ -98,6 +119,9 @@ pub fn focus_prev_then_copy_selection(app: tauri::AppHandle, safe_mode: Option<b
   }
 
   let selection = clipboard.get_text().unwrap_or_default();
+  if let Ok(mut guard) = LAST_SELECTED_TEXT.lock() {
+    *guard = selection.clone();
+  }
 
   if !safe {
     if let Some(prev) = previous_text { let _ = clipboard.set_text(prev); }

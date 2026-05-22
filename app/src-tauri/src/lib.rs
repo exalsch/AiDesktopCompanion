@@ -133,6 +133,11 @@ pub fn run() {
       quick_actions::copy_text_to_clipboard,
       quick_actions::dump_key_log,
       quick_actions::refocus_previous_app,
+      command_hook::run_command_hook,
+      command_hook::command_is_running,
+      command_hook::list_command_scripts,
+      command_hook::create_default_command_script,
+      command_hook::open_command_hooks_folder,
       mcp_connect,
       mcp_disconnect,
       mcp_list_tools,
@@ -180,6 +185,7 @@ mod capture;
 mod chat;
 mod settings;
 mod quick_actions;
+mod command_hook;
 
 use rmcp::{
   service::{RoleClient, DynService, RunningService},

@@ -121,6 +121,13 @@ export function useAppEvents(deps: UseAppEventsDeps) {
     })
     unsubs.push(uErr)
 
+    const uCommandErr = await listen<{ message: string }>('command:error', (e) => {
+      const p = (e?.payload as any) || {}
+      const msg = typeof p.message === 'string' && p.message.trim() ? p.message : 'Command Mode error'
+      showToast(msg, 'error')
+    })
+    unsubs.push(uCommandErr)
+
     // MCP connection lifecycle
     const u7 = await listen<{ serverId: string }>('mcp:connected', (e) => {
       const id = (e?.payload as any)?.serverId

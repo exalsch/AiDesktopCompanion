@@ -1,6 +1,6 @@
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 
@@ -11,6 +11,107 @@ const props = defineProps<{
 }>()
 
 const showSttCloudKey = ref(false)
+const inputDevicesBusy = ref(false)
+const inputDevicesError = ref('')
+const inputDevices = ref<Array<{ id: string; label: string }>>([])
+const commandScriptsBusy = ref(false)
+const commandScriptsError = ref('')
+const commandScripts = ref<string[]>([])
+const commandScriptOpBusy = ref(false)
+
+function selectedInputDeviceExists(): boolean {
+  const wanted = String(props.settings.stt_input_device_id || '').trim()
+  if (!wanted) return true
+  return inputDevices.value.some((d) => d.id === wanted)
+}
+
+function inputDeviceLabel(raw: string, fallbackIndex: number): string {
+  const v = String(raw || '').trim()
+  if (v) return v
+  return `Microphone ${fallbackIndex + 1}`
+}
+
+async function refreshInputDevices() {
+  inputDevicesBusy.value = true
+  inputDevicesError.value = ''
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+      throw new Error('Media device enumeration is not supported in this environment.')
+    }
+    try {
+      await navigator.mediaDevices.getUserMedia({ audio: true })
+    } catch {}
+
+    const all = await navigator.mediaDevices.enumerateDevices()
+    const mics = all
+      .filter((d) => d.kind === 'audioinput')
+      .map((d, idx) => ({ id: String(d.deviceId || ''), label: inputDeviceLabel(d.label, idx) }))
+      .filter((d) => d.id)
+
+    inputDevices.value = mics
+    if (!selectedInputDeviceExists()) {
+      props.settings.stt_input_device_id = ''
+    }
+  } catch (e: any) {
+    inputDevicesError.value = e?.message || String(e) || 'Failed to list microphone devices.'
+    inputDevices.value = []
+  } finally {
+    inputDevicesBusy.value = false
+  }
+}
+
+async function refreshCommandScripts() {
+  commandScriptsBusy.value = true
+  commandScriptsError.value = ''
+  try {
+    const list = await invoke<string[]>('list_command_scripts')
+    const next = Array.isArray(list)
+      ? list.filter((x) => typeof x === 'string' && String(x).trim()).map((x) => String(x).trim())
+      : []
+    commandScripts.value = next
+    if (next.length > 0 && !next.includes(String(props.settings.command_active_script || '').trim())) {
+      props.settings.command_active_script = next[0]
+    }
+    if (next.length === 0) {
+      props.settings.command_active_script = ''
+    }
+  } catch (e: any) {
+    commandScriptsError.value = e?.message || String(e) || 'Failed to list command scripts.'
+    commandScripts.value = []
+  } finally {
+    commandScriptsBusy.value = false
+  }
+}
+
+async function createDefaultCommandScript() {
+  if (commandScriptOpBusy.value) return
+  commandScriptOpBusy.value = true
+  commandScriptsError.value = ''
+  try {
+    const fileName = await invoke<string>('create_default_command_script')
+    await refreshCommandScripts()
+    if (fileName && fileName.trim()) {
+      props.settings.command_active_script = fileName.trim()
+    }
+  } catch (e: any) {
+    commandScriptsError.value = e?.message || String(e) || 'Failed to create default command script.'
+  } finally {
+    commandScriptOpBusy.value = false
+  }
+}
+
+async function openCommandHooksFolder() {
+  if (commandScriptOpBusy.value) return
+  commandScriptOpBusy.value = true
+  commandScriptsError.value = ''
+  try {
+    await invoke('open_command_hooks_folder')
+  } catch (e: any) {
+    commandScriptsError.value = e?.message || String(e) || 'Failed to open hooks folder.'
+  } finally {
+    commandScriptOpBusy.value = false
+  }
+}
 
 const localSttProviders = [
   { label: 'Whisper', value: 'whisper', hint: 'On-device Whisper. Uses a ggml model file.' },
@@ -267,6 +368,17 @@ watch(() => props.settings.stt_parakeet_has_cuda, async (v: any) => {
   }
 })
 
+watch(() => props.settings.command_enabled, (v: any) => {
+  if (v === true) {
+    void refreshCommandScripts()
+  }
+})
+
+onMounted(() => {
+  void refreshInputDevices()
+  void refreshCommandScripts()
+})
+
 function selectCloudModel(v: string) {
   props.settings.stt_cloud_model = v
 }
@@ -312,6 +424,22 @@ function infoTitle(v: string): string {
           <option value="local">Local (on-device)</option>
         </select>
       </div>
+    </div>
+
+    <div class="settings-row col">
+      <div class="row-label">
+        <label class="label">Microphone Input</label>
+        <span class="info-icon" :title="infoTitle('Select which microphone is used for STT recording in both the main STT panel and Quick Actions (S/C).')">i</span>
+      </div>
+      <div class="row-inline" style="gap: 10px; align-items: center; flex-wrap: wrap;">
+        <select v-model="props.settings.stt_input_device_id" class="input" style="min-width: 360px; max-width: 520px;">
+          <option value="">System default microphone</option>
+          <option v-for="d in inputDevices" :key="d.id" :value="d.id">{{ d.label }}</option>
+        </select>
+        <button class="btn ghost" :disabled="inputDevicesBusy" @click="refreshInputDevices">{{ inputDevicesBusy ? 'Refreshing…' : 'Refresh' }}</button>
+      </div>
+      <div class="settings-hint">If another audio app hijacks your mic (e.g. virtual devices), select the physical input here.</div>
+      <div class="settings-hint" v-if="inputDevicesError">{{ inputDevicesError }}</div>
     </div>
 
     <div v-if="props.settings.stt_engine === 'local'" class="settings-row col">
@@ -511,6 +639,79 @@ function infoTitle(v: string): string {
         </button>
       </div>
       <div v-if="props.models?.error" class="settings-hint error">{{ props.models.error }}</div>
+    </div>
+
+    <div class="settings-title">Command Mode</div>
+    <div class="settings-row col">
+      <div class="settings-hint">
+        Command Mode adds a fifth Quick Action: press <code>C</code> in the popup to record a voice command. Instead of pasting the transcript, AiDesktopCompanion runs a script from <code>%APPDATA%/AiDesktopCompanion/hooks/</code> and passes the transcript on stdin.
+      </div>
+    </div>
+
+    <div class="settings-row">
+      <label class="checkbox">
+        <input type="checkbox" v-model="props.settings.command_enabled" />
+        Enable Command Mode
+      </label>
+    </div>
+
+    <div class="settings-row col" :style="{ opacity: props.settings.command_enabled ? 1 : 0.6 }">
+      <div class="row-label">
+        <label class="label">Active Script</label>
+        <span class="info-icon" :title="infoTitle('Scripts are discovered from %APPDATA%/AiDesktopCompanion/hooks/. Supported extensions: .ps1, .cmd, .bat, .exe')">i</span>
+      </div>
+      <div class="row-inline" style="gap: 10px; align-items: center; flex-wrap: wrap;">
+        <select
+          v-model="props.settings.command_active_script"
+          class="input"
+          style="min-width: 360px;"
+          :disabled="!props.settings.command_enabled || commandScriptsBusy || commandScripts.length === 0"
+        >
+          <option value="" :disabled="commandScripts.length > 0">(none - click Create default script to start)</option>
+          <option v-for="name in commandScripts" :key="name" :value="name">{{ name }}</option>
+        </select>
+        <button class="btn ghost" :disabled="!props.settings.command_enabled || commandScriptsBusy" @click="refreshCommandScripts">
+          {{ commandScriptsBusy ? 'Refreshing…' : 'Refresh' }}
+        </button>
+      </div>
+      <div class="row-inline" style="gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 8px;">
+        <button
+          v-if="commandScripts.length === 0"
+          class="btn"
+          :disabled="!props.settings.command_enabled || commandScriptOpBusy"
+          @click="createDefaultCommandScript"
+        >
+          {{ commandScriptOpBusy ? 'Creating…' : 'Create default script' }}
+        </button>
+        <button
+          v-else
+          class="btn ghost"
+          :disabled="!props.settings.command_enabled || commandScriptOpBusy"
+          @click="openCommandHooksFolder"
+        >
+          {{ commandScriptOpBusy ? 'Opening…' : 'Open hooks folder' }}
+        </button>
+      </div>
+      <div class="settings-hint" v-if="!commandScriptsError && commandScripts.length === 0">No scripts found in hooks directory yet.</div>
+      <div class="settings-hint error" v-if="commandScriptsError">{{ commandScriptsError }}</div>
+    </div>
+
+    <div class="settings-row col" :style="{ opacity: props.settings.command_enabled ? 1 : 0.6 }">
+      <div class="row-label">
+        <label class="label">Hook timeout (seconds)</label>
+        <span class="info-icon" :title="infoTitle('Maximum allowed runtime for a command hook process before it is killed.')">i</span>
+      </div>
+      <input
+        type="number"
+        class="input"
+        min="5"
+        max="3600"
+        step="1"
+        v-model.number="props.settings.command_hook_timeout_secs"
+        :disabled="!props.settings.command_enabled"
+        @blur="props.settings.command_hook_timeout_secs = Math.min(3600, Math.max(5, Math.floor(Number(props.settings.command_hook_timeout_secs || 120))))"
+        style="max-width: 180px;"
+      />
     </div>
   </div>
 </template>

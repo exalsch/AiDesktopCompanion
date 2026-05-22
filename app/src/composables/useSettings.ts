@@ -39,12 +39,16 @@ const settings = reactive({
   stt_cloud_base_url: 'https://api.openai.com' as string,
   stt_cloud_model: 'whisper-1' as string,
   stt_cloud_api_key: '' as string,
+  stt_input_device_id: '' as string,
   stt_post_process_enabled: false as boolean,
   stt_post_process_model: 'gpt-4o-mini' as string,
   stt_post_process_prompt: DEFAULT_STT_POST_PROCESS_PROMPT as string,
   // Local Whisper (STT) model config
   stt_whisper_model_preset: 'base' as string,
   stt_whisper_model_url: '' as string,
+  command_enabled: false as boolean,
+  command_active_script: '' as string,
+  command_hook_timeout_secs: 120 as number,
 })
 
 const models = reactive<{ list: string[]; loading: boolean; error: string | null }>({ list: [], loading: false, error: null })
@@ -182,6 +186,11 @@ export function useSettings() {
       if (typeof (v as any).stt_cloud_api_key === 'string') {
         settings.stt_cloud_api_key = String((v as any).stt_cloud_api_key)
       }
+      if (typeof (v as any).stt_input_device_id === 'string') {
+        settings.stt_input_device_id = String((v as any).stt_input_device_id)
+      } else {
+        settings.stt_input_device_id = ''
+      }
       if (typeof (v as any).stt_post_process_enabled === 'boolean') {
         settings.stt_post_process_enabled = (v as any).stt_post_process_enabled === true
       }
@@ -199,6 +208,22 @@ export function useSettings() {
       }
       if (typeof (v as any).stt_whisper_model_url === 'string') {
         settings.stt_whisper_model_url = (v as any).stt_whisper_model_url
+      }
+      if (typeof (v as any).command_enabled === 'boolean') {
+        settings.command_enabled = (v as any).command_enabled === true
+      } else {
+        settings.command_enabled = false
+      }
+      if (typeof (v as any).command_active_script === 'string') {
+        settings.command_active_script = String((v as any).command_active_script)
+      } else {
+        settings.command_active_script = ''
+      }
+      if (typeof (v as any).command_hook_timeout_secs === 'number' && Number.isFinite((v as any).command_hook_timeout_secs)) {
+        const raw = Math.floor(Number((v as any).command_hook_timeout_secs))
+        settings.command_hook_timeout_secs = Math.min(3600, Math.max(5, raw))
+      } else {
+        settings.command_hook_timeout_secs = 120
       }
     }
   }

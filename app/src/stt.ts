@@ -8,7 +8,7 @@ let recorder: MediaRecorder | null = null
 let chunks: BlobPart[] = []
 let recording = false
 
-export async function startRecording(preferredMime = 'audio/webm;codecs=opus'): Promise<void> {
+export async function startRecording(preferredMime = 'audio/webm;codecs=opus', inputDeviceId = ''): Promise<void> {
   if (recording) return
   // Pick supported mime
   const mime = MediaRecorder.isTypeSupported(preferredMime)
@@ -17,7 +17,11 @@ export async function startRecording(preferredMime = 'audio/webm;codecs=opus'): 
   if (!mime) {
     throw new Error('No supported audio recording format (MediaRecorder)')
   }
-  mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+  const deviceId = String(inputDeviceId || '').trim()
+  const audioConstraint: MediaTrackConstraints | boolean = deviceId
+    ? { deviceId: { exact: deviceId } }
+    : true
+  mediaStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint })
   chunks = []
   try {
     recorder = new MediaRecorder(mediaStream, { mimeType: mime })

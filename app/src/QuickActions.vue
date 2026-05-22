@@ -3,7 +3,7 @@ import { onMounted, onBeforeUnmount, ref } from 'vue'
 import { getCurrentWebviewWindow, WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { LogicalSize } from '@tauri-apps/api/dpi'
 import { invoke } from '@tauri-apps/api/core'
-import { emit as emitTauri } from '@tauri-apps/api/event'
+import { emit as emitTauri, listen } from '@tauri-apps/api/event'
 import { startRecording as sttStart, stopRecording as sttStop, isRecording as sttIsRecording, transcodeToWav16kMono } from './stt'
 import { register, unregister } from '@tauri-apps/plugin-global-shortcut'
 
@@ -53,6 +53,12 @@ const sttRecording = ref(false)
 const sttPending = ref(false) // true while requesting mic permission / starting
 const sttStopRequested = ref(false) // true if stop was requested while pending
 const sttPostProcessQuickPromptIndex = ref<number | null>(null)
+const commandEnabled = ref(false)
+const commandRunning = ref(false)
+const commandRecording = ref(false)
+const commandPending = ref(false)
+const commandStopRequested = ref(false)
+const commandSelectedText = ref('')
 const rootRef = ref<HTMLElement | null>(null)
 const debugOn = ref(false)
 const lastHideReason = ref('')
@@ -164,10 +170,134 @@ const skipResetUntil = ref(0)
 let unlistenBlur: null | (() => void) = null
 let unlistenFocus: null | (() => void) = null
 let unlistenHide: null | (() => void) = null
+let unlistenCommandState: null | (() => void) = null
 let blurCloseTimer: number | null = null
 let resizeObserver: ResizeObserver | null = null
 let lastSetWidth = 0
 let lastSetHeight = 0
+
+async function refreshCommandModeState(): Promise<void> {
+  try {
+    const v = await invoke<any>('get_settings')
+    commandEnabled.value = Boolean((v as any)?.command_enabled)
+  } catch {
+    commandEnabled.value = false
+  }
+  try {
+    commandRunning.value = await invoke<boolean>('command_is_running')
+  } catch {
+    commandRunning.value = false
+  }
+}
+
+async function startCommandMode(): Promise<void> {
+  if (!commandEnabled.value || commandRunning.value || commandRecording.value || commandPending.value) return
+  if (sttRecording.value || sttPending.value) return
+  try {
+    commandPending.value = true
+    commandStopRequested.value = false
+    commandSelectedText.value = ''
+    let inputDeviceId = ''
+    try {
+      const cfg = await invoke<any>('get_settings')
+      inputDeviceId = String((cfg as any)?.stt_input_device_id || '').trim()
+    } catch {}
+    await sttStart('audio/webm;codecs=opus', inputDeviceId)
+    commandRecording.value = true
+    await suppressKeyGlobal('C', () => {
+      if (commandRecording.value) void stopCommandModeAndRun()
+    })
+    if (commandStopRequested.value) {
+      commandStopRequested.value = false
+      void stopCommandModeAndRun()
+    }
+  } catch (err) {
+    console.error('[command-mode] start failed', err)
+    await hidePopup('command-start-failed', true)
+  } finally {
+    commandPending.value = false
+  }
+}
+
+async function stopCommandModeAndRun(): Promise<void> {
+  if (!commandRecording.value) {
+    if (commandPending.value) {
+      commandStopRequested.value = true
+    }
+    return
+  }
+  commandRecording.value = false
+  await unsuppressKeyGlobal('C')
+
+  try {
+    const res = await sttStop()
+    if (!res) {
+      await hidePopup('command-stop-empty', true)
+      return
+    }
+
+    const { blob, mime } = res
+    await hidePopup('command-stop', true)
+
+    let payloadBytes: Uint8Array
+    let payloadMime: string = mime
+    try {
+      const settings = await invoke<any>('get_settings')
+      const engine = String(settings?.stt_engine || 'openai')
+      const baseUrl = String(settings?.stt_cloud_base_url || 'https://api.openai.com').trim()
+      const isOpenAi = baseUrl.startsWith('https://api.openai.com')
+      const shouldTranscode = engine === 'local' || (engine !== 'local' && !isOpenAi)
+      if (shouldTranscode) {
+        payloadBytes = await transcodeToWav16kMono(blob)
+        payloadMime = 'audio/wav'
+      } else {
+        payloadBytes = new Uint8Array(await blob.arrayBuffer())
+        payloadMime = mime
+      }
+    } catch {
+      payloadBytes = new Uint8Array(await blob.arrayBuffer())
+      payloadMime = mime
+    }
+
+    const sttResult = await invoke<any>('stt_transcribe', {
+      audio: Array.from(payloadBytes),
+      mime: payloadMime,
+      applyPostProcess: false,
+    })
+    let transcript = ''
+    if (typeof sttResult === 'string') {
+      transcript = sttResult.trim()
+    } else if (sttResult && typeof sttResult === 'object') {
+      transcript = String((sttResult as any).original_text || (sttResult as any).final_text || '').trim()
+    }
+    if (!transcript) {
+      return
+    }
+
+    await invoke('run_command_hook', {
+      transcript,
+      selectedText: commandSelectedText.value,
+    })
+    commandRunning.value = true
+  } catch (err) {
+    console.error('[command-mode] run failed', err)
+  } finally {
+    commandRecording.value = false
+    commandPending.value = false
+  }
+}
+
+async function cancelCommandMode(): Promise<void> {
+  await unsuppressKeyGlobal('C')
+  try {
+    if (commandRecording.value || sttIsRecording()) {
+      await sttStop()
+    }
+  } catch {}
+  commandRecording.value = false
+  commandPending.value = false
+  await hidePopup('command-cancel', true)
+}
 
 async function handleAction(action: 'prompt' | 'tts' | 'stt' | 'image'): Promise<void> {
   dbg('handleAction', action)
@@ -282,11 +412,13 @@ function onKeydown(e: KeyboardEvent): void {
   // P/T/I: only preventDefault on keydown to suppress repeats; action fires on keyup
   // S: start recording on keydown (push-to-talk)
   // Only active in home mode — info and preview have their own key handling
-  if (uiMode.value === 'home' && ['p', 't', 's', 'i'].includes(key)) {
+  if (uiMode.value === 'home' && ['p', 't', 's', 'i', 'c'].includes(key)) {
     e.preventDefault()
     if (e.repeat) return  // skip key repeats
     if (key === 's') {
       void startSTT()
+    } else if (key === 'c') {
+      void startCommandMode()
     } else {
       // Suppress P/T/I globally until keyup
       void suppressKeyGlobal(key.toUpperCase(), () => {
@@ -315,6 +447,8 @@ function onKeydown(e: KeyboardEvent): void {
     dbg('ESC pressed')
     if (sttRecording.value) {
       void cancelSTT()
+    } else if (commandRecording.value || commandPending.value) {
+      void cancelCommandMode()
     } else if (uiMode.value === 'info') {
       uiMode.value = 'home'
     } else {
@@ -333,6 +467,11 @@ function onKeyup(e: KeyboardEvent): void {
   if (key === 's') {
     e.preventDefault()
     void stopSTTAndTranscribe()
+    return
+  }
+  if (key === 'c') {
+    e.preventDefault()
+    void stopCommandModeAndRun()
     return
   }
   // P/T/I fire on keyup so the key is already released before focus changes
@@ -434,7 +573,7 @@ function onWindowBlur(): void {
     if (captureInProgress.value) return
     if (Date.now() < suppressCloseUntil.value) return
     if (uiMode.value === 'preview' || uiMode.value === 'info') return
-    if (!sttRecording.value && !sttPending.value) void hidePopup('blur')
+    if (!sttRecording.value && !sttPending.value && !commandRecording.value && !commandPending.value) void hidePopup('blur')
   }, 220)
 }
 
@@ -446,9 +585,11 @@ function onWindowFocus(): void {
       if (v && typeof v === 'object') {
         const flag = (v as any).show_quick_prompt_result_in_popup
         showPreviewInPopup.value = typeof flag === 'boolean' ? flag : false
+        commandEnabled.value = Boolean((v as any).command_enabled)
       }
     }).catch(() => {})
   } catch {}
+  void refreshCommandModeState()
   // Refresh quick prompts map for info display
   try {
     invoke<any>('get_quick_prompts').then((v) => {
@@ -471,6 +612,7 @@ function onWindowFocus(): void {
 
 function onWindowMouseup(): void {
   if (sttRecording.value) void stopSTTAndTranscribe()
+  if (commandRecording.value) void stopCommandModeAndRun()
 }
 
 async function startSTT(): Promise<void> {
@@ -483,7 +625,12 @@ async function startSTT(): Promise<void> {
     sttPending.value = true
     sttStopRequested.value = false
     sttPostProcessQuickPromptIndex.value = null
-    await sttStart()
+    let inputDeviceId = ''
+    try {
+      const cfg = await invoke<any>('get_settings')
+      inputDeviceId = String((cfg as any)?.stt_input_device_id || '').trim()
+    } catch {}
+    await sttStart('audio/webm;codecs=opus', inputDeviceId)
     sttRecording.value = true
     // Register global S-key shortcut to prevent "sssss" in other apps while user holds S
     await suppressKeyGlobal('S', () => {
@@ -638,6 +785,14 @@ onMounted(() => {
   }
   // Also clean up Ctrl+L debug shortcut in case it was left from a crash
   unregister('CommandOrControl+L').catch(() => {})
+  unregister('C').catch(() => {})
+
+  void refreshCommandModeState()
+  listen<any>('command:state', (e) => {
+    const state = String((e?.payload as any)?.state || '').toLowerCase()
+    if (state === 'running') commandRunning.value = true
+    if (state === 'idle') commandRunning.value = false
+  }).then((un) => { unlistenCommandState = () => { try { un() } catch {} } }).catch(() => {})
 
   // Fit window to content — only resize when size actually changes to avoid loops
   try {
@@ -719,9 +874,11 @@ onMounted(() => {
           if (v && typeof v === 'object') {
             const flag = (v as any).show_quick_prompt_result_in_popup
             showPreviewInPopup.value = typeof flag === 'boolean' ? flag : false
+            commandEnabled.value = Boolean((v as any).command_enabled)
           }
         }).catch(() => {})
       } catch {}
+      void refreshCommandModeState()
       // Refresh quick prompts for info display
       try {
         invoke<any>('get_quick_prompts').then((v) => {
@@ -769,6 +926,7 @@ onBeforeUnmount(() => {
   try { if (unlistenBlur) unlistenBlur() } catch {}
   try { if (unlistenFocus) unlistenFocus() } catch {}
   try { if (unlistenHide) unlistenHide() } catch {}
+  try { if (unlistenCommandState) unlistenCommandState() } catch {}
   try { if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null } } catch {}
   if (blurCloseTimer) { clearTimeout(blurCloseTimer); blurCloseTimer = null }
   // Clean up all global key suppressions + Ctrl+L debug shortcut
@@ -839,6 +997,18 @@ async function onInsert(): Promise<void> {
           <span class="letter">I</span>
           <span class="label">Image</span>
         </button>
+        <button
+          v-if="commandEnabled"
+          class="qa-btn"
+          :disabled="commandRunning"
+          :title="commandRunning ? 'Command running…' : 'Command (C)'"
+          @mousedown="startCommandMode"
+          @mouseup="stopCommandModeAndRun"
+          aria-label="Command Mode (C)"
+        >
+          <span class="letter">C</span>
+          <span class="label">Command</span>
+        </button>
         <button class="qa-btn qa-info-btn" @click="uiMode = 'info'" aria-label="Info (?)" title="Show quick prompt assignments">
           <span class="letter">?</span>
         </button>
@@ -849,7 +1019,9 @@ async function onInsert(): Promise<void> {
           <span v-if="sttPostProcessQuickPromptIndex"> → Quick Prompt #{{ sttPostProcessQuickPromptIndex }}</span>
           <span v-else> Press 1–9 for post-processing (0 = off)</span>
         </span>
-        <span v-else>Press P / T / S / I or 1–9 for quick prompts. Esc to close.</span>
+        <span v-else-if="commandRecording" class="rec">● Command recording...</span>
+        <span v-else-if="commandRunning">Command running… reopen after it completes.</span>
+        <span v-else>Press P / T / S / I <template v-if="commandEnabled">/ C</template> or 1–9 for quick prompts. Esc to close.</span>
       </div>
     </template>
 
@@ -923,6 +1095,8 @@ async function onInsert(): Promise<void> {
   font-size: 14px;
 }
 .qa-btn:hover { background: var(--adc-accent); border-color: var(--adc-accent); color: #fff; }
+.qa-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.qa-btn:disabled:hover { background: var(--adc-surface); border-color: var(--adc-border); color: var(--adc-fg); }
 
 .qa-info-btn { padding: 10px 10px; min-width: 0; }
 .letter {

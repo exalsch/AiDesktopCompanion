@@ -262,12 +262,20 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   if let Some(bu) = map.get("stt_cloud_base_url").and_then(|x| x.as_str()) { obj.insert("stt_cloud_base_url".to_string(), serde_json::Value::String(bu.to_string())); }
   if let Some(sm) = map.get("stt_cloud_model").and_then(|x| x.as_str()) { obj.insert("stt_cloud_model".to_string(), serde_json::Value::String(sm.to_string())); }
   if let Some(sk) = map.get("stt_cloud_api_key").and_then(|x| x.as_str()) { obj.insert("stt_cloud_api_key".to_string(), serde_json::Value::String(sk.to_string())); }
+  if let Some(did) = map.get("stt_input_device_id").and_then(|x| x.as_str()) { obj.insert("stt_input_device_id".to_string(), serde_json::Value::String(did.to_string())); }
   if let Some(pp) = map.get("stt_post_process_enabled").and_then(|x| x.as_bool()) { obj.insert("stt_post_process_enabled".to_string(), serde_json::Value::Bool(pp)); }
   if let Some(pm) = map.get("stt_post_process_model").and_then(|x| x.as_str()) { obj.insert("stt_post_process_model".to_string(), serde_json::Value::String(pm.to_string())); }
   if let Some(ppp) = map.get("stt_post_process_prompt").and_then(|x| x.as_str()) { obj.insert("stt_post_process_prompt".to_string(), serde_json::Value::String(ppp.to_string())); }
   // Whisper (local STT) model selection
   if let Some(u) = map.get("stt_whisper_model_url").and_then(|x| x.as_str()) { obj.insert("stt_whisper_model_url".to_string(), serde_json::Value::String(u.to_string())); }
   if let Some(preset) = map.get("stt_whisper_model_preset").and_then(|x| x.as_str()) { obj.insert("stt_whisper_model_preset".to_string(), serde_json::Value::String(preset.to_string())); }
+
+  // Command Mode settings
+  if let Some(enabled) = map.get("command_enabled").and_then(|x| x.as_bool()) { obj.insert("command_enabled".to_string(), serde_json::Value::Bool(enabled)); }
+  if let Some(script) = map.get("command_active_script").and_then(|x| x.as_str()) { obj.insert("command_active_script".to_string(), serde_json::Value::String(script.to_string())); }
+  if let Some(timeout) = map.get("command_hook_timeout_secs").and_then(|x| x.as_u64()) {
+    obj.insert("command_hook_timeout_secs".to_string(), serde_json::Value::Number(serde_json::Number::from(timeout.clamp(5, 3600))));
+  }
 
   // Remove deprecated local STT model selector keys if present
   obj.remove("stt_local_base_url");
