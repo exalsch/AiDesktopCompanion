@@ -196,25 +196,75 @@ pub fn insert_text_into_focused_app(text: String, safe_mode: Option<bool>) -> Re
   Ok(())
 }
 
-// Window positioning near cursor (caret-first, mouse fallback, screen-edge clamping)
+/// Return the work area (taskbar-excluded) of the monitor under `probe`, in
+/// physical pixels as `(left, top, right, bottom)`. Falls back to the whole
+/// virtual screen if the monitor query fails. So edge detection is relative to
+/// the monitor the cursor/caret is actually on, not the whole multi-monitor desktop.
+#[cfg(target_os = "windows")]
+unsafe fn work_area_for_point(probe: windows::Win32::Foundation::POINT) -> (i32, i32, i32, i32) {
+  use windows::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+  };
+  use windows::Win32::UI::WindowsAndMessaging::{
+    GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+  };
+  let hmon = MonitorFromPoint(probe, MONITOR_DEFAULTTONEAREST);
+  let mut mi = MONITORINFO {
+    cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+    ..std::mem::zeroed()
+  };
+  if GetMonitorInfoW(hmon, &mut mi).as_bool() {
+    (mi.rcWork.left, mi.rcWork.top, mi.rcWork.right, mi.rcWork.bottom)
+  } else {
+    let sx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    let sy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    let sw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    let sh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    (sx, sy, sx + sw, sy + sh)
+  }
+}
+
+// Window positioning near cursor (caret-first, mouse fallback). The popup is
+// placed below+right of the anchor by default, but flips above and/or to the
+// left when there isn't room on that side, then is clamped into the monitor
+// work area so it stays fully visible even when the cursor is in an edge zone.
 #[tauri::command]
 pub fn position_quick_actions(app: tauri::AppHandle) -> Result<(), String> {
   #[cfg(target_os = "windows")]
   {
     use windows::Win32::Foundation::POINT;
+    use windows::Win32::Graphics::Gdi::ClientToScreen;
     use windows::Win32::UI::WindowsAndMessaging::{
-      GetCursorPos, GetGUIThreadInfo, GetSystemMetrics, GetForegroundWindow,
-      GetWindowThreadProcessId, GUITHREADINFO, SM_CXVIRTUALSCREEN,
-      SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+      GetCursorPos, GetGUIThreadInfo, GetForegroundWindow, GetWindowThreadProcessId,
+      GUITHREADINFO,
     };
+
+    // Use the popup's actual size (physical px) so flip decisions are accurate;
+    // fall back to the configured defaults if the window can't be measured yet.
+    let (popup_w, popup_h) = app
+      .get_webview_window("quick-actions")
+      .and_then(|w| w.outer_size().ok())
+      .map(|s| (s.width as i32, s.height as i32))
+      .filter(|(w, h)| *w > 0 && *h > 0)
+      .unwrap_or((380, 95));
 
     // Wrap everything in catch_unwind so a panic never kills the app
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
       unsafe {
-        let mut pt = POINT { x: 0, y: 0 };
+        // Candidate edges for the popup, all in screen (physical) coordinates:
+        //   right_x  = popup left edge when placed to the RIGHT of the anchor
+        //   left_x   = popup left edge when placed to the LEFT of the anchor
+        //   below_y  = popup top edge when placed BELOW the anchor
+        //   above_y  = popup top edge when placed ABOVE the anchor
+        let mut right_x = 0;
+        let mut left_x = 0;
+        let mut below_y = 0;
+        let mut above_y = 0;
+        let mut probe = POINT { x: 0, y: 0 };
         let mut use_caret = false;
 
-        // Try caret position from the foreground window's GUI thread
+        // Try caret position from the foreground window's GUI thread. The caret
+        // rect gives us both its top and bottom, so we can flip above/below cleanly.
         let fg = GetForegroundWindow();
         if !fg.0.is_null() {
           let tid = GetWindowThreadProcessId(fg, None);
@@ -226,10 +276,17 @@ pub fn position_quick_actions(app: tauri::AppHandle) -> Result<(), String> {
             if GetGUIThreadInfo(tid, &mut gui).is_ok() {
               let caret = gui.rcCaret;
               if caret.right > caret.left && caret.bottom > caret.top && !gui.hwndCaret.0.is_null() {
-                let mut caret_pt = POINT { x: caret.left, y: caret.bottom };
-                use windows::Win32::Graphics::Gdi::ClientToScreen;
-                if ClientToScreen(gui.hwndCaret, &mut caret_pt).as_bool() {
-                  pt = caret_pt;
+                let mut top_left = POINT { x: caret.left, y: caret.top };
+                let mut bottom_left = POINT { x: caret.left, y: caret.bottom };
+                let ok_top = ClientToScreen(gui.hwndCaret, &mut top_left).as_bool();
+                let ok_bottom = ClientToScreen(gui.hwndCaret, &mut bottom_left).as_bool();
+                if ok_top && ok_bottom {
+                  let v_gap = 6;
+                  right_x = bottom_left.x;
+                  left_x = bottom_left.x - popup_w;
+                  below_y = bottom_left.y + v_gap;
+                  above_y = top_left.y - v_gap - popup_h;
+                  probe = bottom_left;
                   use_caret = true;
                 }
               }
@@ -237,24 +294,34 @@ pub fn position_quick_actions(app: tauri::AppHandle) -> Result<(), String> {
           }
         }
 
-        // Fallback: mouse cursor + small offset
+        // Fallback: mouse cursor with a small gap on every side.
         if !use_caret {
+          let mut pt = POINT { x: 0, y: 0 };
           let _ = GetCursorPos(&mut pt);
-          pt.x += 12;
-          pt.y += 12;
+          let gap = 12;
+          right_x = pt.x + gap;
+          left_x = pt.x - gap - popup_w;
+          below_y = pt.y + gap;
+          above_y = pt.y - gap - popup_h;
+          probe = pt;
         }
 
-        // Clamp to virtual screen bounds
-        let screen_x = GetSystemMetrics(SM_XVIRTUALSCREEN);
-        let screen_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
-        let screen_w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-        let screen_h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-        let popup_w = 380;
-        let popup_h = 95;
+        let (wa_left, wa_top, wa_right, wa_bottom) = work_area_for_point(probe);
 
-        let x = pt.x.max(screen_x).min(screen_x + screen_w - popup_w);
-        let y = pt.y.max(screen_y).min(screen_y + screen_h - popup_h);
+        // Vertical: prefer below; flip above only when below overflows and above fits.
+        let mut y = below_y;
+        if below_y + popup_h > wa_bottom && above_y >= wa_top {
+          y = above_y;
+        }
+        // Horizontal: prefer right; flip left only when right overflows and left fits.
+        let mut x = right_x;
+        if right_x + popup_w > wa_right && left_x >= wa_left {
+          x = left_x;
+        }
 
+        // Final safety clamp so the popup is always fully on-screen near any edge.
+        let x = x.max(wa_left).min(wa_right - popup_w);
+        let y = y.max(wa_top).min(wa_bottom - popup_h);
         (x, y)
       }
     }));
@@ -283,27 +350,24 @@ pub fn position_quick_actions(app: tauri::AppHandle) -> Result<(), String> {
 pub fn clamp_quick_actions_to_screen(app: tauri::AppHandle) -> Result<(), String> {
   #[cfg(target_os = "windows")]
   {
-    use windows::Win32::UI::WindowsAndMessaging::{
-      GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
-      SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
-    };
+    use windows::Win32::Foundation::POINT;
     if let Some(win) = app.get_webview_window("quick-actions") {
       let pos = win.outer_position().map_err(|e| format!("{e}"))?;
       let size = win.outer_size().map_err(|e| format!("{e}"))?;
       unsafe {
-        let screen_x = GetSystemMetrics(SM_XVIRTUALSCREEN);
-        let screen_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
-        let screen_w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-        let screen_h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
         let w = size.width as i32;
         let h = size.height as i32;
+        // Clamp against the work area of the monitor the popup currently sits on
+        // (using its center as the probe), matching position_quick_actions.
+        let probe = POINT { x: pos.x + w / 2, y: pos.y + h / 2 };
+        let (wa_left, wa_top, wa_right, wa_bottom) = work_area_for_point(probe);
         let mut x = pos.x;
         let mut y = pos.y;
         let mut changed = false;
-        if x + w > screen_x + screen_w { x = screen_x + screen_w - w; changed = true; }
-        if y + h > screen_y + screen_h { y = screen_y + screen_h - h; changed = true; }
-        if x < screen_x { x = screen_x; changed = true; }
-        if y < screen_y { y = screen_y; changed = true; }
+        if x + w > wa_right { x = wa_right - w; changed = true; }
+        if y + h > wa_bottom { y = wa_bottom - h; changed = true; }
+        if x < wa_left { x = wa_left; changed = true; }
+        if y < wa_top { y = wa_top; changed = true; }
         if changed {
           let _ = win.set_position(tauri::Position::Physical(PhysicalPosition::new(x, y)));
         }
