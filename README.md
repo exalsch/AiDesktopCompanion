@@ -78,6 +78,13 @@ cd app
 npm run tauri -- dev
 ```
 
+If `whisper-rs-sys` fails with `fatal error: 'stdio.h' file not found` (or size-of overflows on `_IO_FILE` / `_G_fpos64_t`), bindgen's clang can't see the MSVC + Windows SDK headers. Either run `npm run tauri -- dev` from a **Developer PowerShell for VS 2022** shortcut (which sets `vcvars64` automatically), or use the bundled helper:
+
+```powershell
+# from the repository root — sets vcvars64 + LLVM env, then runs the same dev command
+.\app\scripts\dev-with-stt.bat
+```
+
 Notes (Local STT):
 
 - Whisper stores downloaded `ggml-*.bin` models under `%APPDATA%/AiDesktopCompanion/models/whisper/`.
