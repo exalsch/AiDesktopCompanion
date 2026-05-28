@@ -43,13 +43,19 @@ export async function initGlobalHotkeys(): Promise<void> {
 
   console.info('[hotkeys] Initializing global shortcuts…')
 
-  // Load user-configured hotkey from persisted settings (if any)
+  // Load user-configured hotkey from persisted settings (if any). If it fails to
+  // register (typically because another app already owns it), fall through to the
+  // default candidate list instead of leaving the app with NO global hotkey.
   try {
     const v: any = await invoke('get_settings')
     const shortcut = (v && typeof v.global_hotkey === 'string' && v.global_hotkey.trim()) ? v.global_hotkey.trim() : ''
     if (shortcut) {
-      await applyGlobalHotkey(shortcut)
-      return
+      try {
+        await applyGlobalHotkey(shortcut)
+        return
+      } catch (err) {
+        console.warn(`[hotkeys] configured shortcut "${shortcut}" failed to register; trying defaults`, err)
+      }
     }
   } catch (e) {
     console.warn('[hotkeys] get_settings failed, falling back to defaults', e)
