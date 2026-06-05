@@ -15,6 +15,12 @@ use windows::Win32::Foundation::HWND;
 #[cfg(target_os = "windows")]
 static LAST_FOREGROUND: Lazy<Mutex<Option<isize>>> = Lazy::new(|| Mutex::new(None));
 
+/// Expose the stored foreground handle for window title reading in lib.rs
+#[cfg(target_os = "windows")]
+pub fn last_foreground_handle() -> Result<Option<isize>, String> {
+  LAST_FOREGROUND.lock().map(|g| *g).map_err(|_| "lock poisoned".to_string())
+}
+
 // UI actions and quick insertions
 
 #[tauri::command]

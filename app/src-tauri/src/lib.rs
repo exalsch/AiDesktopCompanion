@@ -1,4 +1,4 @@
-// AiDesktopCompanion v0.1.10 build22
+// AiDesktopCompanion v0.1.10 build23
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -455,6 +455,36 @@ struct SttPostProcessOutcome {
   error: Option<String>,
 }
 
+/// Read the title of the foreground window (the last active app before Quick Actions).
+/// Uses the stored LAST_FOREGROUND handle if available, otherwise falls back to current foreground.
+fn get_foreground_window_title() -> String {
+  #[cfg(target_os = "windows")]
+  {
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW};
+    use windows::Win32::Foundation::HWND;
+    use std::ffi::c_void;
+    unsafe {
+      // Try the stored LAST_FOREGROUND handle first (set by prepare_quick_actions)
+      let hwnd = if let Ok(guard) = quick_actions::last_foreground_handle() {
+        if let Some(hraw) = guard {
+          HWND(hraw as *mut c_void)
+        } else {
+          GetForegroundWindow()
+        }
+      } else {
+        GetForegroundWindow()
+      };
+      if hwnd.0.is_null() { return String::new(); }
+      let mut buf = [0u16; 512];
+      let len = GetWindowTextW(hwnd, &mut buf);
+      if len <= 0 { return String::new(); }
+      String::from_utf16_lossy(&buf[..len as usize])
+    }
+  }
+  #[cfg(not(target_os = "windows"))]
+  { String::new() }
+}
+
 async fn maybe_post_process_stt_text(text: String, prompt_override: Option<String>, force_apply: bool) -> SttPostProcessOutcome {
   let original = text.clone();
   if !force_apply && !config::get_stt_post_process_enabled_from_settings_or_env() {
@@ -488,10 +518,16 @@ async fn maybe_post_process_stt_text(text: String, prompt_override: Option<Strin
     },
   };
   let model = config::get_stt_post_process_model_from_settings_or_env();
-  let prompt = prompt_override
+  let mut prompt = prompt_override
     .map(|s| s.trim().to_string())
     .filter(|s| !s.is_empty())
     .unwrap_or_else(|| config::get_stt_post_process_prompt_from_settings_or_env());
+
+  // Replace [WINDOW_TITLE] placeholder with the actual foreground window title (if present in prompt)
+  if prompt.contains("[WINDOW_TITLE]") {
+    let title = get_foreground_window_title();
+    prompt = prompt.replace("[WINDOW_TITLE]", &title);
+  }
 
   let body = serde_json::json!({
     "model": model,
