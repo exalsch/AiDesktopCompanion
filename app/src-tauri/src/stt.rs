@@ -20,7 +20,8 @@ fn build_transcriptions_url(base_url: &str) -> String {
 
 /// Transcribe audio bytes using OpenAI Whisper API (expects WEBM/Opus by default).
 /// Returns the transcribed text on success.
-pub async fn transcribe(key: Option<String>, base_url: String, model: String, audio: Vec<u8>, mime: String) -> Result<String, String> {
+/// `whisper_prompt` is an optional hint that guides the transcription (e.g., names, context).
+pub async fn transcribe(key: Option<String>, base_url: String, model: String, audio: Vec<u8>, mime: String, whisper_prompt: Option<String>) -> Result<String, String> {
   if audio.is_empty() { return Err("Audio data is empty".into()); }
   // Build multipart form: model + file
   let file_name = if mime.contains("webm") { "audio.webm" } else { "audio.bin" };
@@ -29,9 +30,17 @@ pub async fn transcribe(key: Option<String>, base_url: String, model: String, au
     .mime_str(&mime)
     .map_err(|e| format!("mime error: {e}"))?;
 
-  let form = reqwest::multipart::Form::new()
+  let mut form = reqwest::multipart::Form::new()
     .text("model", model)
     .part("file", part);
+
+  // Add prompt hint for Whisper (helps with name spelling, terminology)
+  if let Some(p) = whisper_prompt {
+    let p = p.trim().to_string();
+    if !p.is_empty() {
+      form = form.text("prompt", p);
+    }
+  }
 
   let client = &*CLIENT;
   let url = build_transcriptions_url(&base_url);

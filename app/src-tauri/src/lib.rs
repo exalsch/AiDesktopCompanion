@@ -1,4 +1,4 @@
-// AiDesktopCompanion v0.1.10 build23
+// AiDesktopCompanion v0.1.10 build24
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -660,7 +660,12 @@ async fn stt_transcribe(audio: Vec<u8>, mime: String, apply_post_process: Option
     if is_openai && key_opt.is_none() {
       return Err("OPENAI_API_KEY not set in settings or environment".to_string());
     }
-    stt::transcribe(key_opt, base_url, model, audio, mime).await?
+    // Pass the foreground window title as Whisper prompt hint for name spelling
+    let whisper_hint = {
+      let title = get_foreground_window_title();
+      if title.is_empty() { None } else { Some(title) }
+    };
+    stt::transcribe(key_opt, base_url, model, audio, mime, whisper_hint).await?
   };
 
   let original_text = transcript.trim().to_string();
