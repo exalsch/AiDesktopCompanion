@@ -440,6 +440,15 @@ function onWindowBlur(): void {
 
 function onWindowFocus(): void {
   if (blurCloseTimer) { clearTimeout(blurCloseTimer); blurCloseTimer = null }
+  // Cleanup stale global key suppressions: if S is still suppressed but STT is not recording, force-release
+  if (suppressedKeys.size > 0 && !sttRecording.value && !sttPending.value) {
+    keyLog(`onWindowFocus: stale keys detected [${[...suppressedKeys].join(',')}] — force-releasing`)
+    void unsuppressAllKeys()
+  }
+  // Also ensure Ctrl+L debug shortcut is cleaned up if STT is not active
+  if (!sttRecording.value) {
+    unregister('CommandOrControl+L').catch(() => {})
+  }
   // Refresh the flag from settings so toggles apply immediately
   try {
     invoke<any>('get_settings').then((v) => {
@@ -714,6 +723,12 @@ onMounted(() => {
     w.listen('tauri://focus', () => {
       // DO NOT reset captureInProgress here — only the preview flow's finally block should clear it
       dbg('tauri://focus')
+      // Cleanup stale global key suppressions on re-show
+      if (suppressedKeys.size > 0 && !sttRecording.value && !sttPending.value) {
+        keyLog(`tauri://focus: stale keys detected [${[...suppressedKeys].join(',')}] — force-releasing`)
+        void unsuppressAllKeys()
+      }
+      if (!sttRecording.value) { unregister('CommandOrControl+L').catch(() => {}) }
       try {
         invoke<any>('get_settings').then((v) => {
           if (v && typeof v === 'object') {
