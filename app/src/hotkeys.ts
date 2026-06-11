@@ -101,6 +101,43 @@ export async function initGlobalHotkeys(): Promise<void> {
   window.addEventListener('beforeunload', () => {
     unregisterAll().catch(() => {})
   })
+
+  // Re-register hotkey after Windows sleep/resume (OS can drop global shortcuts)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && currentShortcut) {
+      reRegisterCurrentHotkey().catch(() => {})
+    }
+  })
+  // Also listen to Tauri window focus as a fallback resume detection
+  try {
+    const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow')
+    const w = getCurrentWebviewWindow()
+    w.listen('tauri://focus', () => {
+      if (currentShortcut) {
+        reRegisterCurrentHotkey().catch(() => {})
+      }
+    }).catch(() => {})
+  } catch {}
+}
+
+// Re-register the current hotkey if it was lost (e.g. after Windows sleep/resume).
+// Checks if the shortcut is still registered; if not, re-registers it.
+async function reRegisterCurrentHotkey(): Promise<void> {
+  if (!currentShortcut) return
+  try {
+    const still = await isRegistered(currentShortcut).catch(() => false)
+    if (still) return // still alive, nothing to do
+    console.info(`[hotkeys] re-registering lost shortcut: ${currentShortcut}`)
+    await register(currentShortcut, (event) => {
+      if (event.state === 'Pressed') {
+        console.log(`[hotkeys] ${event.shortcut} pressed`)
+        window.dispatchEvent(new CustomEvent('ai-desktop:hotkey'))
+      }
+    })
+    console.info(`[hotkeys] re-registered OK: ${currentShortcut}`)
+  } catch (err) {
+    console.warn(`[hotkeys] re-register failed for ${currentShortcut}`, err)
+  }
 }
 
 // Re-register to a specific shortcut at runtime (called after saving settings)
