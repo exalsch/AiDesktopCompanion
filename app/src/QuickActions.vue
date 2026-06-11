@@ -759,6 +759,17 @@ onMounted(() => {
     w.listen('tauri://hide', () => {
       if (captureInProgress.value) { dbg('tauri://hide during capture -> skip fresh mark'); return }
       dbg('tauri://hide -> mark fresh session')
+      // Force-release all stale key suppressions when popup is hidden
+      // This catches the case where S is still suppressed from an interrupted STT flow
+      if (suppressedKeys.size > 0) {
+        keyLog(`tauri://hide: releasing stale keys [${[...suppressedKeys].join(',')}]`)
+        void unsuppressAllKeys()
+      }
+      unregister('CommandOrControl+L').catch(() => {})
+      // If STT was somehow still recording, cancel it
+      if (sttRecording.value) {
+        sttRecording.value = false
+      }
       try { sessionStorage.removeItem('qa_show_preview') } catch {}
       try { sessionStorage.removeItem('qa_preview_text') } catch {}
       resetOnFocus.value = true
