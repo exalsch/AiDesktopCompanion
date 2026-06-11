@@ -57,8 +57,11 @@ pub async fn transcribe(key: Option<String>, base_url: String, model: String, au
   let body = resp.bytes().await.map_err(|e| format!("read body error: {e}"))?;
   if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&body) {
     let text = v.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
-    if !text.trim().is_empty() { return Ok(text); }
+    // Return the extracted text — even if empty. The old fallback would return raw JSON
+    // (e.g. {"text":"","usage":...}) which the frontend would paste as-is.
+    return Ok(text);
   }
+  // Only fall back to raw body if JSON parsing fails entirely (non-JSON response)
   let text = String::from_utf8_lossy(&body).to_string();
   Ok(text)
 }

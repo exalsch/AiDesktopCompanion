@@ -4,7 +4,7 @@ import { getCurrentWebviewWindow, WebviewWindow } from '@tauri-apps/api/webviewW
 import { LogicalSize } from '@tauri-apps/api/dpi'
 import { invoke } from '@tauri-apps/api/core'
 import { emit as emitTauri, listen } from '@tauri-apps/api/event'
-import { startRecording as sttStart, stopRecording as sttStop, isRecording as sttIsRecording, transcodeToWav16kMono } from './stt'
+import { startRecording as sttStart, stopRecording as sttStop, isRecording as sttIsRecording, transcodeToWav16kMono, getRecordingDurationMs } from './stt'
 import { register, unregister } from '@tauri-apps/plugin-global-shortcut'
 
 // Debug helper (enable by setting sessionStorage.setItem('qa_debug', '1'))
@@ -677,6 +677,18 @@ async function stopSTTAndTranscribe(): Promise<void> {
   await unsuppressKeyGlobal('S')
   try { await unregister('CommandOrControl+L') } catch {}
   keyLog('unregistered global Ctrl+L')
+
+  // Minimum recording duration check: skip transcription for very short recordings (<500ms)
+  // to prevent hallucinations (whisper generates "Mm hmm", Japanese text, etc. from near-silence)
+  const recDuration = getRecordingDurationMs()
+  keyLog(`recording duration: ${recDuration}ms`)
+  if (recDuration < 500) {
+    keyLog('recording too short (<500ms) — skipping transcription')
+    try { sttStop() } catch {}
+    await hidePopup('short-recording')
+    sttRecording.value = false
+    return
+  }
   try {
     const res = await sttStop()
     sttRecording.value = false
