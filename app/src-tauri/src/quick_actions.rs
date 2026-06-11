@@ -26,14 +26,22 @@ pub fn last_foreground_handle() -> Result<Option<isize>, String> {
 #[cfg(target_os = "windows")]
 mod s_key_hook {
   use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+  use tauri::Emitter;
   use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
   use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, SetWindowsHookExW, UnhookWindowsHookEx,
-    HHOOK, KBDLLHOOKSTRUCT, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
+    HHOOK, KBDLLHOOKSTRUCT, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN, WM_KEYUP, WM_SYSKEYUP,
   };
 
   static SUPPRESS_S: AtomicBool = AtomicBool::new(false);
+  static S_HELD: AtomicBool = AtomicBool::new(false);
   static HOOK_HANDLE: AtomicIsize = AtomicIsize::new(0);
+  // Stored AppHandle for emitting keyup events
+  static APP_HANDLE: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
+
+  pub fn set_app_handle(app: tauri::AppHandle) {
+    let _ = APP_HANDLE.set(app);
+  }
 
   unsafe extern "system" fn hook_proc(n_code: i32, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
     if n_code >= 0 && SUPPRESS_S.load(Ordering::Relaxed) {
@@ -42,8 +50,32 @@ mod s_key_hook {
       if kb.vkCode == 0x53 {
         let msg = w_param.0 as u32;
         if msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN {
+          // Only suppress if OUR Quick Actions window is NOT the foreground window.
+          use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW};
+          let fg = GetForegroundWindow();
+          if !fg.0.is_null() {
+            let mut buf = [0u16; 64];
+            let len = GetWindowTextW(fg, &mut buf);
+            if len > 0 {
+              let title = String::from_utf16_lossy(&buf[..len as usize]);
+              if title == "Quick Actions" {
+                S_HELD.store(true, Ordering::Relaxed);
+                return CallNextHookEx(HHOOK(std::ptr::null_mut()), n_code, w_param, l_param);
+              }
+            }
+          }
+          S_HELD.store(true, Ordering::Relaxed);
           // Swallow S keydown — prevent "sssss" in other apps
           return LRESULT(1);
+        }
+        if msg == WM_KEYUP || msg == WM_SYSKEYUP {
+          if S_HELD.swap(false, Ordering::Relaxed) {
+            // S was released — emit event so frontend can stop STT
+            if let Some(app) = APP_HANDLE.get() {
+              let _ = app.emit("stt:s-key-released", ());
+            }
+          }
+          // Let keyup through (don't suppress it)
         }
       }
     }
@@ -83,6 +115,12 @@ mod s_key_hook {
 #[cfg(target_os = "windows")]
 pub fn install_keyboard_hook() {
   s_key_hook::install();
+}
+
+/// Pass the app handle to the hook so it can emit events.
+#[cfg(target_os = "windows")]
+pub fn set_hook_app_handle(app: tauri::AppHandle) {
+  s_key_hook::set_app_handle(app);
 }
 
 /// Enable or disable S-key suppression via low-level keyboard hook.

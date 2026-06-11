@@ -1,4 +1,4 @@
-// AiDesktopCompanion v0.1.10 build28
+// AiDesktopCompanion v0.1.10 build29
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -79,7 +79,10 @@ pub fn run() {
       }
       // Install the low-level keyboard hook for S-key suppression (deterministic, no async races)
       #[cfg(target_os = "windows")]
-      quick_actions::install_keyboard_hook();
+      {
+        quick_actions::install_keyboard_hook();
+        quick_actions::set_hook_app_handle(app.handle().clone());
+      }
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![

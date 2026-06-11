@@ -3,7 +3,7 @@ import { onMounted, onBeforeUnmount, ref } from 'vue'
 import { getCurrentWebviewWindow, WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { LogicalSize } from '@tauri-apps/api/dpi'
 import { invoke } from '@tauri-apps/api/core'
-import { emit as emitTauri } from '@tauri-apps/api/event'
+import { emit as emitTauri, listen as listenTauri } from '@tauri-apps/api/event'
 import { startRecording as sttStart, stopRecording as sttStop, isRecording as sttIsRecording, transcodeToWav16kMono } from './stt'
 import { register, unregister } from '@tauri-apps/plugin-global-shortcut'
 
@@ -164,6 +164,7 @@ const skipResetUntil = ref(0)
 let unlistenBlur: null | (() => void) = null
 let unlistenFocus: null | (() => void) = null
 let unlistenHide: null | (() => void) = null
+let unlistenSKeyReleased: null | (() => void) = null
 let blurCloseTimer: number | null = null
 let resizeObserver: ResizeObserver | null = null
 let lastSetWidth = 0
@@ -637,6 +638,14 @@ onMounted(() => {
   window.addEventListener('focus', onWindowFocus)
   window.addEventListener('mouseup', onWindowMouseup)
 
+  // Listen for S-key release event from the Win32 keyboard hook (works even without popup focus)
+  listenTauri('stt:s-key-released', () => {
+    if (sttRecording.value) {
+      keyLog('stt:s-key-released event from Win32 hook — stopping STT')
+      void stopSTTAndTranscribe()
+    }
+  }).then((un) => { unlistenSKeyReleased = un }).catch(() => {})
+
   // Clean up any stale global shortcuts from a previous window load/crash.
   // The OS keeps them registered even if our JS state was lost on reload.
   const keysToClean = ['P', 'T', 'I', '1', '2', '3', '4', '5', '6', '7', '8', '9']
@@ -797,6 +806,7 @@ onBeforeUnmount(() => {
   try { if (unlistenBlur) unlistenBlur() } catch {}
   try { if (unlistenFocus) unlistenFocus() } catch {}
   try { if (unlistenHide) unlistenHide() } catch {}
+  try { if (unlistenSKeyReleased) unlistenSKeyReleased() } catch {}
   try { if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null } } catch {}
   if (blurCloseTimer) { clearTimeout(blurCloseTimer); blurCloseTimer = null }
   // Clean up all global key suppressions + Ctrl+L debug shortcut
