@@ -4,6 +4,7 @@
 
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { invoke } from '@tauri-apps/api/core'
+import { unregister } from '@tauri-apps/plugin-global-shortcut'
 
 async function getQaWindow(): Promise<WebviewWindow | null> {
   try {
@@ -24,8 +25,14 @@ export async function toggleQuickActionsWindow(): Promise<void> {
     try {
       const visible = await w.isVisible()
       if (visible) {
+        // Force-unregister all QA keys before hiding to prevent stuck keys
+        const qaKeys = ['S', 'P', 'T', 'I', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'CommandOrControl+L']
+        for (const k of qaKeys) { try { await unregister(k) } catch {} }
         await w.hide()
       } else {
+        // Also cleanup stale keys before showing (catches stuck keys from previous session)
+        const qaKeys = ['S', 'P', 'T', 'I', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'CommandOrControl+L']
+        for (const k of qaKeys) { try { await unregister(k) } catch {} }
         try { await invoke('prepare_quick_actions') } catch (e) { console.warn('[popup] prepare_quick_actions failed', e) }
         try { await invoke('position_quick_actions') } catch (e) { console.warn('[popup] position_quick_actions failed', e) }
         await w.show()
