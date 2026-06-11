@@ -446,6 +446,11 @@ function onWindowFocus(): void {
     keyLog(`onWindowFocus: stale keys detected [${[...suppressedKeys].join(',')}] — force-releasing`)
     void unsuppressAllKeys()
   }
+  // Also cleanup stale stt.ts recording state
+  if (!sttRecording.value && sttIsRecording()) {
+    keyLog('onWindowFocus: stt.ts still recording but UI says idle — forcing cleanup')
+    try { sttStop() } catch {}
+  }
   // Also ensure Ctrl+L debug shortcut is cleaned up if STT is not active
   if (!sttRecording.value) {
     unregister('CommandOrControl+L').catch(() => {})
@@ -777,9 +782,10 @@ onMounted(() => {
       unregister('CommandOrControl+L').catch(() => {})
       // Disable S-key hook suppression (deterministic Win32 hook)
       invoke('suppress_s_key', { enable: false }).catch(() => {})
-      // If STT was somehow still recording, cancel it
-      if (sttRecording.value) {
+      // If STT was somehow still recording, properly stop it (not just UI flag)
+      if (sttRecording.value || sttIsRecording()) {
         sttRecording.value = false
+        try { sttStop() } catch {}
       }
       try { sessionStorage.removeItem('qa_show_preview') } catch {}
       try { sessionStorage.removeItem('qa_preview_text') } catch {}
