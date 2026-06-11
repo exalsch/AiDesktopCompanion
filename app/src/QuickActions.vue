@@ -494,11 +494,9 @@ async function startSTT(): Promise<void> {
     sttPostProcessQuickPromptIndex.value = null
     await sttStart()
     sttRecording.value = true
-    // Register global S-key shortcut to prevent "sssss" in other apps while user holds S
-    await suppressKeyGlobal('S', () => {
-      // On key release via global shortcut (user switched focus while holding S)
-      if (sttRecording.value) void stopSTTAndTranscribe()
-    })
+    // Suppress S-key via low-level Win32 keyboard hook (deterministic, no async race)
+    try { await invoke('suppress_s_key', { enable: true }) } catch {}
+    keyLog('suppress_s_key(true) via Win32 hook')
     // Register Ctrl+L as global shortcut during recording so user can dump log
     // even when popup has no focus (S is globally captured -> focus stays on prev app)
     try {
@@ -535,8 +533,9 @@ async function stopSTTAndTranscribe(): Promise<void> {
   }
   keyLog('stopSTT begin -- eagerly setting recording=false')
   sttRecording.value = false  // eagerly claim to prevent concurrent entry
-  // Immediately unregister global S-key and Ctrl+L debug shortcut
-  await unsuppressKeyGlobal('S')
+  // Disable S-key suppression via Win32 hook (instant, deterministic)
+  try { await invoke('suppress_s_key', { enable: false }) } catch {}
+  keyLog('suppress_s_key(false) via Win32 hook')
   try { await unregister('CommandOrControl+L') } catch {}
   keyLog('unregistered global Ctrl+L')
   try {
@@ -622,7 +621,7 @@ async function stopSTTAndTranscribe(): Promise<void> {
 
 async function cancelSTT(): Promise<void> {
   keyLog('cancelSTT')
-  await unsuppressKeyGlobal('S')
+  try { await invoke('suppress_s_key', { enable: false }) } catch {}
   try { await unregister('CommandOrControl+L') } catch {}
   try {
     if (sttIsRecording()) await sttStop()
@@ -640,13 +639,15 @@ onMounted(() => {
 
   // Clean up any stale global shortcuts from a previous window load/crash.
   // The OS keeps them registered even if our JS state was lost on reload.
-  const keysToClean = ['S', 'P', 'T', 'I', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+  const keysToClean = ['P', 'T', 'I', '1', '2', '3', '4', '5', '6', '7', '8', '9']
   keyLog(`mount cleanup -- unregistering stale keys: [${keysToClean.join(',')}]`)
   for (const k of keysToClean) {
     unregister(k).catch(() => {})
   }
   // Also clean up Ctrl+L debug shortcut in case it was left from a crash
   unregister('CommandOrControl+L').catch(() => {})
+  // Ensure S-key hook is off on mount
+  invoke('suppress_s_key', { enable: false }).catch(() => {})
 
   // Fit window to content — only resize when size actually changes to avoid loops
   try {
@@ -760,12 +761,13 @@ onMounted(() => {
       if (captureInProgress.value) { dbg('tauri://hide during capture -> skip fresh mark'); return }
       dbg('tauri://hide -> mark fresh session')
       // Force-release all stale key suppressions when popup is hidden
-      // This catches the case where S is still suppressed from an interrupted STT flow
       if (suppressedKeys.size > 0) {
         keyLog(`tauri://hide: releasing stale keys [${[...suppressedKeys].join(',')}]`)
         void unsuppressAllKeys()
       }
       unregister('CommandOrControl+L').catch(() => {})
+      // Disable S-key hook suppression (deterministic Win32 hook)
+      invoke('suppress_s_key', { enable: false }).catch(() => {})
       // If STT was somehow still recording, cancel it
       if (sttRecording.value) {
         sttRecording.value = false

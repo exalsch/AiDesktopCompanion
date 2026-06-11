@@ -26,13 +26,17 @@ export async function toggleQuickActionsWindow(): Promise<void> {
       const visible = await w.isVisible()
       if (visible) {
         // Force-unregister all QA keys before hiding to prevent stuck keys
-        const qaKeys = ['S', 'P', 'T', 'I', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'CommandOrControl+L']
+        const qaKeys = ['P', 'T', 'I', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'CommandOrControl+L']
         for (const k of qaKeys) { try { await unregister(k) } catch {} }
+        // Disable S-key suppression via Win32 hook (deterministic)
+        try { await invoke('suppress_s_key', { enable: false }) } catch {}
         await w.hide()
       } else {
         // Also cleanup stale keys before showing (catches stuck keys from previous session)
-        const qaKeys = ['S', 'P', 'T', 'I', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'CommandOrControl+L']
+        const qaKeys = ['P', 'T', 'I', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'CommandOrControl+L']
         for (const k of qaKeys) { try { await unregister(k) } catch {} }
+        // Ensure S-key hook is off on fresh show
+        try { await invoke('suppress_s_key', { enable: false }) } catch {}
         try { await invoke('prepare_quick_actions') } catch (e) { console.warn('[popup] prepare_quick_actions failed', e) }
         try { await invoke('position_quick_actions') } catch (e) { console.warn('[popup] position_quick_actions failed', e) }
         await w.show()

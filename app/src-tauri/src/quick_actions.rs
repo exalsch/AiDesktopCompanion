@@ -21,6 +21,84 @@ pub fn last_foreground_handle() -> Result<Option<isize>, String> {
   LAST_FOREGROUND.lock().map(|g| *g).map_err(|_| "lock poisoned".to_string())
 }
 
+// --- Low-level keyboard hook for S-key suppression during STT ---
+// This replaces the fragile Tauri global-shortcut approach with a deterministic Win32 hook.
+#[cfg(target_os = "windows")]
+mod s_key_hook {
+  use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+  use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+  use windows::Win32::UI::WindowsAndMessaging::{
+    CallNextHookEx, SetWindowsHookExW, UnhookWindowsHookEx,
+    HHOOK, KBDLLHOOKSTRUCT, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
+  };
+
+  static SUPPRESS_S: AtomicBool = AtomicBool::new(false);
+  static HOOK_HANDLE: AtomicIsize = AtomicIsize::new(0);
+
+  unsafe extern "system" fn hook_proc(n_code: i32, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
+    if n_code >= 0 && SUPPRESS_S.load(Ordering::Relaxed) {
+      let kb = &*(l_param.0 as *const KBDLLHOOKSTRUCT);
+      // 0x53 = VK_S
+      if kb.vkCode == 0x53 {
+        let msg = w_param.0 as u32;
+        if msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN {
+          // Swallow S keydown — prevent "sssss" in other apps
+          return LRESULT(1);
+        }
+      }
+    }
+    CallNextHookEx(HHOOK(std::ptr::null_mut()), n_code, w_param, l_param)
+  }
+
+  pub fn install() {
+    unsafe {
+      let current = HOOK_HANDLE.load(Ordering::Relaxed);
+      if current != 0 { return; } // already installed
+      let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), None, 0);
+      if let Ok(h) = hook {
+        HOOK_HANDLE.store(h.0 as isize, Ordering::Relaxed);
+      }
+    }
+  }
+
+  pub fn uninstall() {
+    unsafe {
+      let h = HOOK_HANDLE.swap(0, Ordering::Relaxed);
+      if h != 0 {
+        let _ = UnhookWindowsHookEx(HHOOK(h as *mut _));
+      }
+    }
+  }
+
+  pub fn set_suppress(enable: bool) {
+    SUPPRESS_S.store(enable, Ordering::Relaxed);
+  }
+
+  pub fn is_suppressing() -> bool {
+    SUPPRESS_S.load(Ordering::Relaxed)
+  }
+}
+
+/// Install the low-level keyboard hook (call once at app startup).
+#[cfg(target_os = "windows")]
+pub fn install_keyboard_hook() {
+  s_key_hook::install();
+}
+
+/// Enable or disable S-key suppression via low-level keyboard hook.
+/// When enabled, S keydown events are swallowed system-wide (prevents "sssss" during STT).
+/// Deterministic — no async, no window-context dependency, no register/unregister race.
+#[tauri::command]
+pub fn suppress_s_key(enable: bool) -> Result<bool, String> {
+  #[cfg(target_os = "windows")]
+  {
+    s_key_hook::set_suppress(enable);
+    Ok(s_key_hook::is_suppressing())
+  }
+  #[cfg(not(target_os = "windows"))]
+  { Ok(false) }
+}
+
 // UI actions and quick insertions
 
 #[tauri::command]
