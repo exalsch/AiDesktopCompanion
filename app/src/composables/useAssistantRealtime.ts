@@ -169,7 +169,6 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       }
       eventsDc.onmessage = (e) => {
         try {
-          console.log('[realtime] dc message:', e.data);
           opts.onLog?.('dc message: ' + String(e.data))
           try {
             const parsed = JSON.parse(String(e.data))
