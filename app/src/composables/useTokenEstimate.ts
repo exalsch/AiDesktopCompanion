@@ -63,9 +63,10 @@ export function estimateImageTokens(count = 1): number {
 export function estimateImageTokensFromMeta(metas: Array<{ width?: number; height?: number; ok?: boolean }>): number {
   if (!Array.isArray(metas) || metas.length === 0) return 0
   let total = 0
-  for (const m of metas) {
-    const w = Math.max(0, (m?.width as any) | 0)
-    const h = Math.max(0, (m?.height as any) | 0)
+  for (let i = 0, len = metas.length; i < len; i++) {
+    const m = metas[i]
+    const w = m && m.width ? Math.max(0, m.width | 0) : 0
+    const h = m && m.height ? Math.max(0, m.height | 0) : 0
     total += estimateImageTokensForSize(w, h)
   }
   return total
