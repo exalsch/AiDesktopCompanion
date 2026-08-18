@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import HotkeyPicker from './HotkeyPicker.vue'
 
@@ -17,6 +17,14 @@ const showApiKey = ref(false)
 // Quick prompt titles for the select-all hotkey dropdown, so the user picks a
 // recognisable prompt instead of a bare number.
 const quickPromptLabels = ref<string[]>([])
+
+// Both hotkeys go through the same OS registration, so an identical pair means
+// one of them silently never fires.
+const hotkeysCollide = computed(() => {
+  const a = String(props.settings.global_hotkey || '').trim()
+  const b = String(props.settings.select_all_hotkey || '').trim()
+  return !!a && a === b
+})
 
 function shorten(text: string): string {
   const t = (text || '').replace(/\s+/g, ' ').trim()
@@ -52,6 +60,7 @@ onMounted(async () => {
         Selects all text in the focused application (Ctrl + A), runs the quick prompt below on it and pastes the result back over it - no popup.
         Leave all empty to disable. Current: <code>{{ props.settings.select_all_hotkey || 'disabled' }}</code>
       </div>
+      <div v-if="hotkeysCollide" class="settings-hint error">This is the same combination as the Global Hotkey - only one of them will work.</div>
     </div>
 
     <div class="settings-row col">

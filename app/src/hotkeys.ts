@@ -195,6 +195,14 @@ async function applyForSlot(name: SlotName, shortcut: string | null | undefined)
   // Fast path: no change
   if (slot.current === s) return
 
+  // The two slots must not fight over the same combination: the OS would hand
+  // the shortcut to whichever registered first and the other would look broken.
+  for (const [otherName, other] of Object.entries(slots)) {
+    if (otherName !== name && other.current === s) {
+      throw new Error(`Shortcut ${s} is already used by the ${otherName} hotkey`)
+    }
+  }
+
   // Try to register the new shortcut FIRST; only switch over if successful
   try {
     await registerForSlot(slot, s)
