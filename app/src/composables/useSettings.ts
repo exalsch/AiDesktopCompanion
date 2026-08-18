@@ -28,6 +28,12 @@ const settings = reactive({
   hide_tool_calls_in_chat: false as boolean,
   ui_style: 'sidebar-dark' as UIStyle,
   global_hotkey: '' as string,
+  // Dedicated hotkey that selects all text in the focused app and immediately
+  // runs `select_all_quick_prompt` on it. Empty string disables it.
+  select_all_hotkey: '' as string,
+  select_all_quick_prompt: 1 as number,
+  // Floating status pill for background operations (quick prompts, TTS, STT)
+  show_busy_indicator: true as boolean,
   mcp_servers: [] as Array<any>,
   system_prompt: '' as string,
   quick_prompt_system_prompt: 'Give the direct response to the task.' as string,
@@ -70,6 +76,14 @@ export function useSettings() {
       if (typeof (v as any).start_in_tray === 'boolean') settings.start_in_tray = (v as any).start_in_tray
       if (typeof (v as any).hide_tool_calls_in_chat === 'boolean') settings.hide_tool_calls_in_chat = (v as any).hide_tool_calls_in_chat
       if (typeof (v as any).global_hotkey === 'string') settings.global_hotkey = (v as any).global_hotkey
+      if (typeof (v as any).select_all_hotkey === 'string') settings.select_all_hotkey = (v as any).select_all_hotkey
+      {
+        const idx = Number((v as any).select_all_quick_prompt)
+        settings.select_all_quick_prompt = Number.isFinite(idx) ? Math.min(9, Math.max(1, Math.trunc(idx))) : 1
+      }
+      settings.show_busy_indicator = (typeof (v as any).show_busy_indicator === 'boolean')
+        ? (v as any).show_busy_indicator
+        : true
       {
         let ui: any = (v as any).ui_style
         if (ui === 'sidebar') ui = 'sidebar-dark'

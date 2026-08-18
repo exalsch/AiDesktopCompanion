@@ -39,6 +39,21 @@
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "focus": false
+      },
+      {
+        "title": "AiDesktopCompanion Status",
+        "label": "busy-indicator",
+        "url": "/?window=busy",
+        "width": 260,
+        "height": 54,
+        "visible": false,
+        "resizable": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "transparent": true,
+        "focus": false
       }
     ],
     "security": {

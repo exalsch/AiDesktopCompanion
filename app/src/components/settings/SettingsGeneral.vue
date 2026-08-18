@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, watch, computed, onBeforeUnmount } from 'vue'
-import { checkShortcutAvailable } from '../../hotkeys'
+import { ref, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import HotkeyPicker from './HotkeyPicker.vue'
 
 const props = defineProps<{
   settings: any
@@ -14,164 +14,52 @@ const props = defineProps<{
 
 const showApiKey = ref(false)
 
-// ----- Global Hotkey UI state
-const modOptions = [
-  { label: 'None', value: '' },
-  { label: 'Alt', value: 'Alt' },
-  { label: 'Shift', value: 'Shift' },
-  { label: 'Ctrl', value: 'Control' },
-  { label: 'Win', value: 'Win' }, // will be normalized to 'Super'
-]
-const ghkMod1 = ref<string>('')
-const ghkMod2 = ref<string>('')
-const ghkKey = ref<string>('')
-const ghkError = ref<string | null>(null)
-const ghkChecking = ref<boolean>(false)
+// Quick prompt titles for the select-all hotkey dropdown, so the user picks a
+// recognisable prompt instead of a bare number.
+const quickPromptLabels = ref<string[]>([])
 
-// Filtered modifier options to prevent selecting the same modifier in both dropdowns (except "None")
-const modOptions1 = computed(() => {
-  const other = ghkMod2.value
-  return other ? modOptions.filter(o => o.value !== other) : modOptions
-})
-const modOptions2 = computed(() => {
-  const other = ghkMod1.value
-  return other ? modOptions.filter(o => o.value !== other) : modOptions
-})
-
-// Ensure selections do not end up identical (e.g., when loading existing settings)
-watch(ghkMod1, (v) => {
-  if (v && v === ghkMod2.value) ghkMod2.value = ''
-})
-watch(ghkMod2, (v) => {
-  if (v && v === ghkMod1.value) ghkMod1.value = ''
-})
-
-function parseHotkeyToFields(hk: string) {
-  try {
-    const s = (hk || '').trim()
-    if (!s) { ghkMod1.value = ''; ghkMod2.value = ''; ghkKey.value = ''; return }
-    const parts = s.split('+').map(p => p.trim()).filter(Boolean)
-    const mods: string[] = []
-    let key = ''
-    for (const p of parts) {
-      const up = p.toLowerCase()
-      if (up === 'alt' || up === 'shift' || up === 'control' || up === 'ctrl' || up === 'win' || up === 'super' || up === 'command' || up === 'cmd') {
-        // normalize ctrl synonyms
-        const norm = (up === 'ctrl') ? 'Control' : (up === 'super' ? 'Win' : (up === 'cmd' || up === 'command') ? 'Control' : p.charAt(0).toUpperCase() + p.slice(1))
-        mods.push(norm)
-      } else {
-        key = p
-      }
-    }
-    ghkMod1.value = mods[0] || ''
-    ghkMod2.value = mods[1] || ''
-    // Dedupe in case both parsed modifiers are identical
-    if (ghkMod1.value && ghkMod1.value === ghkMod2.value) {
-      ghkMod2.value = ''
-    }
-    ghkKey.value = key
-  } catch { ghkMod1.value = ''; ghkMod2.value = ''; ghkKey.value = ''; }
+function shorten(text: string): string {
+  const t = (text || '').replace(/\s+/g, ' ').trim()
+  if (!t) return '(empty)'
+  return t.length > 48 ? `${t.slice(0, 45)}…` : t
 }
 
-function composeHotkey(): string {
-  const mods = [ghkMod1.value, ghkMod2.value]
-    .map(m => m.trim())
-    .filter(Boolean)
-    .map(m => m === 'Win' ? 'Super' : m) // normalize here for storage/consistency
-  const key = (ghkKey.value || '').trim()
-  const parts = [...mods, key].filter(Boolean)
-  return parts.join('+')
-}
-
-// Initialize from existing setting
-parseHotkeyToFields(props.settings.global_hotkey || '')
-
-// Keep in sync if settings are loaded later or changed externally
-watch(() => props.settings.global_hotkey, (v: string) => {
-  parseHotkeyToFields(typeof v === 'string' ? v : '')
-})
-
-let checkTimer: any = 0
-async function validateGhk() {
-  const hk = composeHotkey()
-  props.settings.global_hotkey = hk
-  ghkError.value = null
-  if (!hk) return
-  ghkChecking.value = true
+onMounted(async () => {
   try {
-    const ok = await checkShortcutAvailable(hk)
-    if (!ok) {
-      ghkError.value = 'Hotkey appears unavailable or already in use.'
-    }
-  } catch {
-    ghkError.value = 'Could not validate hotkey.'
-  } finally {
-    ghkChecking.value = false
+    const data = await invoke<any>('get_quick_prompts')
+    quickPromptLabels.value = Array.from({ length: 9 }, (_, i) => shorten(String(data?.[String(i + 1)] || '')))
+  } catch (err) {
+    console.warn('[settings] quick prompt titles unavailable', err)
+    quickPromptLabels.value = Array.from({ length: 9 }, () => '')
   }
-}
-
-watch([ghkMod1, ghkMod2, ghkKey], () => {
-  if (checkTimer) clearTimeout(checkTimer)
-  checkTimer = setTimeout(validateGhk, 300)
-})
-
-// ----- TTS Proxy QA state
-const ttsQA_Count = ref<number>(0)
-const ttsQA_Busy = ref<boolean>(false)
-const ttsQA_LastRemoved = ref<number | null>(null)
-
-async function refreshTtsProxyCount() {
-  ttsQA_Busy.value = true
-  try {
-    ttsQA_Count.value = await invoke<number>('tts_stream_session_count')
-  } catch {
-    // ignore
-  } finally {
-    ttsQA_Busy.value = false
-  }
-}
-
-async function cleanupIdleTtsProxy() {
-  ttsQA_Busy.value = true
-  try {
-    ttsQA_LastRemoved.value = await invoke<number>('tts_stream_cleanup_idle', { ttl_seconds: 60 })
-    await refreshTtsProxyCount()
-  } catch {
-    // ignore
-  } finally {
-    ttsQA_Busy.value = false
-  }
-}
-
-onBeforeUnmount(() => {
-  if (checkTimer) clearTimeout(checkTimer)
 })
 </script>
 
 <template>
   <div class="settings-section">
-    <div class="settings-title">General Settings</div>  
+    <div class="settings-title">General Settings</div>
 
     <div class="settings-row col">
       <label class="label">Global Hotkey</label>
-      <div class="row-inline">
-        <select v-model="ghkMod1" class="input" style="max-width: 160px;">
-          <option v-for="opt in modOptions1" :key="'m1-'+opt.value" :value="opt.value">{{ opt.label }}</option>
-        </select>
-        <select v-model="ghkMod2" class="input" style="max-width: 160px;">
-          <option v-for="opt in modOptions2" :key="'m2-'+opt.value" :value="opt.value">{{ opt.label }}</option>
-        </select>
-        <input
-          v-model="ghkKey"
-          class="input"
-          placeholder="A or F9 or Space"
-          autocomplete="off"
-          spellcheck="false"
-        />
-      </div>
+      <HotkeyPicker v-model="props.settings.global_hotkey" />
+      <div class="settings-hint">Opens the Quick Actions popup. Example: Alt + Shift + A. Leave all empty to disable. Current: <code>{{ props.settings.global_hotkey || 'disabled' }}</code></div>
+    </div>
 
-      <div class="settings-hint">Example: Alt + Shift + A. Leave all empty to disable. Current: <code>{{ props.settings.global_hotkey || 'disabled' }}</code></div>
-      <div v-if="ghkError" class="settings-hint error">{{ ghkError }}</div>
+    <div class="settings-row col">
+      <label class="label">Select-All Hotkey</label>
+      <HotkeyPicker v-model="props.settings.select_all_hotkey" />
+      <div class="settings-hint">
+        Selects all text in the focused application (Ctrl + A), runs the quick prompt below on it and pastes the result back over it - no popup.
+        Leave all empty to disable. Current: <code>{{ props.settings.select_all_hotkey || 'disabled' }}</code>
+      </div>
+    </div>
+
+    <div class="settings-row col">
+      <label class="label">Select-All Quick Prompt</label>
+      <select v-model.number="props.settings.select_all_quick_prompt" class="input" :disabled="!props.settings.select_all_hotkey">
+        <option v-for="n in 9" :key="'sa-qp-'+n" :value="n">{{ n }} - {{ quickPromptLabels[n - 1] || '(empty)' }}</option>
+      </select>
+      <div class="settings-hint">Which of the nine quick prompts the Select-All hotkey runs. Edit the prompts under Settings → Quick Prompts.</div>
     </div>
 
     <div class="settings-title">AI Provider</div>
@@ -246,29 +134,22 @@ onBeforeUnmount(() => {
       <label class="checkbox"><input type="checkbox" v-model="props.settings.start_in_tray"/> Start in tray</label>
     </div>
     <div class="settings-hint">When enabled, the main window stays hidden on app startup until you open it from the tray.</div>
+    <div class="settings-row">
+      <label class="checkbox"><input type="checkbox" v-model="props.settings.show_busy_indicator"/> Show busy indicator</label>
+    </div>
+    <div class="settings-hint">
+      Shows a small always-on-top pill with elapsed time while a background action runs (quick prompts, text to speech, transcription),
+      and the error message if the request fails or times out. Hidden while the main window is in front.
+    </div>
     <div class="settings-title">Conversation</div>
     <div class="settings-row">
       <label class="checkbox"><input type="checkbox" v-model="props.settings.persist_conversations"/> Persist conversations</label>
-      <button class="btn danger" @click="props.onClearConversations">Clear All Conversations</button>      
+      <button class="btn danger" @click="props.onClearConversations">Clear All Conversations</button>
     </div>
     <div class="settings-hint">When enabled, conversation history is saved locally only.</div>
     <div class="settings-row">
       <label class="checkbox"><input type="checkbox" v-model="props.settings.hide_tool_calls_in_chat"/> Hide tool call details in chat</label>
     </div>
-
-    <template v-if="false">
-      <div class="settings-title">TTS Proxy QA</div>
-      <div class="settings-row col">
-        <div class="row-inline" style="gap: 10px; align-items: center;">
-          <button class="btn" :disabled="ttsQA_Busy" @click="refreshTtsProxyCount">{{ ttsQA_Busy ? 'Checking…' : 'Count Active Sessions' }}</button>
-          <div class="settings-hint">Active sessions: <code>{{ ttsQA_Count }}</code></div>
-        </div>
-        <div class="row-inline" style="gap: 10px; align-items: center; margin-top: 6px;">
-          <button class="btn" :disabled="ttsQA_Busy" @click="cleanupIdleTtsProxy">{{ ttsQA_Busy ? 'Cleaning…' : 'Cleanup Idle (>60s)' }}</button>
-          <div class="settings-hint">Last removed: <code>{{ ttsQA_LastRemoved ?? 0 }}</code></div>
-        </div>
-      </div>
-    </template>
   </div>
 </template>
 

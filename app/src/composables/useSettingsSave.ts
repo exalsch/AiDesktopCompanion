@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { applyGlobalHotkey, checkShortcutAvailable } from '../hotkeys'
+import { applyGlobalHotkey, applySelectAllHotkey, checkShortcutAvailable } from '../hotkeys'
 import { parseArgs, normalizeEnvInput } from './utils'
 import { getPersistState } from '../state/conversation'
 
@@ -12,6 +12,14 @@ export function useSettingsSave(settings: any, showToast: (msg: string, kind?: '
         const ok = await checkShortcutAvailable(settings.global_hotkey)
         if (!ok) {
           showToast('Global hotkey is unavailable or already in use. Please choose another.', 'error')
+          return
+        }
+      }
+      // Validate the select-all hotkey the same way before saving & applying
+      if (settings.select_all_hotkey && settings.select_all_hotkey.trim()) {
+        const ok = await checkShortcutAvailable(settings.select_all_hotkey)
+        if (!ok) {
+          showToast('Select-all hotkey is unavailable or already in use. Please choose another.', 'error')
           return
         }
       }
@@ -46,8 +54,9 @@ export function useSettingsSave(settings: any, showToast: (msg: string, kind?: '
       const path = await invoke<string>('save_settings', { map: mapToSave })
       showToast(`Settings saved:\n${path}`, 'success')
 
-      // Re-apply global hotkey immediately when changed
+      // Re-apply global hotkeys immediately when changed
       try { await applyGlobalHotkey(settings.global_hotkey) } catch {}
+      try { await applySelectAllHotkey(settings.select_all_hotkey) } catch {}
 
       // Persist/clear conversations immediately according to toggle for privacy
       try {

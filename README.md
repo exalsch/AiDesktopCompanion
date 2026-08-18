@@ -8,6 +8,8 @@ It’s designed around a fast **Quick Actions** popup that can capture your curr
 
 - **Quick Actions popup** for prompt + STT + TTS + image capture
 - **Prompt-to-insertion workflow** (aggressive clipboard copy/restore) for pasting the final answer into the active app
+- **Select-All hotkey**: a second global hotkey that selects everything in the focused app (Ctrl + A), runs a preselected quick prompt on it and pastes the result back - no popup in between (Settings → General)
+- **Busy indicator**: a small always-on-top pill showing what is running and for how long, plus the error message when a request fails or times out (Settings → General)
 - **Speech-to-Text (STT)**
   - Local (on-device): Whisper (ggml) or Parakeet V2 (ONNX, optional CUDA)
   - Cloud: any OpenAI-compatible endpoint (`POST /v1/audio/transcriptions`)

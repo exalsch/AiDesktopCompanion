@@ -1,6 +1,6 @@
 import { watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { applyGlobalHotkey, checkShortcutAvailable } from '../hotkeys'
+import { applyGlobalHotkey, applySelectAllHotkey, checkShortcutAvailable } from '../hotkeys'
 import { parseArgs, normalizeEnvInput } from './utils'
 import { getPersistState } from '../state/conversation'
 
@@ -51,6 +51,13 @@ export function useSettingsAutosave(settings: any, showToast: (msg: string, kind
           return
         }
       }
+      if (settings.select_all_hotkey && settings.select_all_hotkey.trim()) {
+        const ok = await checkShortcutAvailable(settings.select_all_hotkey)
+        if (!ok) {
+          showToast('Select-all hotkey is unavailable or already in use. Please choose another.', 'error')
+          return
+        }
+      }
 
       // Clean MCP servers
       const cleanServers = (settings.mcp_servers || []).map((s: any) => {
@@ -81,8 +88,9 @@ export function useSettingsAutosave(settings: any, showToast: (msg: string, kind
 
       await invoke<string>('save_settings', { map: mapToSave })
 
-      // Re-apply hotkey silently
+      // Re-apply hotkeys silently
       try { await applyGlobalHotkey(settings.global_hotkey) } catch {}
+      try { await applySelectAllHotkey(settings.select_all_hotkey) } catch {}
 
       // Persist/clear conversation state based on toggle
       try {

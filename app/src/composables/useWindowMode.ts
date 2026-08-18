@@ -4,6 +4,7 @@ export function useWindowMode() {
   const winParam = new URLSearchParams(window.location.search).get('window')
   const isQuickActions = ref(winParam === 'quick-actions')
   const isCaptureOverlay = ref(winParam === 'capture-overlay')
+  const isBusyIndicator = ref(winParam === 'busy')
 
   // Apply body class immediately (not deferred to onMounted) to prevent layout flash
   try {
@@ -21,5 +22,5 @@ export function useWindowMode() {
     } catch {}
   }
 
-  return { isQuickActions, isCaptureOverlay, addBodyClass, removeBodyClass }
+  return { isQuickActions, isCaptureOverlay, isBusyIndicator, addBodyClass, removeBodyClass }
 }

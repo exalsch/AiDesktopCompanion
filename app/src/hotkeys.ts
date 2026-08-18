@@ -1,11 +1,35 @@
 // Hotkeys initializer for global shortcuts
 // Registers cross-platform hotkeys and emits a DOM event when triggered.
+//
+// Two independent shortcuts are supported:
+//   - `global_hotkey`      -> toggles the Quick Actions popup
+//   - `select_all_hotkey`  -> selects all text in the focused app (Ctrl+A) and
+//                             immediately runs the configured quick prompt on it
+// Both are registered through the same helpers so re-registration after a
+// Windows sleep/resume, availability checks and cleanup behave identically.
 
 import { register, unregisterAll, unregister, isRegistered } from '@tauri-apps/plugin-global-shortcut'
 import { invoke } from '@tauri-apps/api/core'
 
 let initialized = false
-let currentShortcut: string | null = null
+
+// DOM events dispatched when a shortcut fires. `main.ts` owns the reactions.
+export const HOTKEY_EVENT_POPUP = 'ai-desktop:hotkey'
+export const HOTKEY_EVENT_SELECT_ALL = 'ai-desktop:hotkey-select-all'
+
+type SlotName = 'popup' | 'selectAll'
+
+type Slot = {
+  /// Currently registered shortcut for this slot, in plugin format.
+  current: string | null
+  /// DOM event dispatched on the window when the shortcut fires.
+  event: string
+}
+
+const slots: Record<SlotName, Slot> = {
+  popup: { current: null, event: HOTKEY_EVENT_POPUP },
+  selectAll: { current: null, event: HOTKEY_EVENT_SELECT_ALL },
+}
 
 // Normalize UI modifier tokens to plugin format (maps 'Win' -> 'Super')
 export function normalizeModifier(mod: string): string {
@@ -15,14 +39,22 @@ export function normalizeModifier(mod: string): string {
   return m
 }
 
+function toPluginShortcut(shortcut: string | null | undefined): string {
+  return (typeof shortcut === 'string' ? shortcut.trim() : '').replace(/\bWin\b/gi, 'Super')
+}
+
+function isOwnedByUs(shortcut: string): boolean {
+  return Object.values(slots).some((s) => s.current === shortcut)
+}
+
 // Quick check: attempts to register a shortcut temporarily, verifies registration and immediately unregisters it again.
 // Returns true if the shortcut can be registered by this app; false otherwise.
 export async function checkShortcutAvailable(shortcut: string): Promise<boolean> {
-  const s = (shortcut || '').trim().replace(/\bWin\b/gi, 'Super')
+  const s = toPluginShortcut(shortcut)
   if (!s) return false
   try {
     // If we already own this shortcut, it's available
-    if (currentShortcut === s) return true
+    if (isOwnedByUs(s)) return true
     // If someone else holds it, it's NOT available
     const already = await isRegistered(s).catch(() => false)
     if (already) return false
@@ -37,32 +69,57 @@ export async function checkShortcutAvailable(shortcut: string): Promise<boolean>
   }
 }
 
+// Register `shortcut` so that pressing it dispatches the slot's DOM event.
+async function registerForSlot(slot: Slot, shortcut: string): Promise<void> {
+  await register(shortcut, (event) => {
+    if (event.state === 'Pressed') {
+      console.log(`[hotkeys] ${event.shortcut} pressed`)
+      window.dispatchEvent(new CustomEvent(slot.event))
+    }
+  })
+}
+
 export async function initGlobalHotkeys(): Promise<void> {
   if (initialized) return
   initialized = true
 
   console.info('[hotkeys] Initializing global shortcuts…')
 
-  // Load user-configured hotkey from persisted settings (if any). If it fails to
-  // register (typically because another app already owns it), fall through to the
-  // default candidate list instead of leaving the app with NO global hotkey.
+  // Load user-configured hotkeys from persisted settings (if any). If the popup
+  // hotkey fails to register (typically because another app already owns it),
+  // fall through to the default candidate list instead of leaving the app with
+  // NO global hotkey.
+  let configuredPopup = ''
+  let configuredSelectAll = ''
   try {
     const v: any = await invoke('get_settings')
-    const shortcut = (v && typeof v.global_hotkey === 'string' && v.global_hotkey.trim()) ? v.global_hotkey.trim() : ''
-    if (shortcut) {
-      try {
-        await applyGlobalHotkey(shortcut)
-        return
-      } catch (err) {
-        console.warn(`[hotkeys] configured shortcut "${shortcut}" failed to register; trying defaults`, err)
-      }
-    }
+    configuredPopup = (v && typeof v.global_hotkey === 'string') ? v.global_hotkey.trim() : ''
+    configuredSelectAll = (v && typeof v.select_all_hotkey === 'string') ? v.select_all_hotkey.trim() : ''
   } catch (e) {
     console.warn('[hotkeys] get_settings failed, falling back to defaults', e)
   }
 
+  if (configuredSelectAll) {
+    try {
+      await applySelectAllHotkey(configuredSelectAll)
+    } catch (err) {
+      console.warn(`[hotkeys] select-all shortcut "${configuredSelectAll}" failed to register`, err)
+    }
+  }
+
+  registerLifecycleHandlers()
+
+  if (configuredPopup) {
+    try {
+      await applyGlobalHotkey(configuredPopup)
+      return
+    } catch (err) {
+      console.warn(`[hotkeys] configured shortcut "${configuredPopup}" failed to register; trying defaults`, err)
+    }
+  }
+
   // Fallback legacy behavior: try multiple candidates to avoid conflicts
-  const shortcuts = [
+  const candidates = [
     'Alt+A',
     'Alt+Shift+A',
     'Ctrl+Alt+A',
@@ -70,98 +127,77 @@ export async function initGlobalHotkeys(): Promise<void> {
     'Command+Shift+G'
   ]
 
-  const successes: string[] = []
-  for (const s of shortcuts) {
+  for (const s of candidates) {
     try {
-      await register(s, (event) => {
-        if (event.state === 'Pressed') {
-          console.log(`[hotkeys] ${event.shortcut} pressed`)
-          window.dispatchEvent(new CustomEvent('ai-desktop:hotkey'))
-        }
-      })
-      const ok = await isRegistered(s).catch(() => false)
-      console.info(`[hotkeys] tried ${s} -> ${ok ? 'OK' : 'NO'}`)
-      if (ok) successes.push(s)
+      await applyGlobalHotkey(s)
+      console.info('[hotkeys] Registered:', s)
+      return
     } catch (err) {
       console.warn(`[hotkeys] failed to register ${s}`, err)
     }
   }
-  if (successes.length === 0) {
-    console.error('[hotkeys] No global hotkeys could be registered. Another app may be using them. Try running as admin or change the hotkey in settings.')
-  } else {
-    currentShortcut = successes[0] || null
-    // Unregister all but the first successful shortcut to avoid ghost handlers
-    for (let i = 1; i < successes.length; i++) {
-      try { await unregister(successes[i]) } catch {}
-    }
-    console.info('[hotkeys] Registered:', currentShortcut)
-  }
+  console.error('[hotkeys] No global hotkeys could be registered. Another app may be using them. Try running as admin or change the hotkey in settings.')
+}
 
+function registerLifecycleHandlers(): void {
   // Clean up on hot reload / window unload during dev
   window.addEventListener('beforeunload', () => {
     unregisterAll().catch(() => {})
   })
 
-  // Re-register hotkey after Windows sleep/resume (OS can drop global shortcuts)
+  // Re-register hotkeys after Windows sleep/resume (OS can drop global shortcuts)
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && currentShortcut) {
-      reRegisterCurrentHotkey().catch(() => {})
+    if (document.visibilityState === 'visible') {
+      reRegisterAll().catch(() => {})
     }
   })
   // Also listen to Tauri window focus as a fallback resume detection
-  try {
-    const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow')
-    const w = getCurrentWebviewWindow()
-    w.listen('tauri://focus', () => {
-      if (currentShortcut) {
-        reRegisterCurrentHotkey().catch(() => {})
-      }
-    }).catch(() => {})
-  } catch {}
+  void (async () => {
+    try {
+      const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow')
+      const w = getCurrentWebviewWindow()
+      w.listen('tauri://focus', () => {
+        reRegisterAll().catch(() => {})
+      }).catch(() => {})
+    } catch {}
+  })()
 }
 
-// Re-register the current hotkey if it was lost (e.g. after Windows sleep/resume).
-// Checks if the shortcut is still registered; if not, re-registers it.
-async function reRegisterCurrentHotkey(): Promise<void> {
-  if (!currentShortcut) return
-  try {
-    const still = await isRegistered(currentShortcut).catch(() => false)
-    if (still) return // still alive, nothing to do
-    console.info(`[hotkeys] re-registering lost shortcut: ${currentShortcut}`)
-    await register(currentShortcut, (event) => {
-      if (event.state === 'Pressed') {
-        console.log(`[hotkeys] ${event.shortcut} pressed`)
-        window.dispatchEvent(new CustomEvent('ai-desktop:hotkey'))
-      }
-    })
-    console.info(`[hotkeys] re-registered OK: ${currentShortcut}`)
-  } catch (err) {
-    console.warn(`[hotkeys] re-register failed for ${currentShortcut}`, err)
+// Re-register any shortcut that was lost (e.g. after Windows sleep/resume).
+async function reRegisterAll(): Promise<void> {
+  for (const slot of Object.values(slots)) {
+    const shortcut = slot.current
+    if (!shortcut) continue
+    try {
+      const still = await isRegistered(shortcut).catch(() => false)
+      if (still) continue // still alive, nothing to do
+      console.info(`[hotkeys] re-registering lost shortcut: ${shortcut}`)
+      await registerForSlot(slot, shortcut)
+      console.info(`[hotkeys] re-registered OK: ${shortcut}`)
+    } catch (err) {
+      console.warn(`[hotkeys] re-register failed for ${shortcut}`, err)
+    }
   }
 }
 
-// Re-register to a specific shortcut at runtime (called after saving settings)
-export async function applyGlobalHotkey(shortcut: string | null | undefined): Promise<void> {
-  const sRaw = (typeof shortcut === 'string') ? shortcut.trim() : ''
-  const s = sRaw.replace(/\bWin\b/gi, 'Super')
+// Re-register one slot to a specific shortcut at runtime (called after saving settings).
+async function applyForSlot(name: SlotName, shortcut: string | null | undefined): Promise<void> {
+  const slot = slots[name]
+  const s = toPluginShortcut(shortcut)
   if (!s) {
-    // Clear all existing shortcuts
-    try { await unregisterAll() } catch {}
-    currentShortcut = null
-    console.info('[hotkeys] cleared (no global hotkey set)')
+    if (slot.current) {
+      try { await unregister(slot.current) } catch {}
+    }
+    slot.current = null
+    console.info(`[hotkeys] ${name} cleared (no hotkey set)`)
     return
   }
   // Fast path: no change
-  if (currentShortcut && currentShortcut === s) return
+  if (slot.current === s) return
 
   // Try to register the new shortcut FIRST; only switch over if successful
   try {
-    await register(s, (event) => {
-      if (event.state === 'Pressed') {
-        console.log(`[hotkeys] ${event.shortcut} pressed`)
-        window.dispatchEvent(new CustomEvent('ai-desktop:hotkey'))
-      }
-    })
+    await registerForSlot(slot, s)
     const ok = await isRegistered(s).catch(() => false)
     if (!ok) {
       // Clean up attempted registration
@@ -169,13 +205,23 @@ export async function applyGlobalHotkey(shortcut: string | null | undefined): Pr
       throw new Error('Shortcut not registered (possibly in use by another app)')
     }
     // Success: remove previous shortcut (if any) and commit
-    if (currentShortcut && currentShortcut !== s) {
-      try { await unregister(currentShortcut) } catch {}
+    if (slot.current && slot.current !== s) {
+      try { await unregister(slot.current) } catch {}
     }
-    currentShortcut = s
-    console.info(`[hotkeys] active -> ${s}`)
+    slot.current = s
+    console.info(`[hotkeys] ${name} active -> ${s}`)
   } catch (err) {
-    console.error(`[hotkeys] failed to register configured shortcut "${s}"`, err)
+    console.error(`[hotkeys] failed to register configured ${name} shortcut "${s}"`, err)
     throw err
   }
+}
+
+/// Hotkey that toggles the Quick Actions popup.
+export async function applyGlobalHotkey(shortcut: string | null | undefined): Promise<void> {
+  return applyForSlot('popup', shortcut)
+}
+
+/// Hotkey that selects all text in the focused app and runs a quick prompt on it.
+export async function applySelectAllHotkey(shortcut: string | null | undefined): Promise<void> {
+  return applyForSlot('selectAll', shortcut)
 }

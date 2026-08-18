@@ -201,7 +201,7 @@ pub fn insert_text_into_focused_app(text: String, safe_mode: Option<bool>) -> Re
 /// virtual screen if the monitor query fails. So edge detection is relative to
 /// the monitor the cursor/caret is actually on, not the whole multi-monitor desktop.
 #[cfg(target_os = "windows")]
-unsafe fn work_area_for_point(probe: windows::Win32::Foundation::POINT) -> (i32, i32, i32, i32) {
+pub(crate) unsafe fn work_area_for_point(probe: windows::Win32::Foundation::POINT) -> (i32, i32, i32, i32) {
   use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
   };
@@ -449,6 +449,13 @@ pub fn dump_key_log(text: String) -> Result<String, String> {
 
 #[tauri::command]
 pub async fn tts_selection(app: tauri::AppHandle, safe_mode: Option<bool>) -> Result<String, String> {
+  // Triggered from the Quick Actions popup, which hides itself first, so the
+  // floating indicator is the only feedback the user gets while this runs.
+  let handle = app.clone();
+  crate::busy::with_indicator(&handle, "Text to speech", tts_selection_inner(app, safe_mode)).await
+}
+
+async fn tts_selection_inner(app: tauri::AppHandle, safe_mode: Option<bool>) -> Result<String, String> {
   let safe = safe_mode.unwrap_or(false);
 
   // Clipboard + Enigo + sleep are blocking — run on a dedicated thread to avoid starving the async runtime

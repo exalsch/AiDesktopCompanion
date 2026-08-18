@@ -223,6 +223,13 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   if let Some(hide) = map.get("hide_tool_calls_in_chat").and_then(|x| x.as_bool()) { obj.insert("hide_tool_calls_in_chat".to_string(), serde_json::Value::Bool(hide)); }
   // Persist global hotkey
   if let Some(hk) = map.get("global_hotkey").and_then(|x| x.as_str()) { obj.insert("global_hotkey".to_string(), serde_json::Value::String(hk.to_string())); }
+  // Persist the dedicated "select all + run quick prompt" hotkey and the prompt it runs
+  if let Some(hk) = map.get("select_all_hotkey").and_then(|x| x.as_str()) { obj.insert("select_all_hotkey".to_string(), serde_json::Value::String(hk.to_string())); }
+  if let Some(idx) = map.get("select_all_quick_prompt").and_then(|x| x.as_u64()) {
+    obj.insert("select_all_quick_prompt".to_string(), serde_json::Value::Number(serde_json::Number::from(idx.clamp(1, 9))));
+  }
+  // Persist the floating busy indicator toggle
+  if let Some(flag) = map.get("show_busy_indicator").and_then(|x| x.as_bool()) { obj.insert("show_busy_indicator".to_string(), serde_json::Value::Bool(flag)); }
   // Persist global system prompt
   if let Some(sp) = map.get("system_prompt").and_then(|x| x.as_str()) { obj.insert("system_prompt".to_string(), serde_json::Value::String(sp.to_string())); }
   // Persist Quick Prompts specific system prompt

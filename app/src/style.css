@@ -80,10 +80,25 @@ button:focus-visible {
   text-align: center;
 }
 
-/* Sub-windows (QuickActions, CaptureOverlay) must not inherit main window min-width */
+/* Sub-windows (QuickActions, CaptureOverlay, BusyIndicator) must not inherit main window min-width */
 html.sub-window #app {
   min-width: 0;
   padding: 0;
+}
+
+/* Busy indicator: a transparent, borderless window so only the rounded pill
+   itself is painted on top of whatever the user is working in. */
+body.busy-window,
+body.busy-window #app {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+html.busy-window {
+  background: transparent;
 }
 
 /* The app uses explicit themes; the prefers-color-scheme block is not needed. */

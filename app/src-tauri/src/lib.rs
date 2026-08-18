@@ -77,6 +77,11 @@ pub fn run() {
           let _ = quick_prompts::generate_default_quick_prompts();
         }
       }
+      // The busy indicator must never pull focus away from the application the
+      // user is typing in, so strip activation from it once at startup.
+      if let Some(win) = app.get_webview_window(busy::BUSY_WINDOW_LABEL) {
+        busy::make_non_activating(&win);
+      }
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
@@ -113,6 +118,7 @@ pub fn run() {
       quick_actions::prepare_quick_actions,
       quick_actions::focus_prev_then_copy_selection,
       quick_prompts::run_quick_prompt,
+      quick_prompts::run_quick_prompt_select_all,
       quick_prompts::run_quick_prompt_result,
       quick_prompts::run_quick_prompt_with_selection,
       quick_prompts::generate_default_quick_prompts,
@@ -149,7 +155,9 @@ pub fn run() {
       mcp_ping,
       mcp_is_connected,
       realtime_create_ephemeral_token,
-      realtime_build_tools
+      realtime_build_tools,
+      busy::busy_get_state,
+      busy::busy_hide
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
@@ -186,6 +194,7 @@ mod chat;
 mod settings;
 mod quick_actions;
 mod command_hook;
+mod busy;
 
 use rmcp::{
   service::{RoleClient, DynService, RunningService},
@@ -612,7 +621,20 @@ struct SttPostProcessResult {
 /// Transcribe audio bytes. Engine is selected via settings (`stt_engine`: "openai" | "local").
 /// Local engine uses whisper-rs with an auto-downloaded ggml model.
 #[tauri::command]
-async fn stt_transcribe(audio: Vec<u8>, mime: String, apply_post_process: Option<bool>, prompt_override: Option<String>) -> Result<SttTranscriptionResult, String> {
+async fn stt_transcribe(app: tauri::AppHandle, audio: Vec<u8>, mime: String, apply_post_process: Option<bool>, prompt_override: Option<String>) -> Result<SttTranscriptionResult, String> {
+  // The Quick Actions popup closes before transcription starts, so without the
+  // floating indicator a slow or failing transcription looks like nothing
+  // happened at all.
+  let handle = app.clone();
+  busy::with_indicator(
+    &handle,
+    "Transcribing speech",
+    stt_transcribe_inner(audio, mime, apply_post_process, prompt_override),
+  )
+  .await
+}
+
+async fn stt_transcribe_inner(audio: Vec<u8>, mime: String, apply_post_process: Option<bool>, prompt_override: Option<String>) -> Result<SttTranscriptionResult, String> {
   let engine = config::get_stt_engine_from_settings_or_env();
   let transcript = if engine == "local" {
     transcribe_local_wrapper(audio, mime).await?

@@ -2,6 +2,7 @@
 import QuickActions from './QuickActions.vue'
 import PromptPanel from './components/PromptPanel.vue'
 import CaptureOverlay from './components/CaptureOverlay.vue'
+import BusyIndicator from './components/BusyIndicator.vue'
 import ConversationHistory from './components/ConversationHistory.vue'
 import PromptMain from './components/prompt/PromptMain.vue'
 import AssistantMode from './components/assistant/AssistantMode.vue'
@@ -27,7 +28,7 @@ import { useSettingsAutosave } from './composables/useSettingsAutosave'
 import { useSettingsSave } from './composables/useSettingsSave'
 import { preloadTokenizer, tokenizerLastError } from './composables/useTokenizer'
 
-const { isQuickActions, isCaptureOverlay, addBodyClass, removeBodyClass } = useWindowMode()
+const { isQuickActions, isCaptureOverlay, isBusyIndicator, addBodyClass, removeBodyClass } = useWindowMode()
 
 // Reactive state for Prompt flow in the main window
 const prompt = reactive({
@@ -73,6 +74,9 @@ let unsubs: Array<() => void> = []
 onMounted(async () => {
   // For QuickActions popup, strip global app padding/min-width via body class
   try { addBodyClass() } catch {}
+  // The busy indicator is a passive status pill: it drives itself from backend
+  // events and must not pull in settings, MCP auto-connect or the tokenizer.
+  if (isBusyIndicator.value) return
   try {
     const unsubApp = await registerAppEvents()
     const unsubTtsBg = await registerBackgroundTtsEvents()
@@ -335,6 +339,7 @@ async function autoConnectServers() {
 <template>
   <QuickActions v-if="isQuickActions" />
   <CaptureOverlay v-else-if="isCaptureOverlay" />
+  <BusyIndicator v-else-if="isBusyIndicator" />
   <div v-else>
     <PromptPanel
       v-if="prompt.visible"
