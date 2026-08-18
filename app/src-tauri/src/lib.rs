@@ -173,7 +173,6 @@ use once_cell::sync::Lazy;
 use std::sync::Arc;
 use tokio::sync::Mutex as AsyncMutex;
 use arboard::Clipboard;
-use enigo::{Enigo, Key, KeyboardControllable};
 use serde::Serialize;
 
 pub mod tts_streaming_server;
@@ -367,10 +366,7 @@ fn tts_open_with_selection(app: tauri::AppHandle, safe_mode: Option<bool>, autop
   let previous_text = if !safe { clipboard.get_text().ok() } else { None };
 
   if !safe {
-    let mut enigo = Enigo::new();
-    enigo.key_down(Key::Control);
-    enigo.key_click(Key::Layout('c'));
-    enigo.key_up(Key::Control);
+    crate::utils::send_ctrl_key('c')?;
     thread::sleep(Duration::from_millis(120));
   }
 

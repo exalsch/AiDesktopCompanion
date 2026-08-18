@@ -3,7 +3,6 @@ use std::sync::Mutex;
 use once_cell::sync::Lazy;
 
 use arboard::Clipboard;
-use enigo::{Enigo, Key, KeyboardControllable};
 use tauri::{Emitter, Manager, PhysicalPosition};
 #[cfg(target_os = "windows")]
 use std::ffi::c_void;
@@ -47,10 +46,7 @@ pub fn prompt_action(app: tauri::AppHandle, safe_mode: Option<bool>) -> Result<S
 
   // Simulate Ctrl+C to copy current selection (aggressive mode)
   if !safe {
-    let mut enigo = Enigo::new();
-    enigo.key_down(Key::Control);
-    enigo.key_click(Key::Layout('c'));
-    enigo.key_up(Key::Control);
+    crate::utils::send_ctrl_key('c')?;
     // Allow some time for clipboard to update
     thread::sleep(Duration::from_millis(120));
   }
@@ -111,10 +107,7 @@ pub fn focus_prev_then_copy_selection(app: tauri::AppHandle, safe_mode: Option<b
       }
     }
 
-    let mut enigo = Enigo::new();
-    enigo.key_down(Key::Control);
-    enigo.key_click(Key::Layout('c'));
-    enigo.key_up(Key::Control);
+    crate::utils::send_ctrl_key('c')?;
     thread::sleep(Duration::from_millis(140));
   }
 
@@ -186,10 +179,7 @@ pub fn insert_text_into_focused_app(text: String, safe_mode: Option<bool>) -> Re
   let previous_text = if !safe { clipboard.get_text().ok() } else { None };
   let _ = clipboard.set_text(text);
   {
-    let mut enigo = Enigo::new();
-    enigo.key_down(Key::Control);
-    enigo.key_click(Key::Layout('v'));
-    enigo.key_up(Key::Control);
+    crate::utils::send_ctrl_key('v')?;
   }
   thread::sleep(Duration::from_millis(120));
   if !safe { if let Some(prev) = previous_text { let _ = clipboard.set_text(prev); } }
@@ -464,10 +454,7 @@ async fn tts_selection_inner(app: tauri::AppHandle, safe_mode: Option<bool>) -> 
     let previous_text = if !safe { clipboard.get_text().ok() } else { None };
 
     if !safe {
-      let mut enigo = Enigo::new();
-      enigo.key_down(Key::Control);
-      enigo.key_click(Key::Layout('c'));
-      enigo.key_up(Key::Control);
+      crate::utils::send_ctrl_key('c')?;
       thread::sleep(Duration::from_millis(120));
     }
 

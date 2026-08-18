@@ -73,3 +73,31 @@ pub fn play_wav_blocking_windows(app: &tauri::AppHandle, wav_path: &str) -> Resu
 pub fn play_wav_blocking_windows(_app: &tauri::AppHandle, _wav_path: &str) -> Result<(), String> {
   Err("WAV playback not implemented on this platform".into())
 }
+
+// ---------------------------
+// Keyboard input simulation
+// ---------------------------
+
+/// Synthesize `Ctrl`+`ch` into whatever application currently has focus.
+///
+/// Every selection capture and paste-back in the app goes through this, so the
+/// enigo details live in exactly one place. Errors are returned rather than
+/// ignored: if input simulation is unavailable the calling flow would silently
+/// read a stale clipboard and act on the wrong text.
+pub fn send_ctrl_key(ch: char) -> Result<(), String> {
+  use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+  let mut enigo = Enigo::new(&Settings::default())
+    .map_err(|e| format!("input simulation unavailable: {e}"))?;
+  enigo
+    .key(Key::Control, Direction::Press)
+    .map_err(|e| format!("ctrl press failed: {e}"))?;
+  let click = enigo
+    .key(Key::Unicode(ch), Direction::Click)
+    .map_err(|e| format!("key '{ch}' failed: {e}"));
+  // Always release Control, even if the key press itself failed, so the user is
+  // not left with a stuck modifier.
+  let release = enigo
+    .key(Key::Control, Direction::Release)
+    .map_err(|e| format!("ctrl release failed: {e}"));
+  click.and(release)
+}

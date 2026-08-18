@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use std::{thread, time::Duration};
 
 use arboard::Clipboard;
-use enigo::{Enigo, Key, KeyboardControllable};
 use tauri::{Manager, Emitter};
 
 use crate::config::{get_api_key_from_settings_or_env, get_model_from_settings_or_env, get_temperature_from_settings_or_env};
@@ -80,16 +79,10 @@ fn capture_selection(safe: bool, select_all: bool) -> Result<String, String> {
     if select_all {
       // The hotkey that triggered this is likely still held down.
       wait_for_modifiers_released(Duration::from_millis(900));
-      let mut enigo = Enigo::new();
-      enigo.key_down(Key::Control);
-      enigo.key_click(Key::Layout('a'));
-      enigo.key_up(Key::Control);
+      crate::utils::send_ctrl_key('a')?;
       thread::sleep(Duration::from_millis(80));
     }
-    let mut enigo = Enigo::new();
-    enigo.key_down(Key::Control);
-    enigo.key_click(Key::Layout('c'));
-    enigo.key_up(Key::Control);
+    crate::utils::send_ctrl_key('c')?;
     thread::sleep(Duration::from_millis(120));
   }
 
