@@ -90,7 +90,7 @@ const props = defineProps<{
           </button>
           <button class="btn" :disabled="s.status !== 'connected'" @click="props.onPing(s)">Ping</button>
           <button class="btn" :disabled="s.status !== 'connected'" @click="s.toolsOpen ? (s.toolsOpen = false) : props.onListTools(s)">{{ s.toolsOpen ? 'Hide Tools' : 'List Tools' }}</button>
-          <button class="btn danger" @click="props.onRemove(i)">Remove</button>
+          <button class="btn danger" @click="props.onRemove(Number(i))">Remove</button>
         </div>
       </div>
 
