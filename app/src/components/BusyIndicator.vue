@@ -58,10 +58,25 @@ function clearErrorTimer() {
   }
 }
 
+// The window is only hidden, never destroyed, so the elapsed-time ticker is
+// started and stopped with the running state instead of left running forever.
+function startTicker() {
+  if (ticker !== null) return
+  ticker = window.setInterval(() => { nowMs.value = Date.now() }, 500)
+}
+
+function stopTicker() {
+  if (ticker === null) return
+  clearInterval(ticker)
+  ticker = null
+}
+
 function applyState(next: BusyState) {
   state.value = next
   nowMs.value = Date.now()
   clearErrorTimer()
+  if (next.state === 'running') startTicker()
+  else stopTicker()
   if (next.state === 'error') {
     errorTimer = window.setTimeout(() => { void dismiss() }, ERROR_AUTO_HIDE_MS)
   }
@@ -77,7 +92,6 @@ async function dismiss() {
 }
 
 onMounted(async () => {
-  ticker = window.setInterval(() => { nowMs.value = Date.now() }, 500)
   try {
     unlisten = await listen<BusyState>('busy:state', (event) => {
       if (event?.payload) applyState(event.payload)
@@ -96,7 +110,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  if (ticker !== null) clearInterval(ticker)
+  stopTicker()
   clearErrorTimer()
   if (unlisten) { try { unlisten() } catch {} }
 })
