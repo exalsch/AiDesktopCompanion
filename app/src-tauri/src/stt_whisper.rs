@@ -4,12 +4,11 @@ use std::path::PathBuf;
 
 use once_cell::sync::Lazy;
 use reqwest;
-use symphonia::core::audio::{AudioBufferRef, SampleBuffer};
-use symphonia::core::codecs::DecoderOptions;
-use symphonia::core::formats::FormatOptions;
+use symphonia::core::codecs::audio::AudioDecoderOptions;
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
 use tauri::Emitter;
 #[cfg(feature = "local-stt")]
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
@@ -154,64 +153,42 @@ pub(crate) fn decode_to_f32_mono_16k(audio: &[u8], _mime: &str) -> Result<Vec<f3
   // Decode container using Symphonia to interleaved f32 and track sample rate/channels
   let mss = MediaSourceStream::new(Box::new(std::io::Cursor::new(audio.to_vec())), Default::default());
   let hint = Hint::new();
-  let probed = symphonia::default::get_probe()
-    .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+  let mut format = symphonia::default::get_probe()
+    .probe(&hint, mss, FormatOptions::default(), MetadataOptions::default())
     .map_err(|e| format!("audio probe failed: {e}"))?;
-  let mut format = probed.format;
-  let track = format.default_track().ok_or_else(|| "no default track".to_string())?;
+
+  let track = format
+    .default_track(TrackType::Audio)
+    .ok_or_else(|| "no default track".to_string())?;
   let track_id = track.id;
-  let codec_params = track.codec_params.clone();
+  let audio_params = track
+    .codec_params
+    .as_ref()
+    .and_then(|p| p.audio())
+    .ok_or_else(|| "track has no audio codec parameters".to_string())?
+    .clone();
   let mut decoder = symphonia::default::get_codecs()
-    .make(&codec_params, &DecoderOptions::default())
+    .make_audio_decoder(&audio_params, &AudioDecoderOptions::default())
     .map_err(|e| format!("decoder init failed: {e}"))?;
 
-  let mut src_rate: u32 = codec_params.sample_rate.unwrap_or(16000);
-  let mut channels: usize = codec_params.channels.map(|c| c.count()).unwrap_or(1);
+  let mut src_rate: u32 = audio_params.sample_rate.unwrap_or(16000);
+  let mut channels: usize = audio_params.channels.as_ref().map(|c| c.count()).unwrap_or(1);
   let mut pcm: Vec<f32> = Vec::new();
+  // Reused across packets: copy_to_vec_interleaved resizes its destination
+  // rather than appending, so it needs a scratch buffer of its own.
+  let mut frame: Vec<f32> = Vec::new();
 
-  loop {
-    let packet = match format.next_packet() { Ok(p) => p, Err(_) => break };
-    if packet.track_id() != track_id { continue; }
-    match decoder.decode(&packet) {
-      Ok(buf) => {
-        match buf {
-          AudioBufferRef::F32(b) => {
-            let spec = *b.spec();
-            src_rate = spec.rate;
-            channels = spec.channels.count();
-            let mut sbuf = SampleBuffer::<f32>::new(b.capacity() as u64, spec);
-            sbuf.copy_interleaved_ref(AudioBufferRef::F32(b));
-            pcm.extend_from_slice(sbuf.samples());
-          }
-          AudioBufferRef::S16(b) => {
-            let spec = *b.spec();
-            src_rate = spec.rate;
-            channels = spec.channels.count();
-            let mut sbuf = SampleBuffer::<i16>::new(b.capacity() as u64, spec);
-            sbuf.copy_interleaved_ref(AudioBufferRef::S16(b));
-            pcm.extend(sbuf.samples().iter().map(|v| *v as f32 / 32768.0));
-          }
-          AudioBufferRef::S32(b) => {
-            let spec = *b.spec();
-            src_rate = spec.rate;
-            channels = spec.channels.count();
-            let mut sbuf = SampleBuffer::<i32>::new(b.capacity() as u64, spec);
-            sbuf.copy_interleaved_ref(AudioBufferRef::S32(b));
-            let max = i32::MAX as f32;
-            pcm.extend(sbuf.samples().iter().map(|v| *v as f32 / max));
-          }
-          AudioBufferRef::U8(b) => {
-            let spec = *b.spec();
-            src_rate = spec.rate;
-            channels = spec.channels.count();
-            let mut sbuf = SampleBuffer::<u8>::new(b.capacity() as u64, spec);
-            sbuf.copy_interleaved_ref(AudioBufferRef::U8(b));
-            pcm.extend(sbuf.samples().iter().map(|v| (*v as f32 - 128.0) / 128.0));
-          }
-          _ => {}
-        }
-      }
-      Err(_) => {}
+  // 0.6 hands back a generic buffer that converts to f32 itself, so the
+  // per-sample-format match this used to carry is gone along with the
+  // hand-rolled i16/i32/u8 scaling.
+  while let Ok(Some(packet)) = format.next_packet() {
+    if packet.track_id != track_id { continue; }
+    if let Ok(buf) = decoder.decode(&packet) {
+      let spec = buf.spec();
+      src_rate = spec.rate();
+      channels = spec.channels().count();
+      buf.copy_to_vec_interleaved(&mut frame);
+      pcm.extend_from_slice(&frame);
     }
   }
 
