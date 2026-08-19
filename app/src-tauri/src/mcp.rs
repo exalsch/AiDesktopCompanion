@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use tokio::sync::Mutex as AsyncMutex;
-use rmcp::service::{RunningService, RoleClient, DynService};
+use rmcp::service::{RunningService, RoleClient};
 use rmcp::service::ServiceExt;
 use rmcp::transport::{TokioChildProcess, streamable_http_client::StreamableHttpClientTransport};
 use tokio::process::Command as TokioCommand;
@@ -63,7 +63,7 @@ pub async fn connect(
     let uri = command.trim().to_string();
     if uri.is_empty() { return Err("HTTP transport requires a non-empty URI in 'command'".into()); }
     let http_transport = StreamableHttpClientTransport::<reqwest::Client>::from_uri(uri);
-    let service = ().into_dyn().serve(http_transport).await.map_err(|e| {
+    let service = ().serve(http_transport).await.map_err(|e| {
       let msg = format!("serve failed: {e}");
       let _ = app.emit("mcp:error", serde_json::json!({ "serverId": server_id, "message": msg }));
       msg
@@ -92,7 +92,7 @@ pub async fn connect(
     }
   }
   let child_transport = TokioChildProcess::new(cmd).map_err(|e| format!("spawn failed: {e}"))?;
-  let service = ().into_dyn().serve(child_transport).await.map_err(|e| {
+  let service = ().serve(child_transport).await.map_err(|e| {
     let msg = format!("serve failed: {e}");
     let _ = app.emit("mcp:error", serde_json::json!({ "serverId": server_id, "message": msg }));
     msg
@@ -117,7 +117,13 @@ pub async fn disconnect(app: &tauri::AppHandle, clients: &AsyncMutex<ClientMap>,
   if existed { Ok("disconnected".into()) } else { Err("not connected".into()) }
 }
 
-pub type ClientMap = std::collections::HashMap<String, Arc<RunningService<RoleClient, Box<dyn DynService<RoleClient>>>>>;
+// The client handler is always `()` - this app never answers server-initiated
+// requests, it only drives tools/resources/prompts. Naming the concrete type
+// instead of `Box<dyn DynService<RoleClient>>` keeps the map usable from
+// `#[tauri::command]` functions: the boxed-trait form makes rustc demand
+// `Service<RoleClient>` for every lifetime, which the blanket impl does not
+// provide, and the commands then fail to compile inside `generate_handler!`.
+pub type ClientMap = std::collections::HashMap<String, Arc<RunningService<RoleClient, ()>>>;
 
 pub async fn list_tools(clients: &AsyncMutex<ClientMap>, server_id: &str) -> Result<serde_json::Value, String> {
   let svc = {
@@ -143,7 +149,7 @@ pub async fn read_resource(clients: &AsyncMutex<ClientMap>, server_id: &str, uri
     map.get(server_id).cloned()
   }.ok_or_else(|| "not connected".to_string())?;
   let res = svc
-    .read_resource(rmcp::model::ReadResourceRequestParam { uri: uri.to_string().into() })
+    .read_resource(rmcp::model::ReadResourceRequestParams::new(uri))
     .await
     .map_err(|e| format!("read_resource failed: {e}"))?;
   serde_json::to_value(res).map_err(|e| format!("serialize failed: {e}"))
@@ -169,8 +175,10 @@ pub async fn get_prompt(
     map.get(server_id).cloned()
   }.ok_or_else(|| "not connected".to_string())?;
   let args_map = arguments.and_then(|v| v.as_object().cloned());
+  let mut params = rmcp::model::GetPromptRequestParams::new(name);
+  if let Some(args) = args_map { params = params.with_arguments(args); }
   let res = svc
-    .get_prompt(rmcp::model::GetPromptRequestParam { name: name.to_string().into(), arguments: args_map })
+    .get_prompt(params)
     .await
     .map_err(|e| format!("get_prompt failed: {e}"))?;
   serde_json::to_value(res).map_err(|e| format!("serialize failed: {e}"))
@@ -202,8 +210,10 @@ pub async fn call_tool(
   }
   // Prepare arguments map if provided
   let arg_map_opt = if args.is_null() { None } else if let Some(obj) = args.as_object() { Some(obj.clone()) } else { return Err("call_tool args must be an object".into()) };
+  let mut params = rmcp::model::CallToolRequestParams::new(name.to_string());
+  if let Some(args) = arg_map_opt { params = params.with_arguments(args); }
   let res = svc
-    .call_tool(rmcp::model::CallToolRequestParam { name: name.to_string().into(), arguments: arg_map_opt })
+    .call_tool(params)
     .await
     .map_err(|e| format!("call_tool failed: {e}"))?;
   serde_json::to_value(res).map_err(|e| format!("serialize failed: {e}"))
@@ -290,7 +300,7 @@ pub fn summarize_input_schema(schema: &serde_json::Value) -> String {
 
 /// Build OpenAI tool definitions from connected MCP servers (snapshot provided by caller)
 pub async fn build_openai_tools_from_mcp(
-  clients: &std::collections::HashMap<String, Arc<RunningService<RoleClient, Box<dyn DynService<RoleClient>>>>>
+  clients: &std::collections::HashMap<String, Arc<RunningService<RoleClient, ()>>>
 ) -> Vec<serde_json::Value> {
   // Build into a new map, then swap atomically to avoid TOCTOU race with concurrent parse_mcp_fn_call_name
   let mut new_reverse_map: std::collections::HashMap<String, (String, String)> = std::collections::HashMap::new();

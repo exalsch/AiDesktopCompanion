@@ -196,7 +196,7 @@ mod command_hook;
 mod busy;
 
 use rmcp::{
-  service::{RoleClient, DynService, RunningService},
+  service::{RoleClient, RunningService},
 };
 // Audio decoding (fallback for non-WAV responses)
 
@@ -261,7 +261,7 @@ fn clear_conversations() -> Result<String, String> { config::clear_conversations
 // MCP Tools — rmcp integration
 // ... (rest of the code remains the same)
 
-static MCP_CLIENTS: Lazy<AsyncMutex<std::collections::HashMap<String, Arc<RunningService<RoleClient, Box<dyn DynService<RoleClient>>>>>>> = Lazy::new(|| {
+static MCP_CLIENTS: Lazy<AsyncMutex<std::collections::HashMap<String, Arc<RunningService<RoleClient, ()>>>>> = Lazy::new(|| {
   AsyncMutex::new(std::collections::HashMap::new())
 });
 

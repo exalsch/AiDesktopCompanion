@@ -2,7 +2,7 @@ use serde::Deserialize;
 use base64::Engine;
 use std::fs;
 use std::sync::Arc;
-use rmcp::service::{RoleClient, DynService, RunningService};
+use rmcp::service::{RoleClient, RunningService};
 use tokio::sync::Mutex as AsyncMutex;
 use tauri::Emitter;
 
@@ -18,7 +18,7 @@ pub async fn chat_complete_with_mcp(
   key: String,
   model: String,
   temp: Option<f32>,
-  mcp_clients: &AsyncMutex<std::collections::HashMap<String, Arc<RunningService<RoleClient, Box<dyn DynService<RoleClient>>>>>>,
+  mcp_clients: &AsyncMutex<std::collections::HashMap<String, Arc<RunningService<RoleClient, ()>>>>,
 ) -> Result<String, String> {
   use crate::mcp;
 
@@ -168,7 +168,9 @@ pub async fn chat_complete_with_mcp(
             };
             if let Some(svc) = svc_opt {
               let arg_map_opt = fargs_val.as_object().cloned();
-              match svc.call_tool(rmcp::model::CallToolRequestParam { name: tool_name.clone().into(), arguments: arg_map_opt }).await {
+              let mut params = rmcp::model::CallToolRequestParams::new(tool_name.clone());
+              if let Some(args) = arg_map_opt { params = params.with_arguments(args); }
+              match svc.call_tool(params).await {
                 Ok(res) => {
                   tool_result_text = serde_json::to_string(&serde_json::json!({ "serverId": server_id, "tool": tool_name, "result": res })).unwrap_or_else(|_| "{}".to_string());
                   let _ = app.emit("chat:tool-result", serde_json::json!({ "id": id, "function": fname, "serverId": server_id, "tool": tool_name, "ok": true, "result": res }));

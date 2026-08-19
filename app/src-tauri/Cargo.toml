@@ -34,7 +34,12 @@ windows = { version = "0.62", features = [
   "Win32_System_Threading",
   "Win32_UI_Input_KeyboardAndMouse"
 ] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] } # `stream` is used directly by the TTS/STT download paths; do not rely on another crate enabling it
+# 0.13 renamed the TLS feature `rustls-tls` -> `rustls`, and moved system proxy
+# detection (HTTP_PROXY / HTTPS_PROXY / WinHTTP) behind `system-proxy`, which
+# 0.12 did unconditionally - it has to be asked for explicitly now or the app
+# stops working behind a corporate proxy. `stream` is used directly by the
+# TTS/STT download paths; do not rely on another crate enabling it.
+reqwest = { version = "0.13", default-features = false, features = ["json", "multipart", "rustls", "stream", "system-proxy"] }
 screenshots = "0.8"
 image = "0.25"
 chrono = "0.4"
@@ -51,7 +56,11 @@ symphonia = { version = "0.5", features = [
   "mkv"
 ] }
 base64 = "0.23"
-rmcp = { version = "0.2", features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client", "transport-sse-client"] }
+# `transport-sse-client` was dropped in rmcp 3.x; the standalone SSE transport is
+# gone and the streamable-HTTP transport covers it. Nothing here used it - the
+# frontend already normalizes an `sse` server to `http` before it reaches Rust.
+# The reqwest-backed streamable-HTTP client now needs its own feature.
+rmcp = { version = "3.1", features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
 tokio = { version = "1", features = ["process", "rt-multi-thread", "macros", "sync"] }
 futures-util = "0.3"
 hyper = { version = "0.14", features = ["full"] }
