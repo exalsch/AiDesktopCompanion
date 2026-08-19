@@ -93,6 +93,29 @@ pub fn get_start_in_tray_from_settings() -> bool {
   v.get("start_in_tray").and_then(|x| x.as_bool()).unwrap_or(false)
 }
 
+/// Normalize a `select_all_capture_mode` value to one of the three supported
+/// modes, defaulting to `"ctrl_shift_home"`.
+pub fn normalize_select_all_capture_mode(value: &str) -> &'static str {
+  match value.trim() {
+    "none" => "none",
+    "ctrl_a" => "ctrl_a",
+    _ => "ctrl_shift_home",
+  }
+}
+
+/// How much text the select-all hotkey selects before copying:
+/// `"ctrl_shift_home"` (everything from the caret back to the start, the
+/// default), `"ctrl_a"` (whole document) or `"none"` (use the existing
+/// selection).
+pub fn get_select_all_capture_mode() -> String {
+  let v = load_settings_json();
+  let raw = v
+    .get("select_all_capture_mode")
+    .and_then(|x| x.as_str())
+    .unwrap_or("");
+  normalize_select_all_capture_mode(raw).to_string()
+}
+
 // Speech-To-Text engine selection: "openai" (default) or "local"
 pub fn get_stt_engine_from_settings_or_env() -> String {
   let v = load_settings_json();
@@ -227,6 +250,10 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   if let Some(hk) = map.get("select_all_hotkey").and_then(|x| x.as_str()) { obj.insert("select_all_hotkey".to_string(), serde_json::Value::String(hk.to_string())); }
   if let Some(idx) = map.get("select_all_quick_prompt").and_then(|x| x.as_u64()) {
     obj.insert("select_all_quick_prompt".to_string(), serde_json::Value::Number(serde_json::Number::from(idx.clamp(1, 9))));
+  }
+  if let Some(mode) = map.get("select_all_capture_mode").and_then(|x| x.as_str()) {
+    let normalized = normalize_select_all_capture_mode(mode);
+    obj.insert("select_all_capture_mode".to_string(), serde_json::Value::String(normalized.to_string()));
   }
   // Persist the floating busy indicator toggle
   if let Some(flag) = map.get("show_busy_indicator").and_then(|x| x.as_bool()) { obj.insert("show_busy_indicator".to_string(), serde_json::Value::Bool(flag)); }

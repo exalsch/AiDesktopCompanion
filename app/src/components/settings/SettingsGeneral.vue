@@ -57,10 +57,24 @@ onMounted(async () => {
       <label class="label">Select-All Hotkey</label>
       <HotkeyPicker v-model="props.settings.select_all_hotkey" />
       <div class="settings-hint">
-        Selects all text in the focused application (Ctrl + A), runs the quick prompt below on it and pastes the result back over it - no popup.
+        Selects text in the focused application, runs the quick prompt below on it and pastes the result back over it - no popup.
         Leave all empty to disable. Current: <code>{{ props.settings.select_all_hotkey || 'disabled' }}</code>
       </div>
       <div v-if="hotkeysCollide" class="settings-hint error">This is the same combination as the Global Hotkey - only one of them will work.</div>
+    </div>
+
+    <div class="settings-row col">
+      <label class="label">Select-All Text Selection</label>
+      <select v-model="props.settings.select_all_capture_mode" class="input" :disabled="!props.settings.select_all_hotkey">
+        <option value="ctrl_shift_home">Everything above the cursor (Ctrl + Shift + Home)</option>
+        <option value="ctrl_a">Whole document (Ctrl + A)</option>
+        <option value="none">Off - use what is already selected</option>
+      </select>
+      <div class="settings-hint">
+        What the hotkey selects before running the prompt. <em>Ctrl + Shift + Home</em> is the default because it fits the
+        correct-what-I-just-typed case: in a chat box or comment field it grabs your draft without also selecting the conversation
+        above it. Pick <em>Ctrl + A</em> to rewrite a whole document instead.
+      </div>
     </div>
 
     <div class="settings-row col">

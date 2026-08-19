@@ -27,9 +27,10 @@ if (!winParam) {
     toggleQuickActionsWindow().catch((err) => console.error('[popup] toggle failed', err))
   })
 
-  // Select-all hotkey: no popup at all — select the whole document in the
-  // focused app and run the configured quick prompt straight over it. The
-  // backend reports progress and errors through the busy indicator window.
+  // Select-all hotkey: no popup at all — enlarge the selection in the focused
+  // app and run the configured quick prompt straight over it. How much gets
+  // selected is read backend-side from `select_all_capture_mode`. The backend
+  // reports progress and errors through the busy indicator window.
   window.addEventListener(HOTKEY_EVENT_SELECT_ALL, () => {
     void (async () => {
       try {

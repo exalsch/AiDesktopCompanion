@@ -34,9 +34,9 @@ pub fn quick_prompts_config_path() -> Option<PathBuf> {
 /// Block until the modifier keys are physically released, or `max_wait` elapses.
 ///
 /// A global shortcut fires on key-down, so its modifiers are usually still held
-/// when the handler runs. Sending a synthetic Ctrl+A at that moment would reach
-/// the target application as Ctrl+Alt+A (or whatever the shortcut was), which
-/// most apps ignore or bind to something else entirely.
+/// when the handler runs. Sending a synthetic Ctrl+A or Ctrl+Shift+Home at that
+/// moment would reach the target application as Ctrl+Alt+A (or whatever the
+/// shortcut was), which most apps ignore or bind to something else entirely.
 #[cfg(target_os = "windows")]
 fn wait_for_modifiers_released(max_wait: Duration) {
   use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -64,23 +64,68 @@ fn wait_for_modifiers_released(_max_wait: Duration) {
   thread::sleep(Duration::from_millis(60));
 }
 
+/// How the select-all hotkey enlarges the selection before copying it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PreSelect {
+  /// Copy whatever the user already selected.
+  None,
+  /// Ctrl+A - the whole document.
+  All,
+  /// Ctrl+Shift+Home - from the caret back to the start of the document.
+  ToStart,
+}
+
+impl PreSelect {
+  /// Parse the `select_all_capture_mode` setting. Anything unrecognised falls
+  /// back to `ToStart`, the default mode.
+  pub fn from_setting(value: &str) -> Self {
+    match value.trim() {
+      "none" => PreSelect::None,
+      "ctrl_a" => PreSelect::All,
+      _ => PreSelect::ToStart,
+    }
+  }
+
+  /// Suffix for the busy-indicator label, so the pill says which part of the
+  /// document is being rewritten.
+  fn label_suffix(self) -> &'static str {
+    match self {
+      PreSelect::None => "",
+      PreSelect::All => " (whole document)",
+      PreSelect::ToStart => " (up to cursor)",
+    }
+  }
+}
+
 /// Capture the current selection of the focused application through the
 /// clipboard, restoring the previous clipboard content afterwards.
 ///
 /// * `safe` - skip the synthetic Ctrl+C and clipboard restore, and just read
 ///   whatever is already on the clipboard.
-/// * `select_all` - send Ctrl+A first, so the whole document is captured
+/// * `pre` - optionally enlarge the selection first, so the whole document
+///   (Ctrl+A) or everything above the caret (Ctrl+Shift+Home) is captured
 ///   instead of the current selection.
-fn capture_selection(safe: bool, select_all: bool) -> Result<String, String> {
+fn capture_selection(safe: bool, pre: PreSelect) -> Result<String, String> {
   let mut clipboard = Clipboard::new().map_err(|e| format!("clipboard init failed: {e}"))?;
   let previous_text = if !safe { clipboard.get_text().ok() } else { None };
 
   if !safe {
-    if select_all {
-      // The hotkey that triggered this is likely still held down.
-      wait_for_modifiers_released(Duration::from_millis(900));
-      crate::utils::send_ctrl_key('a')?;
-      thread::sleep(Duration::from_millis(80));
+    // The hotkey that triggered this is likely still held down. Wait before
+    // synthesizing anything at all - not just before the selection keystroke -
+    // because a Ctrl+C sent while Alt is still down arrives as Ctrl+Alt+C and
+    // copies nothing, which is exactly what the `PreSelect::None` mode would
+    // otherwise hit.
+    wait_for_modifiers_released(Duration::from_millis(900));
+    match pre {
+      PreSelect::None => {}
+      PreSelect::All => {
+        crate::utils::send_ctrl_key('a')?;
+        thread::sleep(Duration::from_millis(80));
+      }
+      PreSelect::ToStart => {
+        crate::utils::send_ctrl_shift_home()?;
+        thread::sleep(Duration::from_millis(80));
+      }
     }
     crate::utils::send_ctrl_key('c')?;
     thread::sleep(Duration::from_millis(120));
@@ -186,20 +231,16 @@ async fn complete_quick_prompt(app: &tauri::AppHandle, index: u8, selection: &st
 const EMPTY_SELECTION_HINT: &str = "No selection. Type your input or paste it here.";
 
 /// Shared body for the two "capture, run, paste back" flows.
-async fn run_quick_prompt_inner(app: tauri::AppHandle, index: u8, safe_mode: Option<bool>, select_all: bool) -> Result<(), String> {
+async fn run_quick_prompt_inner(app: tauri::AppHandle, index: u8, safe_mode: Option<bool>, pre: PreSelect) -> Result<(), String> {
   if index < 1 || index > 9 {
     return Err("Quick prompt index must be 1-9".into());
   }
   let safe = safe_mode.unwrap_or(false);
-  let label = if select_all {
-    format!("Quick Prompt {index} (whole document)")
-  } else {
-    format!("Quick Prompt {index}")
-  };
+  let label = format!("Quick Prompt {index}{}", pre.label_suffix());
 
   crate::busy::start(&app, &label);
   let outcome = async {
-    let selection = capture_selection(safe, select_all)?;
+    let selection = capture_selection(safe, pre)?;
 
     // If empty selection, open main window with a friendly message.
     if selection.trim().is_empty() {
@@ -221,17 +262,22 @@ async fn run_quick_prompt_inner(app: tauri::AppHandle, index: u8, safe_mode: Opt
 /// Uses aggressive copy-restore by default unless safe_mode is true.
 #[tauri::command]
 pub async fn run_quick_prompt(app: tauri::AppHandle, index: u8, safe_mode: Option<bool>) -> Result<(), String> {
-  run_quick_prompt_inner(app, index, safe_mode, false).await
+  run_quick_prompt_inner(app, index, safe_mode, PreSelect::None).await
 }
 
-/// Selects the whole document in the focused application (Ctrl+A), then runs the
-/// configured quick prompt on it and pastes the result back over the selection.
+/// Enlarges the selection in the focused application, then runs the configured
+/// quick prompt on it and pastes the result back over that selection.
 ///
-/// This backs the dedicated "select all + quick prompt" global hotkey, so a whole
-/// document can be rewritten without opening the popup first.
+/// This backs the dedicated "select + quick prompt" global hotkey, so text can be
+/// corrected without opening the popup first. How much gets selected comes from
+/// the `select_all_capture_mode` setting: the whole document (Ctrl+A), everything
+/// above the caret (Ctrl+Shift+Home), or just what the user already highlighted.
+/// The mode is read here rather than passed in, so the setting stays the single
+/// source of truth no matter which window triggers the command.
 #[tauri::command]
 pub async fn run_quick_prompt_select_all(app: tauri::AppHandle, index: u8, safe_mode: Option<bool>) -> Result<(), String> {
-  run_quick_prompt_inner(app, index, safe_mode, true).await
+  let pre = PreSelect::from_setting(&crate::config::get_select_all_capture_mode());
+  run_quick_prompt_inner(app, index, safe_mode, pre).await
 }
 
 /// Runs a predefined quick prompt (1-9) on the current selection and RETURNS the AI result text
@@ -243,7 +289,7 @@ pub async fn run_quick_prompt_result(app: tauri::AppHandle, index: u8, safe_mode
   if index < 1 || index > 9 {
     return Err("Quick prompt index must be 1-9".into());
   }
-  let selection = capture_selection(safe_mode.unwrap_or(false), false)?;
+  let selection = capture_selection(safe_mode.unwrap_or(false), PreSelect::None)?;
   if selection.trim().is_empty() {
     return Ok(EMPTY_SELECTION_HINT.to_string());
   }

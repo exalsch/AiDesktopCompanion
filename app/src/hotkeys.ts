@@ -3,8 +3,10 @@
 //
 // Two independent shortcuts are supported:
 //   - `global_hotkey`      -> toggles the Quick Actions popup
-//   - `select_all_hotkey`  -> selects all text in the focused app (Ctrl+A) and
-//                             immediately runs the configured quick prompt on it
+//   - `select_all_hotkey`  -> enlarges the selection in the focused app (Ctrl+A,
+//                             Ctrl+Shift+Home, or nothing - see
+//                             `select_all_capture_mode`) and immediately runs
+//                             the configured quick prompt on it
 // Both are registered through the same helpers so re-registration after a
 // Windows sleep/resume, availability checks and cleanup behave identically.
 

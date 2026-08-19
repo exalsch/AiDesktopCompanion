@@ -85,19 +85,48 @@ pub fn play_wav_blocking_windows(_app: &tauri::AppHandle, _wav_path: &str) -> Re
 /// ignored: if input simulation is unavailable the calling flow would silently
 /// read a stale clipboard and act on the wrong text.
 pub fn send_ctrl_key(ch: char) -> Result<(), String> {
+  send_chord(enigo::Key::Unicode(ch), false, &format!("Ctrl+{ch}"))
+}
+
+/// Send Ctrl+Shift+Home, extending the selection from the caret back to the
+/// start of the document.
+///
+/// This is the alternative the select-all hotkey offers to Ctrl+A: in a chat
+/// box or comment field it grabs exactly the text the user just typed, without
+/// swallowing the conversation history that Ctrl+A would also select.
+pub fn send_ctrl_shift_home() -> Result<(), String> {
+  send_chord(enigo::Key::Home, true, "Ctrl+Shift+Home")
+}
+
+/// Click `key` while Control - and optionally Shift - are held.
+///
+/// The modifiers are always released, even when the key itself fails, so a
+/// failed simulation never leaves the user with a stuck Ctrl or Shift.
+fn send_chord(key: enigo::Key, shift: bool, label: &str) -> Result<(), String> {
   use enigo::{Direction, Enigo, Key, Keyboard, Settings};
   let mut enigo = Enigo::new(&Settings::default())
     .map_err(|e| format!("input simulation unavailable: {e}"))?;
   enigo
     .key(Key::Control, Direction::Press)
     .map_err(|e| format!("ctrl press failed: {e}"))?;
+  if shift {
+    if let Err(e) = enigo.key(Key::Shift, Direction::Press) {
+      let _ = enigo.key(Key::Control, Direction::Release);
+      return Err(format!("shift press failed: {e}"));
+    }
+  }
   let click = enigo
-    .key(Key::Unicode(ch), Direction::Click)
-    .map_err(|e| format!("key '{ch}' failed: {e}"));
-  // Always release Control, even if the key press itself failed, so the user is
-  // not left with a stuck modifier.
-  let release = enigo
+    .key(key, Direction::Click)
+    .map_err(|e| format!("{label} failed: {e}"));
+  let shift_release = if shift {
+    enigo
+      .key(Key::Shift, Direction::Release)
+      .map_err(|e| format!("shift release failed: {e}"))
+  } else {
+    Ok(())
+  };
+  let ctrl_release = enigo
     .key(Key::Control, Direction::Release)
     .map_err(|e| format!("ctrl release failed: {e}"));
-  click.and(release)
+  click.and(shift_release).and(ctrl_release)
 }
