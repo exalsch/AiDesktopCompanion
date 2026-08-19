@@ -123,8 +123,16 @@ const parakeetVariants = [
   { label: 'Parakeet V3', value: 'parakeet-tdt-0.6b-v3', hint: 'Multilingual (25 languages). Newer variant.' },
 ]
 
+// Models offered for the cloud endpoint. Only models that answer POST
+// /v1/audio/transcriptions with a plain `{ "text": ... }` body belong here:
+// the backend reads that field and nothing else. That rules out
+// gpt-4o-transcribe-diarize (needs response_format=diarized_json) and the
+// realtime/streaming models (gpt-live-transcribe, gpt-realtime-whisper).
 const cloudSttModelPresetsBase = [
-  { label: 'Whisper (whisper-1)', value: 'whisper-1', hint: 'OpenAI Whisper via OpenAI-compatible endpoint.' },
+  { label: 'GPT Transcribe (gpt-transcribe)', value: 'gpt-transcribe', hint: 'OpenAI current recommendation for recorded audio and the replacement for whisper-1. Best accuracy.' },
+  { label: 'GPT-4o Transcribe (gpt-4o-transcribe)', value: 'gpt-4o-transcribe', hint: 'Previous generation GPT-4o speech-to-text. Still available.' },
+  { label: 'GPT-4o mini Transcribe (gpt-4o-mini-transcribe)', value: 'gpt-4o-mini-transcribe', hint: 'Cheaper and faster than gpt-4o-transcribe, slightly lower accuracy.' },
+  { label: 'Whisper (whisper-1)', value: 'whisper-1', hint: 'Legacy OpenAI model. Keep it for OpenAI-compatible servers that only implement whisper-1.' },
   { label: 'Parakeet V2 (parakeet-tdt-0.6b-v2)', value: 'parakeet-tdt-0.6b-v2', hint: 'Parakeet via OpenAI-compatible endpoint.' },
   { label: 'Parakeet V3 (parakeet-tdt-0.6b-v3)', value: 'parakeet-tdt-0.6b-v3', hint: 'Newer Parakeet variant via OpenAI-compatible endpoint.' },
 ]
@@ -137,7 +145,9 @@ const whisperPresets = [
   { label: 'Whisper Medium', value: 'medium', hint: 'Good accuracy, medium speed', url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin' },
   { label: 'Whisper Medium (English)', value: 'medium.en', hint: 'Good accuracy, medium speed (English)', url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en.bin' },
   { label: 'Whisper Large V3', value: 'large-v3', hint: 'High accuracy, slower', url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin' },
-  { label: 'Whisper Large V3 Turbo', value: 'large-v3-turbo', hint: 'Balanced accuracy and speed', url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin' },
+  { label: 'Whisper Large V3 Turbo', value: 'large-v3-turbo', hint: 'Balanced accuracy and speed (1.6 GB)', url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin' },
+  { label: 'Whisper Large V3 Turbo (Q8)', value: 'large-v3-turbo-q8_0', hint: 'Turbo quantized to 8-bit: ~874 MB, accuracy close to full Turbo', url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q8_0.bin' },
+  { label: 'Whisper Large V3 Turbo (Q5)', value: 'large-v3-turbo-q5_0', hint: 'Turbo quantized to 5-bit: ~574 MB, about a third of the full download', url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin' },
 ]
 
 function isKnownCloudModel(model: string): boolean {

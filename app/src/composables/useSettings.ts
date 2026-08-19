@@ -43,7 +43,7 @@ const settings = reactive({
   stt_local_model: 'whisper' as string,
   stt_parakeet_has_cuda: false as boolean,
   stt_cloud_base_url: 'https://api.openai.com' as string,
-  stt_cloud_model: 'whisper-1' as string,
+  stt_cloud_model: 'gpt-transcribe' as string,
   stt_cloud_api_key: '' as string,
   stt_input_device_id: '' as string,
   stt_post_process_enabled: false as boolean,

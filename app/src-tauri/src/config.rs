@@ -145,7 +145,7 @@ pub fn get_stt_cloud_model_from_settings_or_env() -> String {
     let t = s.trim();
     if !t.is_empty() { return t.to_string(); }
   }
-  std::env::var("AIDC_STT_CLOUD_MODEL").unwrap_or_else(|_| "whisper-1".to_string())
+  std::env::var("AIDC_STT_CLOUD_MODEL").unwrap_or_else(|_| "gpt-transcribe".to_string())
 }
 
 pub fn get_stt_cloud_api_key_from_settings_or_env() -> Option<String> {
