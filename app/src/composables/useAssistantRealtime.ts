@@ -1,6 +1,18 @@
 import { ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 
+// Model used for `input_audio_transcription` on the realtime session, i.e. the
+// text transcript of what the user said. Only the supervisor path consumes it.
+//
+// `whisper-1` was the only option when this was written; it is now the legacy
+// model and is noticeably weaker on names and technical terms, which matters
+// because the supervisor routes tool calls off this text. `gpt-transcribe` is
+// the current best model for recorded audio (see the cloud STT presets in
+// SettingsSpeechToText.vue) but is not offered by the beta realtime endpoint
+// this composable talks to, so the realtime session gets the best model that
+// endpoint does accept.
+const DEFAULT_TRANSCRIPTION_MODEL = 'gpt-4o-transcribe'
+
 export interface AssistantRealtimeOptions {
   getEphemeralToken: () => Promise<string>
   onConnected?: () => void
@@ -22,6 +34,9 @@ export interface ConnectParams {
   silenceDurationMs?: number
   idleTimeoutMs?: number | null
   inputAudioNoiseReduction?: boolean
+  // Overrides DEFAULT_TRANSCRIPTION_MODEL. Useful for OpenAI-compatible
+  // endpoints that only implement whisper-1.
+  transcriptionModel?: string
 }
 
 export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
@@ -323,7 +338,9 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
           // Map to API-supported values: near_field or far_field. Use near_field for a typical close mic.
           input_audio_noise_reduction: params.inputAudioNoiseReduction === true ? { type: 'near_field' } : null,
           // Ask server to produce input text transcripts so supervisor can act
-          input_audio_transcription: params.useSupervisor ? { model: 'whisper-1' } : null,
+          input_audio_transcription: params.useSupervisor
+            ? { model: params.transcriptionModel || DEFAULT_TRANSCRIPTION_MODEL }
+            : null,
         }
       }
       try {
