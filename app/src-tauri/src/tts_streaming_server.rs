@@ -1,14 +1,31 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
-use hyper::{Body, Request, Response, Server, StatusCode, Method};
-use hyper::service::{make_service_fn, service_fn};
+use bytes::Bytes;
+use http_body_util::combinators::BoxBody;
+use http_body_util::{BodyExt, Full, StreamBody};
+use hyper::body::{Frame, Incoming};
 use hyper::header::CONTENT_TYPE;
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper::{Method, Request, Response, StatusCode};
+use hyper_util::rt::TokioIo;
 use reqwest::Client;
 use serde_json;
 use uuid::Uuid;
-use futures_util::StreamExt;
+use futures_util::{StreamExt, TryStreamExt};
+use std::convert::Infallible;
 use std::time::{Duration, Instant};
+
+/// hyper 1.x has no built-in `Body`; every response has to name its own body
+/// type. This server returns either a short in-memory message or a streamed
+/// upstream response, so they are erased behind one boxed body.
+type ResponseBody = BoxBody<Bytes, std::io::Error>;
+
+/// A complete, in-memory body - the error branches and the 404.
+fn fixed_body(message: impl Into<Bytes>) -> ResponseBody {
+    Full::new(message.into()).map_err(|never| match never {}).boxed()
+}
 
 #[derive(Clone)]
 pub struct StreamingSession {
@@ -45,25 +62,32 @@ impl TtsStreamingServer {
             sessions: sessions.clone(),
         };
         
-        // Start HTTP server
+        // Start HTTP server. hyper 1.x dropped the `Server` builder, so the
+        // accept loop is ours to run: take a connection, wrap it in the
+        // hyper-util tokio adapter, and serve it on its own task.
         let sessions_clone = sessions.clone();
-        let make_svc = make_service_fn(move |_conn| {
-            let sessions = sessions_clone.clone();
-            async move {
-                Ok::<_, hyper::Error>(service_fn(move |req| {
-                    handle_request(req, sessions.clone())
-                }))
-            }
-        });
-        
-        let server_future = Server::from_tcp(std_listener)
-            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?
-            .serve(make_svc);
-        
-        // Spawn server in background
+        let listener = tokio::net::TcpListener::from_std(std_listener)
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
+
         tokio::spawn(async move {
-            if let Err(e) = server_future.await {
-                eprintln!("TTS streaming server error: {}", e);
+            loop {
+                let stream = match listener.accept().await {
+                    Ok((stream, _addr)) => stream,
+                    Err(e) => {
+                        eprintln!("TTS streaming server accept error: {}", e);
+                        continue;
+                    }
+                };
+                let sessions = sessions_clone.clone();
+                tokio::spawn(async move {
+                    let service = service_fn(move |req| handle_request(req, sessions.clone()));
+                    if let Err(e) = http1::Builder::new()
+                        .serve_connection(TokioIo::new(stream), service)
+                        .await
+                    {
+                        eprintln!("TTS streaming server error: {}", e);
+                    }
+                });
             }
         });
 
@@ -156,9 +180,9 @@ impl TtsStreamingServer {
 }
 
 async fn handle_request(
-    req: Request<Body>,
+    req: Request<Incoming>,
     sessions: Arc<Mutex<HashMap<String, StreamingSession>>>,
-) -> Result<Response<Body>, hyper::Error> {
+) -> Result<Response<ResponseBody>, Infallible> {
     match (req.method(), req.uri().path()) {
         (&Method::GET, path) if path.starts_with("/tts-stream/") => {
             let session_id = path.strip_prefix("/tts-stream/").unwrap_or("");
@@ -167,7 +191,7 @@ async fn handle_request(
         _ => {
             Ok(Response::builder()
                 .status(StatusCode::NOT_FOUND)
-                .body(Body::from("Not Found"))
+                .body(fixed_body("Not Found"))
                 .unwrap())
         }
     }
@@ -176,7 +200,7 @@ async fn handle_request(
 async fn handle_tts_stream(
     session_id: &str,
     sessions: Arc<Mutex<HashMap<String, StreamingSession>>>,
-) -> Result<Response<Body>, hyper::Error> {
+) -> Result<Response<ResponseBody>, Infallible> {
     // Get session details
     let (session_opt, cancel_flag, started_flag) = {
         let sessions_guard = sessions.lock().unwrap_or_else(|e| e.into_inner());
@@ -190,7 +214,7 @@ async fn handle_tts_stream(
         None => {
             return Ok(Response::builder()
                 .status(StatusCode::NOT_FOUND)
-                .body(Body::from("Session not found"))
+                .body(fixed_body("Session not found"))
                 .unwrap());
         }
     };
@@ -236,7 +260,7 @@ async fn handle_tts_stream(
         Err(e) => {
             return Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Body::from(format!("OpenAI request failed: {}", e)))
+                .body(fixed_body(format!("OpenAI request failed: {}", e)))
                 .unwrap());
         }
     };
@@ -246,7 +270,7 @@ async fn handle_tts_stream(
         let error_text = openai_response.text().await.unwrap_or_default();
         return Ok(Response::builder()
             .status(StatusCode::BAD_GATEWAY)
-            .body(Body::from(format!("OpenAI error {}: {}", status, error_text)))
+            .body(fixed_body(format!("OpenAI error {}: {}", status, error_text)))
             .unwrap());
     }
     
@@ -291,12 +315,61 @@ async fn handle_tts_stream(
         }
     });
     
-    // Create response with streaming body
+    // Create response with streaming body. No explicit Transfer-Encoding
+    // header: hyper 1.x picks the framing itself for a body of unknown length,
+    // and setting it by hand here would fight that.
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, content_type)
         .header("Cache-Control", "no-cache")
-        .header("Transfer-Encoding", "chunked")
-        .body(Body::wrap_stream(body_stream))
+        // Fully qualified: `StreamBody` is both a Body and a Stream here, and
+        // both traits offer a `boxed`.
+        .body(BodyExt::boxed(StreamBody::new(body_stream.map_ok(Frame::data))))
         .unwrap())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Exercises the whole hyper wiring end to end - accept loop, service,
+    /// routing and a fixed-size response body - without needing an API key or
+    /// any network access. Both 404 branches go through the same body plumbing
+    /// the streaming path uses.
+    #[tokio::test]
+    async fn unknown_session_returns_not_found() {
+        let server = TtsStreamingServer::new().await.expect("server should start");
+        let resp = reqwest::get(server.get_stream_url("no-such-session"))
+            .await
+            .expect("request should reach the local server");
+        assert_eq!(resp.status().as_u16(), 404);
+        assert_eq!(resp.text().await.expect("body"), "Session not found");
+    }
+
+    #[tokio::test]
+    async fn unknown_path_returns_not_found() {
+        let server = TtsStreamingServer::new().await.expect("server should start");
+        let url = format!("http://127.0.0.1:{}/nope", server.port);
+        let resp = reqwest::get(url).await.expect("request should reach the local server");
+        assert_eq!(resp.status().as_u16(), 404);
+        assert_eq!(resp.text().await.expect("body"), "Not Found");
+    }
+
+    #[test]
+    fn create_and_stop_session_round_trip() {
+        let sessions = Arc::new(Mutex::new(HashMap::new()));
+        let server = TtsStreamingServer { port: 0, sessions };
+        let id = server.create_session(
+            "hello".into(),
+            "verse".into(),
+            "gpt-4o-mini-tts".into(),
+            "mp3".into(),
+            "sk-test".into(),
+            None,
+        );
+        assert_eq!(server.count_sessions(), 1);
+        assert!(server.stop_session(&id));
+        assert_eq!(server.count_sessions(), 0);
+        assert!(!server.stop_session(&id));
+    }
 }

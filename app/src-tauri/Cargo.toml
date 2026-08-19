@@ -63,7 +63,14 @@ base64 = "0.23"
 rmcp = { version = "3.1", features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
 tokio = { version = "1", features = ["process", "rt-multi-thread", "macros", "sync"] }
 futures-util = "0.3"
-hyper = { version = "0.14", features = ["full"] }
+# Only the TTS streaming server uses hyper, and only as an HTTP/1 server on
+# 127.0.0.1. `hyper-util` supplies the tokio IO adapter that hyper 1.x no longer
+# ships itself; `http-body-util` supplies the body types that replaced 0.14's
+# built-in `hyper::Body`.
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
 uuid = { version = "1.0", features = ["v4"] }
 tokio-stream = "0.1"
 whisper-rs = { version = "0.16", optional = true }
