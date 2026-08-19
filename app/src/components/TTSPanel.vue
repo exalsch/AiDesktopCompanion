@@ -7,6 +7,7 @@ import { useTtsPlayback, OPENAI_TTS_MAX_INPUT_CHARS } from '../composables/useTt
 import { useSettings } from '../composables/useSettings'
 import { estimateTextTokens, formatTokenInfo } from '../composables/useTokenEstimate'
 import { tokenizerReady } from '../composables/useTokenizer'
+import CollapsibleCard from './ui/CollapsibleCard.vue'
 
 const props = defineProps<{ notify?: (msg: string, kind?: 'error' | 'success', ms?: number) => void; lightMount?: boolean }>()
 const emit = defineEmits<{ (e: 'busy', v: boolean): void }>()
@@ -204,118 +205,150 @@ const ttsTokenHint = computed(() => formatTokenInfo([{ label: 'text', tokens: tt
 </script>
 
 <template>
-  <div class="tts">
-    <div class="row inline">
-      <div class="cell">
-        <label class="label">Engine</label>
-        <select v-model="engine" class="input">
-          <option value="local">Local (Windows)</option>
-          <option value="openai">OpenAI</option>
-        </select>
+  <section class="card">
+    <div class="card-body">
+      <div class="field-grid">
+        <div class="field">
+          <label class="field-label">Engine</label>
+          <select v-model="engine" class="input">
+            <option value="local">Local (Windows)</option>
+            <option value="openai">OpenAI</option>
+          </select>
+        </div>
       </div>
-    </div>
 
-    <div class="row">
-      <label class="label">Text</label>
-      <textarea v-model="form.text" rows="4" class="input" placeholder="Type something to speak…" @keydown.enter.exact.prevent="onPlay" />
-      <div class="hint">{{ ttsTokenHint }}</div>
-      <div v-if="engine === 'openai'" class="hint" :class="{ error: openaiTextTooLong }">{{ openaiInputLength }} / {{ OPENAI_TTS_MAX_INPUT_CHARS }} characters</div>
-    </div>
+      <div class="field">
+        <label class="field-label">Text</label>
+        <textarea
+          v-model="form.text"
+          class="input"
+          rows="5"
+          placeholder="Type something to speak…"
+          @keydown.enter.exact.prevent="onPlay"
+        />
+        <p class="field-hint">
+          {{ ttsTokenHint }}
+          <template v-if="engine === 'openai'">
+            &nbsp;·&nbsp;
+            <span :class="{ error: openaiTextTooLong }">
+              {{ openaiInputLength }} / {{ OPENAI_TTS_MAX_INPUT_CHARS }} characters
+            </span>
+          </template>
+        </p>
+      </div>
 
-    <!-- Controls: Play/Stop + Save (just below text input) -->
-    <div class="row inline">
-      <button
-        class="btn"
-        :class="{ danger: speaking }"
-        :disabled="(busy && !speaking) || openaiTextTooLong"
-        @click="speaking ? onStop() : onPlay()"
-      >{{ speaking ? 'Stop' : (busy && engine === 'openai' ? 'Synthesizing…' : 'Play') }}</button>
-      <button class="btn" :disabled="!hasSavableOutput || busy" @click="onSynthesizeWithSave">Save to file</button>
-    </div>
+      <div class="actions">
+        <button
+          class="btn"
+          type="button"
+          :class="{ danger: speaking }"
+          :disabled="(busy && !speaking) || openaiTextTooLong"
+          @click="speaking ? onStop() : onPlay()"
+        >{{ speaking ? 'Stop' : (busy && engine === 'openai' ? 'Synthesizing…' : 'Play') }}</button>
+        <button class="btn ghost" type="button" :disabled="!hasSavableOutput || busy" @click="onSynthesizeWithSave">Save to file</button>
+      </div>
 
-    <div class="row inline">
-      <div class="cell" v-if="engine === 'local'">
-        <label class="label">Voice (local)</label>
-        <div class="inline">
+      <p v-if="err" class="field-hint error">{{ err }}</p>
+    </div>
+  </section>
+
+  <CollapsibleCard
+    id="tts.voice"
+    title="Voice and output"
+    :desc="engine === 'openai' ? 'Model, voice, format and delivery for the OpenAI engine.' : 'Windows System.Speech voice and delivery.'"
+  >
+    <div class="field-grid">
+      <div class="field" v-if="engine === 'local'">
+        <label class="field-label">Voice</label>
+        <div class="actions">
           <select v-model="form.voice" class="input">
             <option value="">(Default)</option>
             <option v-for="v in voices" :key="v" :value="v">{{ v }}</option>
           </select>
-          <button class="btn ghost" :disabled="loadingVoices" @click="loadVoices">{{ loadingVoices ? 'Loading…' : 'Reload' }}</button>
+          <button class="btn ghost" type="button" :disabled="loadingVoices" @click="loadVoices">
+            {{ loadingVoices ? 'Loading…' : 'Reload' }}
+          </button>
         </div>
-        <div v-if="err" class="hint error">{{ err }}</div>
+        <p class="field-hint">Installed Windows voices, read through PowerShell System.Speech.</p>
       </div>
-      <div class="cell" v-if="engine === 'openai'">
-        <label class="label">Voice tone (optional)</label>
-        <input class="input" v-model="form.openaiInstructions" placeholder="e.g. Cheerful and positive tone" />
-        <div class="hint">Optional hint sent to OpenAI to influence speaking style/tone.</div>
-      </div>
-      <div class="cell" v-if="engine === 'openai'">
-        <label class="label">Model (OpenAI)</label>
+
+      <div class="field" v-if="engine === 'openai'">
+        <label class="field-label">Model</label>
         <input class="input" v-model="form.openaiModel" list="openai-models" placeholder="gpt-4o-mini-tts" />
         <datalist id="openai-models">
           <option v-for="m in openaiModelOptions" :key="m" :value="m" />
         </datalist>
-        <div class="hint">Pick a model or type a custom one. Default is gpt-4o-mini-tts. Options might not be tts compatible.</div>
+        <p class="field-hint">Pick one or type your own. Not every model in the list speaks.</p>
       </div>
-      <div class="cell" v-if="engine === 'openai'">
-        <label class="label">Voice (OpenAI)</label>
+
+      <div class="field" v-if="engine === 'openai'">
+        <label class="field-label">Voice</label>
         <input class="input" v-model="form.openaiVoice" list="openai-voices" placeholder="alloy" />
         <datalist id="openai-voices">
           <option v-for="v in openaiVoiceOptions" :key="v" :value="v" />
         </datalist>
-        <div class="hint">Select a voice or type a custom one. Default is "alloy". Suggestions list might be incomplete.</div>
+        <p class="field-hint">Suggestions may be incomplete; a custom name is fine.</p>
       </div>
-      <div class="cell" v-if="engine === 'openai'">
-        <label class="label">Format</label>
+
+      <div class="field" v-if="engine === 'openai'">
+        <label class="field-label">Tone</label>
+        <input class="input" v-model="form.openaiInstructions" placeholder="e.g. Cheerful and positive" />
+        <p class="field-hint">Optional hint influencing speaking style.</p>
+      </div>
+
+      <div class="field" v-if="engine === 'openai'">
+        <label class="field-label">Format</label>
         <select v-model="(form.openaiFormat as any)" class="input">
           <option v-for="f in openaiFormatOptions" :key="f" :value="f">{{ f.toUpperCase() }}</option>
         </select>
-        <div class="hint">OPUS can reduce latency and size. WAV is PCM16-compatible with Windows playback.</div>
+        <p class="field-hint">OPUS is smaller and starts sooner; WAV is PCM16 for Windows playback.</p>
       </div>
-      <div class="cell" v-if="engine === 'openai'">
-        <label class="label" title="Streaming uses a local HTTP proxy to progressively play audio (MP3/WAV/OPUS). If playback isn’t supported or fails, it automatically falls back to non‑streaming synth‑then‑play.">Streaming (experimental)</label>
-        <div class="checkbox" title="Streaming uses a local HTTP proxy to progressively play audio (MP3/WAV/OPUS). If playback isn’t supported or fails, it automatically falls back to non‑streaming synth‑then‑play.">
-          <input type="checkbox" v-model="form.openaiStreaming" />
-          <span>Enable streaming when supported</span>
-        </div>
+
+      <div class="field">
+        <label class="field-label">Rate <span class="range-value">{{ form.rate }}</span></label>
+        <input class="range" type="range" min="-10" max="10" step="1" v-model.number="form.rate" />
       </div>
-      <div class="cell">
-        <label class="label">Rate: {{ form.rate }}</label>
-        <input type="range" min="-10" max="10" step="1" v-model.number="form.rate" />
-      </div>
-      <div class="cell">
-        <label class="label">Volume: {{ form.volume }}</label>
-        <input type="range" min="0" max="100" step="1" v-model.number="form.volume" />
+
+      <div class="field">
+        <label class="field-label">Volume <span class="range-value">{{ form.volume }}</span></label>
+        <input class="range" type="range" min="0" max="100" step="1" v-model.number="form.volume" />
       </div>
     </div>
 
-    
+    <label class="switch row" v-if="engine === 'openai'">
+      <input type="checkbox" v-model="form.openaiStreaming" />
+      <span class="switch-text">
+        <span class="switch-label">Stream audio when supported <span class="badge warn">experimental</span></span>
+        <span class="switch-hint">
+          Plays through a local HTTP proxy as the audio arrives instead of waiting for the whole file.
+          Falls back to synthesize-then-play automatically if streaming is unsupported or fails.
+        </span>
+      </span>
+    </label>
+  </CollapsibleCard>
 
-    <div v-if="wavPath || (engine === 'openai' && form.openaiStreaming)" class="row">
-      <template v-if="wavPath">
-        <div class="label">Last output</div>
-        <div class="hint">{{ wavPath }}</div>
-      </template>
+  <section class="card" v-if="wavPath || (engine === 'openai' && form.openaiStreaming)">
+    <div class="card-body">
+      <div class="field" v-if="wavPath">
+        <label class="field-label">Last output</label>
+        <p class="field-hint path">{{ wavPath }}</p>
+      </div>
       <audio ref="playerRef" :src="wavSrc || ''" controls preload="none" />
     </div>
-
-    <div class="hint">Note: Local engine uses Windows PowerShell System.Speech. </div>
-  </div>
+  </section>
 </template>
 
 <style scoped>
-.tts { display: flex; flex-direction: column; gap: 10px; }
-.row { display: flex; flex-direction: column; gap: 6px; }
-.row.inline { flex-direction: row; align-items: center; gap: 10px; flex-wrap: wrap; }
-.cell { display: flex; flex-direction: column; gap: 6px; }
-.label { font-size: 12px; color: var(--adc-fg-muted); }
-.input { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); }
-textarea { width: 100%; resize: vertical; min-height: 100px; padding: 8px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); box-sizing: border-box; }
-.btn { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-accent); color: #fff; cursor: pointer; }
-.btn.ghost { background: transparent; color: var(--adc-fg); }
-.btn.danger { background: var(--adc-danger); border-color: var(--adc-danger); }
-.hint { font-size: 12px; color: var(--adc-fg-muted); white-space: pre-line; }
-.hint.error { color: #f2b8b8; }
-audio { width: 100%; margin-top: 6px; }
+audio {
+  width: 100%;
+  height: 36px;
+  border-radius: var(--radius-sm);
+}
+/* A file path should stay copyable and wrap at any character rather than
+   pushing the card wider than the page. */
+.path {
+  font-family: var(--font-mono);
+  word-break: break-all;
+  user-select: text;
+}
 </style>

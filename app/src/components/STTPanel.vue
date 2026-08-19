@@ -137,61 +137,102 @@ const postProcessStatusHint = computed(() => {
 </script>
 
 <template>
-  <div class="stt">
-    <div class="row">
-      <label class="checkbox" style="margin: 0;">
+  <!-- Two cards: what to record, and what came back. The result card only
+       exists once there is a transcript, so the page is not padded out with an
+       empty box before the first recording. -->
+  <section class="card">
+    <div class="card-body">
+      <div class="actions">
+        <button
+          class="btn"
+          type="button"
+          :class="{ danger: state.recording }"
+          :disabled="state.busy"
+          @click="onRecordToggle"
+        >
+          <span class="rec-dot" :class="{ live: state.recording }" aria-hidden="true"></span>
+          {{ state.recording ? 'Stop & transcribe' : 'Record' }}
+        </button>
+        <span class="field-hint">
+          {{ state.busy ? 'Transcribing…' : 'Captured with MediaRecorder (WEBM/Opus). Needs microphone permission.' }}
+        </span>
+      </div>
+
+      <p v-if="state.error" class="field-hint error">{{ state.error }}</p>
+
+      <div class="divider"></div>
+
+      <label class="switch row">
         <input type="checkbox" v-model="settings.stt_post_process_enabled" />
-        Improve transcribed text with AI
+        <span class="switch-text">
+          <span class="switch-label">Improve transcribed text with AI</span>
+          <span class="switch-hint">Cleans up punctuation, casing and recognition artefacts after transcription.</span>
+        </span>
       </label>
-      <div v-if="settings.stt_post_process_enabled" class="row" style="margin-top: 2px;">
-        <label class="label">STT Post-Processing Prompt</label>
+
+      <div v-if="settings.stt_post_process_enabled" class="field">
+        <label class="field-label">Post-processing prompt</label>
         <textarea
           v-model="settings.stt_post_process_prompt"
-          rows="3"
+          class="input mono"
+          rows="4"
           placeholder="You are an STT post-processor..."
-          style="min-height: 88px;"
         />
-        <div class="hint">Model selection for post-processing stays in Settings → Speech To Text.</div>
+        <p class="field-hint">Which model does this is set under Settings → Speech To Text.</p>
       </div>
     </div>
+  </section>
 
-    <div class="row inline">
-      <button class="btn" :disabled="state.busy" :class="{ danger: state.recording }" @click="onRecordToggle">
-        {{ state.recording ? 'Stop & Transcribe' : 'Record' }}
-      </button>
-      <div class="hint">Recording format uses MediaRecorder (WEBM/Opus). Requires mic permission.</div>
+  <section class="card" v-if="state.transcript">
+    <div class="card-head">
+      <span class="card-heading">
+        <span class="card-title">Transcript</span>
+        <span class="card-desc">{{ sttTokenHint }}</span>
+      </span>
+      <span class="actions">
+        <button class="btn ghost sm" type="button" @click="onCopy">Copy</button>
+        <button class="btn sm" type="button" @click="onUseAsPrompt">Use as prompt</button>
+      </span>
     </div>
+    <div class="card-body">
+      <textarea class="input" :value="state.transcript" rows="6" readonly />
 
-    <!-- Busy indicator is now shown globally in App.vue -->
-    <div v-if="state.error" class="hint error">{{ state.error }}</div>
+      <p
+        v-if="postProcessStatusHint"
+        class="field-hint"
+        :class="{ error: !!state.postProcessError }"
+      >{{ postProcessStatusHint }}</p>
 
-    <div class="row" v-if="state.transcript">
-      <template v-if="showOriginalTranscript">
-        <label class="label">Original Transcript</label>
-        <textarea :value="state.originalTranscript" rows="5" readonly />
-      </template>
-
-      <label class="label">Transcript</label>
-      <textarea :value="state.transcript" rows="6" readonly />
-      <div v-if="postProcessStatusHint" class="hint" :class="{ error: !!state.postProcessError }">{{ postProcessStatusHint }}</div>
-      <div class="hint">{{ sttTokenHint }}</div>
-      <div class="row inline">
-        <button class="btn" @click="onCopy">Copy</button>
-        <button class="btn" @click="onUseAsPrompt">Use as Prompt</button>
+      <!-- Only worth showing once post-processing has actually rewritten
+           something, as a before/after for the cleanup. -->
+      <div v-if="showOriginalTranscript" class="field">
+        <label class="field-label">Before post-processing</label>
+        <textarea class="input" :value="state.originalTranscript" rows="4" readonly />
       </div>
     </div>
-  </div>
+  </section>
 </template>
 
 <style scoped>
-.stt { display: flex; flex-direction: column; gap: 10px; }
-.row { display: flex; flex-direction: column; gap: 6px; }
-.row.inline { flex-direction: row; align-items: center; gap: 10px; flex-wrap: wrap; }
-.label { font-size: 12px; color: #c8c9d3; }
-textarea { width: 100%; resize: vertical; min-height: 140px; padding: 8px; border-radius: 8px; border: 1px solid #3a3a44; background: #14141a; color: #e0e0ea; box-sizing: border-box; }
-.checkbox { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: #c8c9d3; }
-.btn { padding: 8px 12px; border-radius: 8px; border: 1px solid #3a3a44; background: #2e5cff; color: #fff; cursor: pointer; }
-.btn.danger { background: #a42828; border-color: #7c1f1f; }
-.hint { font-size: 12px; color: #9fa0aa; white-space: pre-line; }
-.hint.error { color: #f2b8b8; }
+/* The panel's own styles used hardcoded hex colours, which meant its
+   textareas stayed dark under the light theme. Everything visual now comes
+   from the shared layer; only the record dot is local. */
+.rec-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.75;
+}
+.rec-dot.live {
+  opacity: 1;
+  animation: rec-pulse 1.2s ease-in-out infinite;
+}
+@keyframes rec-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(0.72); opacity: 0.5; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rec-dot.live { animation: none; }
+}
 </style>

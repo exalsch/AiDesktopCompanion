@@ -77,37 +77,50 @@ onMounted(loadPrompts)
 
 <template>
   <div class="qp-editor">
-    <div class="qp-header">      
-      <div class="actions">
-        <button class="btn" :disabled="busy" @click="save">Save</button>
-        <button class="btn secondary" :disabled="busy" @click="resetDefaults">Reset to defaults</button>
+    <p v-if="!loaded && !err" class="field-hint">Loading…</p>
+    <p v-if="err" class="field-hint error">{{ err }}</p>
+
+    <div class="grid">
+      <div v-for="i in 9" :key="i" class="field">
+        <label class="field-label" :for="'qp-' + i">
+          <span class="key">{{ i }}</span>
+          Prompt
+        </label>
+        <textarea :id="'qp-' + i" v-model="form[String(i)]" rows="3" class="input" />
       </div>
     </div>
 
-    <div v-if="!loaded && !err" class="hint">Loading…</div>
-    <div v-if="err" class="error">{{ err }}</div>
-
-    <div class="grid">
-      <div v-for="i in 9" :key="i" class="cell">
-        <label>Prompt for key {{ i }}</label>
-        <textarea v-model="form[String(i)]" rows="3" class="input"/>
-      </div>
+    <div class="actions">
+      <button class="btn" type="button" :disabled="busy" @click="save">Save prompts</button>
+      <button class="btn ghost" type="button" :disabled="busy" @click="resetDefaults">Reset to defaults</button>
     </div>
   </div>
 </template>
 
 <style scoped>
-.qp-editor { margin-top: 12px; }
-.qp-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-.title { font-weight: 700; }
-.actions { display: flex; gap: 8px; }
-.btn { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-accent); color: #fff; cursor: pointer; }
-.btn.secondary { background: transparent; color: var(--adc-fg); }
-.btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.hint { color: #9fa0aa; margin-bottom: 8px; }
-.error { color: #ff9b9b; margin-bottom: 8px; white-space: pre-line; }
-.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
-.cell { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-label { font-size: 12px; color: var(--adc-fg-muted); }
-textarea { width: 100%; resize: vertical; min-height: 70px; padding: 8px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); box-sizing: border-box; }
+.qp-editor { display: flex; flex-direction: column; gap: var(--sp-4); }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--sp-3);
+}
+
+/* The number is the thing you actually press, so it gets the emphasis rather
+   than being buried in a "Prompt for key 3" sentence. */
+.key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-sm);
+  background: var(--adc-surface-2);
+  border: 1px solid var(--adc-border);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--adc-fg);
+}
+
+.qp-editor textarea.input { min-height: 72px; }
 </style>
