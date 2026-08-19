@@ -107,23 +107,46 @@ onBeforeUnmount(() => { if (checkTimer) clearTimeout(checkTimer) })
 </script>
 
 <template>
-  <div>
-    <div class="row-inline">
-      <select v-model="mod1" class="input" style="max-width: 160px;">
+  <div class="hotkey-picker">
+    <div class="hotkey-parts">
+      <select v-model="mod1" class="input" aria-label="First modifier">
         <option v-for="opt in modOptions1" :key="'m1-'+opt.value" :value="opt.value">{{ opt.label }}</option>
       </select>
-      <select v-model="mod2" class="input" style="max-width: 160px;">
+      <span class="plus" aria-hidden="true">+</span>
+      <select v-model="mod2" class="input" aria-label="Second modifier">
         <option v-for="opt in modOptions2" :key="'m2-'+opt.value" :value="opt.value">{{ opt.label }}</option>
       </select>
+      <span class="plus" aria-hidden="true">+</span>
       <input
         v-model="keyName"
-        class="input"
-        :placeholder="props.keyPlaceholder || 'A or F9 or Space'"
+        class="input key"
+        :placeholder="props.keyPlaceholder || 'A or F9'"
+        aria-label="Key"
         autocomplete="off"
         spellcheck="false"
       />
     </div>
-    <div v-if="checking" class="settings-hint">Checking availability…</div>
-    <div v-if="error" class="settings-hint error">{{ error }}</div>
+    <p v-if="checking" class="field-hint">Checking availability…</p>
+    <p v-if="error" class="field-hint error">{{ error }}</p>
   </div>
 </template>
+
+<style scoped>
+.hotkey-picker { display: flex; flex-direction: column; gap: var(--sp-2); }
+
+/* Modifier + modifier + key reads as one control, so the parts sit on a single
+   row separated by literal plus signs rather than as three loose dropdowns. */
+.hotkey-parts {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+.hotkey-parts > .input { width: 150px; flex: 0 0 auto; }
+.hotkey-parts > .input.key { width: 110px; }
+.plus {
+  color: var(--adc-fg-muted);
+  font-size: var(--fs-sm);
+  user-select: none;
+}
+</style>

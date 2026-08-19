@@ -358,6 +358,7 @@ async function autoConnectServers() {
         :settings-subview="ui.settingsSubview"
         :sidebar-open="layout.sidebarOpen"
         :busy="isBusy"
+        :version="appVersion"
         @toggle-sidebar="layout.sidebarOpen = !layout.sidebarOpen"
         @set-section="setSection($event)"
         @open-history="ui.activeSection = 'Prompt'; ui.promptSubview = 'History'"
@@ -366,13 +367,17 @@ async function autoConnectServers() {
 
       <div class="main">
         <div class="main-content">
-          <template v-if="ui.activeSection === 'Prompt'">          
-            <div class="section"><div class="section-title">Prompt</div></div>
-            <div v-if="ui.promptSubview === 'History'" class="section">
-              <div class="section-title">History</div>
+          <template v-if="ui.activeSection === 'Prompt'">
+            <div v-if="ui.promptSubview === 'History'" class="page">
+              <header class="page-head">
+                <div>
+                  <h1 class="page-title">History</h1>
+                  <p class="page-desc">Earlier conversations. Opening one makes it the current chat.</p>
+                </div>
+              </header>
               <ConversationHistory @open="ui.activeSection = 'Prompt'; ui.promptSubview = 'Chat'" />
             </div>
-            <div v-show="ui.promptSubview !== 'History'">
+            <div v-show="ui.promptSubview !== 'History'" class="page fill">
               <PromptMain
                 ref="composerRef"
                 :messages="conversation.currentConversation.messages"
@@ -392,22 +397,37 @@ async function autoConnectServers() {
             </div>
           </template>
 
-          <div v-if="ui.activeSection === 'Assistant'" class="section">
-            <div class="section-title">Assistant Mode</div>
+          <div v-if="ui.activeSection === 'Assistant'" class="page">
+            <header class="page-head">
+              <div>
+                <h1 class="page-title">Assistant Mode</h1>
+                <p class="page-desc">A live voice session over WebRTC. Speak and it answers; tools and the supervisor are optional.</p>
+              </div>
+            </header>
             <AssistantMode :mcpServers="settings.mcp_servers" :notify="showToast" />
           </div>
 
-          <div v-show="ui.activeSection === 'TTS'" class="section">
-            <div class="section-title">Text To Speech</div>
+          <div v-show="ui.activeSection === 'TTS'" class="page">
+            <header class="page-head">
+              <div>
+                <h1 class="page-title">Text To Speech</h1>
+                <p class="page-desc">Read text aloud with a Windows voice or an OpenAI one.</p>
+              </div>
+            </header>
             <TTSPanel ref="ttsRef" :notify="showToast" @busy="busy.tts = $event" />
           </div>
 
-          <div v-if="ui.activeSection === 'STT'" class="section">
-            <div class="section-title">Speech To Text</div>
+          <div v-if="ui.activeSection === 'STT'" class="page">
+            <header class="page-head">
+              <div>
+                <h1 class="page-title">Speech To Text</h1>
+                <p class="page-desc">Record from the microphone and transcribe it. Engine and model live in Settings.</p>
+              </div>
+            </header>
             <STTPanel :notify="showToast" @use-as-prompt="handleUseAsPrompt" @busy="busy.stt = $event" />
           </div>
 
-          <div v-if="ui.activeSection === 'Settings'" class="section">
+          <div v-if="ui.activeSection === 'Settings'" class="page">
             <SettingsMain
               :settings="settings"
               :models="models"
@@ -431,8 +451,6 @@ async function autoConnectServers() {
         </div>
       </div>
     </div>
-    
-    <div class="version-badge" v-if="appVersion">v{{ appVersion }}</div>
 
     <!-- Hidden background TTS controller (non-disruptive) -->
     <div style="position: fixed; width: 0; height: 0; overflow: hidden; opacity: 0; pointer-events: none;">
@@ -446,68 +464,68 @@ async function autoConnectServers() {
 </template>
 
 <style scoped>
-/* Section layout */
-.content { padding: 12px 0; overflow: auto; }
-.section { margin: 0 auto; max-width: none; }
-.section-title { font-weight: 700; margin-bottom: 8px; font-size: 18px; }
-.section-hint { font-size: 12px; color: var(--adc-fg-muted); }
+/* Layout only. Cards, fields, inputs, buttons and the rest come from the
+   shared design layer in src/style.css, which is why the long `:deep()` copy
+   of every settings rule that used to live here is gone: the child components
+   now pick those classes up globally instead of needing them piped through. */
 
+.shell {
+  display: flex;
+  height: 100vh;
+  text-align: left;
+  background: var(--adc-bg);
+  color: var(--adc-fg);
+}
 
-.settings { margin: 0px auto; max-width: none; color: var(--adc-fg); }
-.settings-section { border: 1px solid var(--adc-border); border-radius: 10px; padding: 14px; background: var(--adc-surface); }
-.settings-title { font-weight: 700; margin-bottom: 8px; }
-.settings-row { display: flex; gap: 10px; align-items: center; margin: 8px 0; }
-.settings-row.col { flex-direction: column; align-items: flex-start; }
-.settings-hint { font-size: 12px; color: var(--adc-fg-muted); margin-top: 6px; }
-.btn { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-accent); color: #fff; cursor: pointer; }
-.btn:hover { filter: brightness(1.05); }
-.btn.ghost { background: transparent; color: var(--adc-fg); border-color: var(--adc-border); }
-.btn.danger { background: var(--adc-danger); border-color: var(--adc-border); }
-.row-inline { display: flex; gap: 8px; width: 100%; }
-.label { font-size: 12px; color: var(--adc-fg-muted); }
-.input { flex: 1; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); }
-.checkbox { display: flex; gap: 8px; align-items: center; }
-.settings-hint.error { color: #f2b8b8; }
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.main-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  padding: var(--sp-5) var(--sp-5) var(--sp-6);
+}
 
-/* Ensure styles apply inside child settings components */
-.settings :deep(.settings-section) {padding-left: 10px; padding-right: 10px; border: 1px solid var(--adc-border); border-radius: 10px; background: var(--adc-surface); }
-.settings :deep(.settings-title) { font-weight: 700; margin-bottom: 8px; }
-.settings :deep(.settings-row) { display: flex; gap: 10px; align-items: center; margin: 8px 0; }
-.settings :deep(.settings-row.col) { flex-direction: column; align-items: flex-start; }
-.settings :deep(.settings-hint) { font-size: 12px; color: var(--adc-fg-muted); margin-top: 6px; }
-.settings :deep(.btn) { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-accent); color: #fff; cursor: pointer; }
-.settings :deep(.btn:hover) { filter: brightness(1.05); }
-.settings :deep(.btn.ghost) { background: transparent; color: var(--adc-fg); border-color: var(--adc-border); }
-.settings :deep(.btn.danger) { background: var(--adc-danger); border-color: var(--adc-border); }
-.settings :deep(.row-inline) { display: flex; gap: 8px; width: 100%; }
-.settings :deep(.label) { font-size: 12px; color: var(--adc-fg-muted); }
-.settings :deep(.input) { flex: 1; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); }
-.settings :deep(.checkbox) { display: flex; gap: 8px; align-items: center; }
-.settings :deep(.settings-hint.error) { color: #f2b8b8; }
+/* The chat page is the one section that should consume the leftover height
+   rather than sit at its natural size, so the composer stays pinned. */
+.main-content > .page.fill {
+  flex: 1;
+  min-height: 0;
+}
 
-/* Version badge bottom-right */
-.version-badge { position: fixed; left: 5px; bottom: 30px; font-size: 12px; color: var(--adc-fg-muted); background: var(--adc-surface); border: 1px solid var(--adc-border); border-radius: 8px; padding: 4px 8px; opacity: 0.95; z-index: 1000; }
-
-.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 10px 14px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); white-space: pre-line; box-shadow: 0 6px 24px rgba(0,0,0,0.3); }
-.toast.success { border-color: #285c2a; background: #1e3b21; }
-.toast.error { border-color: #5c2828; background: #3b1e1e; }
-
-.shell { display: flex; gap: 0; height: 100vh; text-align: left; }
-.sidebar { width: 220px; background: var(--adc-sidebar-bg); border-right: 1px solid var(--adc-border); padding: 10px 8px; display: flex; flex-direction: column; gap: 6px; transition: width 0.2s ease; }
-.sidebar.collapsed { width: 64px; }
-.burger { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); cursor: pointer; }
-.side-tab { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); cursor: pointer; text-align: left; display: flex; align-items: center; gap: 8px; }
-.side-tab svg, .side-subtab svg { width: 16px; height: 16px; }
-.side-tab.active { background: var(--adc-accent); border-color: var(--adc-accent); }
-.side-subtab { margin-left: 14px; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); cursor: pointer; text-align: left; font-size: 12px; display: flex; align-items: center; gap: 8px; }
-.side-subtab.active { background: var(--adc-accent); border-color: var(--adc-accent); color: #fff; }
-.side-spacer { flex: 1; }
-.side-status { padding-top: 8px; }
-.main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.main-content { flex: 1; min-height: 0; overflow: auto; padding: 12px 12px; }
-
-/* Prompt layout with scrolling conversation */
-/* Prompt layout and quick prompt button styles moved to components/prompt/PromptMain.vue */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: var(--sp-5);
+  transform: translateX(-50%);
+  z-index: 1000;
+  max-width: min(560px, calc(100vw - 48px));
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--radius);
+  border: 1px solid var(--adc-border-strong);
+  background: var(--adc-surface);
+  color: var(--adc-fg);
+  font-size: var(--fs-base);
+  text-align: left;
+  white-space: pre-line;
+  box-shadow: var(--shadow-2);
+}
+.toast.success {
+  background: var(--adc-ok-bg);
+  border-color: var(--adc-ok-border);
+  color: var(--adc-ok-fg);
+}
+.toast.error {
+  background: var(--adc-err-bg);
+  border-color: var(--adc-err-border);
+  color: var(--adc-err-fg);
+}
 </style>
 
 <!-- Global overrides for QuickActions window only -->

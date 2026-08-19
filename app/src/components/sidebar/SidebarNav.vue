@@ -1,180 +1,266 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import LoadingDots from '../LoadingDots.vue'
+import NavIcon, { type NavIconName } from './NavIcon.vue'
+
+type Section = 'Prompt' | 'Assistant' | 'TTS' | 'STT' | 'Settings'
+type SettingsSubview = 'General' | 'Speech To Text' | 'Quick Prompts' | 'MCP Servers'
 
 const props = defineProps<{
-  sections: ReadonlyArray<'Prompt' | 'Assistant' | 'TTS' | 'STT' | 'Settings'>
-  activeSection: 'Prompt' | 'Assistant' | 'TTS' | 'STT' | 'Settings'
+  sections: ReadonlyArray<Section>
+  activeSection: Section
   promptSubview: 'Chat' | 'History'
-  settingsSubview: 'General' | 'Speech To Text' | 'Quick Prompts' | 'MCP Servers'
+  settingsSubview: SettingsSubview
   sidebarOpen: boolean
   busy: boolean
+  version?: string
 }>()
 
 const emit = defineEmits<{
   (e: 'toggle-sidebar'): void
-  (e: 'set-section', section: 'Prompt' | 'Assistant' | 'TTS' | 'STT' | 'Settings'): void
+  (e: 'set-section', section: Section): void
   (e: 'open-history'): void
-  (e: 'set-settings-subview', sub: 'General' | 'Speech To Text' | 'Quick Prompts' | 'MCP Servers'): void
+  (e: 'set-settings-subview', sub: SettingsSubview): void
 }>()
+
+const SECTION_ICONS: Record<Section, NavIconName> = {
+  Prompt: 'prompt',
+  Assistant: 'assistant',
+  TTS: 'tts',
+  STT: 'stt',
+  Settings: 'settings',
+}
+
+const SETTINGS_SUBVIEWS: ReadonlyArray<{ key: SettingsSubview, icon: NavIconName }> = [
+  { key: 'General', icon: 'general' },
+  { key: 'Speech To Text', icon: 'stt' },
+  { key: 'Quick Prompts', icon: 'quick-prompts' },
+  { key: 'MCP Servers', icon: 'mcp' },
+]
+
+/** Sub-items stay visible whichever section is active. Hiding them until their
+ *  parent is selected would tidy the rail at the cost of a second click to
+ *  reach a frequent destination like MCP Servers. */
+function subItemsFor(section: Section) {
+  if (section === 'Prompt') {
+    return [{
+      key: 'History',
+      icon: 'history' as NavIconName,
+      active: props.activeSection === 'Prompt' && props.promptSubview === 'History',
+    }]
+  }
+  if (section === 'Settings') {
+    return SETTINGS_SUBVIEWS.map(s => ({
+      key: s.key,
+      icon: s.icon,
+      active: props.activeSection === 'Settings' && props.settingsSubview === s.key,
+    }))
+  }
+  return []
+}
+
+function onSubItem(section: Section, key: string) {
+  if (section === 'Prompt') emit('open-history')
+  else emit('set-settings-subview', key as SettingsSubview)
+}
+
+const collapsed = computed(() => !props.sidebarOpen)
 </script>
 
 <template>
-  <aside class="sidebar" :class="{ collapsed: !props.sidebarOpen }" role="navigation" aria-label="Main navigation">
-    <button class="burger" title="Toggle menu" :aria-expanded="props.sidebarOpen" @click="$emit('toggle-sidebar')">☰</button>
-    <template v-for="s in props.sections" :key="s">
+  <aside class="sidebar" :class="{ collapsed }" role="navigation" aria-label="Main navigation">
+    <div class="side-head">
       <button
-        class="side-tab"
-        :class="{ active: props.activeSection === s }"
-        :aria-current="props.activeSection === s ? 'page' : undefined"
-        @click="$emit('set-section', s)"
-        :title="s"
+        class="burger"
+        type="button"
+        :title="props.sidebarOpen ? 'Collapse menu' : 'Expand menu'"
+        :aria-expanded="props.sidebarOpen"
+        aria-label="Toggle menu"
+        @click="emit('toggle-sidebar')"
       >
-        <!-- Icons -->
-        <template v-if="s === 'Prompt'">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="m12 19 7-7 3 3-7 7-3-3z"/>
-            <path d="m18 13-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/>
-            <path d="m2 2 7.586 7.586"/>
-            <circle cx="11" cy="11" r="2"/>
-          </svg>
-        </template>
-        <template v-else-if="s === 'Assistant'">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M3 18v-6a9 9 0 0 1 18 0v6"/>
-            <rect x="3" y="18" width="18" height="3" rx="1.5"/>
-            <path d="M8 21v-3"/>
-            <path d="M16 21v-3"/>
-          </svg>
-        </template>
-        <template v-else-if="s === 'TTS'">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-            <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
-            <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
-          </svg>
-        </template>
-        <template v-else-if="s === 'STT'">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-            <line x1="12" x2="12" y1="19" y2="22"/>
-          </svg>
-        </template>
-        <template v-else>
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="12" cy="12" r="3"/>
-            <rect x="11" y="0" width="2" height="4" rx="1"/>
-            <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(60 12 12)"/>
-            <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(120 12 12)"/>
-            <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(180 12 12)"/>
-            <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(240 12 12)"/>
-            <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(300 12 12)"/>
-          </svg>
-        </template>
-        <span v-if="props.sidebarOpen">{{ s }}</span>
+        <NavIcon name="menu" />
       </button>
+    </div>
 
-      <!-- Sublinks under Prompt: History -->
-      <button
-        v-if="s === 'Prompt'"
-        class="side-subtab"
-        :class="{ active: props.activeSection === 'Prompt' && props.promptSubview === 'History' }"
-        :aria-current="props.activeSection === 'Prompt' && props.promptSubview === 'History' ? 'page' : undefined"
-        @click="$emit('open-history')"
-        title="Conversation History"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <circle cx="12" cy="12" r="8"/>
-          <path d="M12 8v4l3 3"/>
-          <path d="M3 12a9 9 0 1 0 9-9"/>
-          <polyline points="3 12 3 7 8 7"/>
-        </svg>
-        <span v-if="props.sidebarOpen">History</span>
-      </button>
+    <nav class="side-nav">
+      <template v-for="s in props.sections" :key="s">
+        <button
+          class="side-tab"
+          type="button"
+          :class="{ active: props.activeSection === s }"
+          :aria-current="props.activeSection === s ? 'page' : undefined"
+          :title="s"
+          @click="emit('set-section', s)"
+        >
+          <NavIcon :name="SECTION_ICONS[s]" />
+          <span v-if="props.sidebarOpen" class="side-label">{{ s }}</span>
+        </button>
 
-      <!-- Sublinks under Settings: submenus -->
-      <button
-        v-if="s === 'Settings'"
-        class="side-subtab"
-        :class="{ active: props.activeSection === 'Settings' && props.settingsSubview === 'General' }"
-        :aria-current="props.activeSection === 'Settings' && props.settingsSubview === 'General' ? 'page' : undefined"
-        @click="$emit('set-settings-subview', 'General')"
-        title="General Settings"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <line x1="4" y1="21" x2="4" y2="14"/>
-          <line x1="4" y1="10" x2="4" y2="3"/>
-          <line x1="12" y1="21" x2="12" y2="12"/>
-          <line x1="12" y1="8" x2="12" y2="3"/>
-          <line x1="20" y1="21" x2="20" y2="16"/>
-          <line x1="20" y1="12" x2="20" y2="3"/>
-          <line x1="2" y1="14" x2="6" y2="14"/>
-          <line x1="10" y1="8" x2="14" y2="8"/>
-          <line x1="18" y1="16" x2="22" y2="16"/>
-        </svg>
-        <span v-if="props.sidebarOpen">General</span>
-      </button>
+        <button
+          v-for="sub in subItemsFor(s)"
+          :key="s + '/' + sub.key"
+          class="side-subtab"
+          type="button"
+          :class="{ active: sub.active }"
+          :aria-current="sub.active ? 'page' : undefined"
+          :title="sub.key"
+          @click="onSubItem(s, sub.key)"
+        >
+          <NavIcon :name="sub.icon" />
+          <span v-if="props.sidebarOpen" class="side-label">{{ sub.key }}</span>
+        </button>
+      </template>
+    </nav>
 
-      <button
-        v-if="s === 'Settings'"
-        class="side-subtab"
-        :class="{ active: props.activeSection === 'Settings' && props.settingsSubview === 'Speech To Text' }"
-        :aria-current="props.activeSection === 'Settings' && props.settingsSubview === 'Speech To Text' ? 'page' : undefined"
-        @click="$emit('set-settings-subview', 'Speech To Text')"
-        title="Speech To Text"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
-          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-          <line x1="12" x2="12" y1="19" y2="22"/>
-        </svg>
-        <span v-if="props.sidebarOpen">Speech To Text</span>
-      </button>
-
-      <button
-        v-if="s === 'Settings'"
-        class="side-subtab"
-        :class="{ active: props.activeSection === 'Settings' && props.settingsSubview === 'Quick Prompts' }"
-        :aria-current="props.activeSection === 'Settings' && props.settingsSubview === 'Quick Prompts' ? 'page' : undefined"
-        @click="$emit('set-settings-subview', 'Quick Prompts')"
-        title="Quick Prompts"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-        </svg>
-        <span v-if="props.sidebarOpen">Quick Prompts</span>
-      </button>
-      <button
-        v-if="s === 'Settings'"
-        class="side-subtab"
-        :class="{ active: props.activeSection === 'Settings' && props.settingsSubview === 'MCP Servers' }"
-        :aria-current="props.activeSection === 'Settings' && props.settingsSubview === 'MCP Servers' ? 'page' : undefined"
-        @click="$emit('set-settings-subview', 'MCP Servers')"
-        title="MCP Servers"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <rect x="2" y="2" width="20" height="8" rx="2"/>
-          <rect x="2" y="14" width="20" height="8" rx="2"/>
-          <line x1="6" y1="6" x2="6.01" y2="6"/>
-          <line x1="6" y1="18" x2="6.01" y2="18"/>
-        </svg>
-        <span v-if="props.sidebarOpen">MCP Servers</span>
-      </button>
-    </template>
     <div class="side-spacer"></div>
-    <div class="side-status"><LoadingDots v-if="props.busy" text="Working" /></div>
+
+    <div class="side-foot">
+      <div class="side-status"><LoadingDots v-if="props.busy" text="Working" /></div>
+      <div v-if="props.version && props.sidebarOpen" class="side-version">v{{ props.version }}</div>
+    </div>
   </aside>
 </template>
 
 <style scoped>
-.sidebar { width: 220px; background: var(--adc-sidebar-bg); border-right: 1px solid var(--adc-border); padding: 10px 8px; display: flex; flex-direction: column; gap: 6px; transition: width 0.2s ease; }
-.sidebar.collapsed { width: 64px; }
-.burger { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); cursor: pointer; }
-.side-tab { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); cursor: pointer; text-align: left; display: flex; align-items: center; gap: 8px; }
-.side-tab svg, .side-subtab svg { width: 16px; height: 16px; }
-.side-tab.active { background: var(--adc-accent); border-color: var(--adc-accent); }
-.side-subtab { margin-left: 14px; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--adc-border); background: var(--adc-surface); color: var(--adc-fg); cursor: pointer; text-align: left; font-size: 12px; display: flex; align-items: center; gap: 8px; }
-.side-subtab.active { background: var(--adc-accent); border-color: var(--adc-accent); color: #fff; }
-.side-spacer { flex: 1; }
-.side-status { padding-top: 8px; }
+.sidebar {
+  width: 216px;
+  flex: 0 0 auto;
+  background: var(--adc-sidebar-bg);
+  border-right: 1px solid var(--adc-border);
+  padding: var(--sp-3) var(--sp-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  box-sizing: border-box;
+  transition: width 0.18s ease;
+  overflow: hidden;
+}
+.sidebar.collapsed { width: 60px; }
+
+.side-head {
+  display: flex;
+  align-items: center;
+  padding: 0 var(--sp-1) var(--sp-2);
+}
+
+/* An icon button, not a nav item: no fill, no border, so it stops reading as
+   a sixth entry in the list. */
+.burger {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--adc-fg-muted);
+  cursor: pointer;
+}
+.burger:hover { background: var(--adc-hover); color: var(--adc-fg); }
+.burger:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--adc-focus-ring); }
+.burger :deep(svg) { width: 18px; height: 18px; }
+
+.side-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* Nav items carry no border or surface of their own. Nine outlined boxes
+   stacked in a rail is what made this look busy; hover and the active fill
+   are enough to show state. */
+.side-tab,
+.side-subtab {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--adc-fg);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.side-tab {
+  min-height: 36px;
+  padding: 0 var(--sp-3);
+  font-size: var(--fs-base);
+  font-weight: 500;
+}
+.side-tab :deep(svg) { width: 17px; height: 17px; flex: 0 0 auto; }
+
+.side-subtab {
+  min-height: 30px;
+  /* Indent aligns the sub-item's icon under the parent's label, so the
+     hierarchy reads without a connector line. */
+  padding: 0 var(--sp-3) 0 var(--sp-6);
+  font-size: var(--fs-sm);
+  color: var(--adc-fg-muted);
+}
+.side-subtab :deep(svg) { width: 14px; height: 14px; flex: 0 0 auto; }
+
+.side-tab:hover,
+.side-subtab:hover { background: var(--adc-hover); }
+
+.side-tab.active {
+  background: var(--adc-accent);
+  color: #fff;
+}
+/* A sub-item is subordinate to its parent, so it gets a tint and accent text
+   rather than the parent's solid fill. Two solid blue blocks stacked would
+   read as two equals. */
+.side-subtab.active {
+  background: var(--adc-hover);
+  color: var(--adc-accent);
+  font-weight: 600;
+}
+
+.side-tab:focus-visible,
+.side-subtab:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--adc-focus-ring);
+}
+
+.side-label { overflow: hidden; text-overflow: ellipsis; }
+
+/* Collapsed: icons centre themselves and the sub-item indent is dropped,
+   otherwise the children sit visibly off-axis from their parents. */
+.collapsed .side-tab,
+.collapsed .side-subtab {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.side-spacer { flex: 1 1 auto; }
+
+.side-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3) 0;
+  border-top: 1px solid var(--adc-border);
+  min-height: 32px;
+}
+.side-status { min-width: 0; flex: 1 1 auto; }
+.side-version {
+  font-size: var(--fs-xs);
+  color: var(--adc-fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+.collapsed .side-foot { justify-content: center; padding-left: 0; padding-right: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar { transition: none; }
+}
 </style>

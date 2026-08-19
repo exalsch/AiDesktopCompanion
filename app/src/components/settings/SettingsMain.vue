@@ -3,7 +3,7 @@ import SettingsGeneral from './SettingsGeneral.vue'
 import SettingsMcpServers from './SettingsMcpServers.vue'
 import SettingsQuickPrompts from './SettingsQuickPrompts.vue'
 import SettingsSpeechToText from './SettingsSpeechToText.vue'
-import { onMounted, watch } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 
 const props = defineProps<{
@@ -26,6 +26,17 @@ const props = defineProps<{
   notify?: (msg: string, kind?: 'error' | 'success', ms?: number) => void
 }>()
 
+/** The page header names the subview rather than saying "Settings" - the
+ *  sidebar already establishes that we are in settings, so repeating it wastes
+ *  the most prominent line on the screen. */
+const SUBVIEW_DESC: Record<string, string> = {
+  'General': 'Hotkeys, the AI provider, interface style and conversation storage.',
+  'Speech To Text': 'Which engine transcribes your recordings, and what happens to the text afterwards.',
+  'Quick Prompts': 'The nine prompts reachable from the popup and the Select-All hotkey.',
+  'MCP Servers': 'External tool servers the assistant can call during a chat.',
+}
+const subviewDesc = computed(() => SUBVIEW_DESC[props.settingsSubview] || '')
+
 async function refreshMcpStatuses() {
   try {
     const arr = Array.isArray(props.settings?.mcp_servers) ? props.settings.mcp_servers : []
@@ -45,51 +56,53 @@ watch(() => props.settingsSubview, (sub) => { if (sub === 'MCP Servers') { refre
 </script>
 
 <template>
-  <div class="settings">
-    <div class="section-title">Settings</div>
-    <SettingsGeneral
-      v-if="props.settingsSubview === 'General'"
-      :settings="props.settings"
-      :models="props.models"
-      :onSave="props.onSave"
-      :onRefreshModels="props.onRefreshModels"
-      :onClearConversations="props.onClearConversations"
-    />
+  <!-- Two roots on purpose: the header and the panel become sibling children of
+       the `.page` flex column in App.vue, so they inherit its vertical rhythm
+       instead of needing a wrapper with its own margins. -->
+  <header class="page-head">
+    <div>
+      <h1 class="page-title">{{ props.settingsSubview }}</h1>
+      <p v-if="subviewDesc" class="page-desc">{{ subviewDesc }}</p>
+    </div>
+  </header>
 
-    <SettingsSpeechToText
-      v-else-if="props.settingsSubview === 'Speech To Text'"
-      :settings="props.settings"
-      :models="props.models"
-      :onRefreshModels="props.onRefreshModels"
-    />
+  <SettingsGeneral
+    v-if="props.settingsSubview === 'General'"
+    :settings="props.settings"
+    :models="props.models"
+    :onSave="props.onSave"
+    :onRefreshModels="props.onRefreshModels"
+    :onClearConversations="props.onClearConversations"
+  />
 
-    <SettingsQuickPrompts
-      v-else-if="props.settingsSubview === 'Quick Prompts'"
-      :settings="props.settings"
-      :models="props.models"
-      :onRefreshModels="props.onRefreshModels"
-      :notify="props.notify"
-    />
+  <SettingsSpeechToText
+    v-else-if="props.settingsSubview === 'Speech To Text'"
+    :settings="props.settings"
+    :models="props.models"
+    :onRefreshModels="props.onRefreshModels"
+  />
 
-    <SettingsMcpServers
-      v-else
-      :settings="props.settings"
-      :onAdd="props.onAdd"
-      :onRemove="props.onRemove"
-      :onSave="props.onSave"
-      :onConnect="props.onConnect"
-      :onDisconnect="props.onDisconnect"
-      :onPing="props.onPing"
-      :onListTools="props.onListTools"
-      :onFillArgsTemplate="props.onFillArgsTemplate"
-      :onValidateEnvJsonInput="props.onValidateEnvJsonInput"
-      :onCallTool="props.onCallTool"
-      :selectedToolObj="props.selectedToolObj"
-    />
-  </div>
+  <SettingsQuickPrompts
+    v-else-if="props.settingsSubview === 'Quick Prompts'"
+    :settings="props.settings"
+    :models="props.models"
+    :onRefreshModels="props.onRefreshModels"
+    :notify="props.notify"
+  />
+
+  <SettingsMcpServers
+    v-else
+    :settings="props.settings"
+    :onAdd="props.onAdd"
+    :onRemove="props.onRemove"
+    :onSave="props.onSave"
+    :onConnect="props.onConnect"
+    :onDisconnect="props.onDisconnect"
+    :onPing="props.onPing"
+    :onListTools="props.onListTools"
+    :onFillArgsTemplate="props.onFillArgsTemplate"
+    :onValidateEnvJsonInput="props.onValidateEnvJsonInput"
+    :onCallTool="props.onCallTool"
+    :selectedToolObj="props.selectedToolObj"
+  />
 </template>
-
-<style scoped>
-.settings { margin: 0px auto; max-width: none; color: var(--adc-fg); }
-.section-title { font-weight: 700; margin-bottom: 8px; font-size: 18px; }
-</style>

@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import HotkeyPicker from './HotkeyPicker.vue'
+import CollapsibleCard from '../ui/CollapsibleCard.vue'
 
 const props = defineProps<{
   settings: any
@@ -44,51 +45,71 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="settings-section">
-    <div class="settings-title">General Settings</div>
+  <!-- Each group is its own card and a sibling of the others, so `.page` owns
+       the spacing between them. The groups that are set once and forgotten
+       start folded; the ones people actually come here to change do not. -->
 
-    <div class="settings-row col">
-      <label class="label">Global Hotkey</label>
+  <CollapsibleCard
+    id="settings.general.hotkeys"
+    title="Hotkeys"
+    desc="Global shortcuts, registered with Windows while the app runs."
+  >
+    <div class="field">
+      <label class="field-label">Global hotkey</label>
       <HotkeyPicker v-model="props.settings.global_hotkey" />
-      <div class="settings-hint">Opens the Quick Actions popup. Example: Alt + Shift + A. Leave all empty to disable. Current: <code>{{ props.settings.global_hotkey || 'disabled' }}</code></div>
+      <p class="field-hint">
+        Opens the Quick Actions popup. Leave every part empty to disable.
+        Current: <code>{{ props.settings.global_hotkey || 'disabled' }}</code>
+      </p>
     </div>
 
-    <div class="settings-row col">
-      <label class="label">Select-All Hotkey</label>
+    <div class="divider"></div>
+
+    <div class="field">
+      <label class="field-label">Select-All hotkey</label>
       <HotkeyPicker v-model="props.settings.select_all_hotkey" />
-      <div class="settings-hint">
-        Selects text in the focused application, runs the quick prompt below on it and pastes the result back over it - no popup.
-        Leave all empty to disable. Current: <code>{{ props.settings.select_all_hotkey || 'disabled' }}</code>
+      <p class="field-hint">
+        Selects text in the focused application, runs the quick prompt below on it and pastes the result back over it -
+        no popup in between. Leave every part empty to disable.
+        Current: <code>{{ props.settings.select_all_hotkey || 'disabled' }}</code>
+      </p>
+      <p v-if="hotkeysCollide" class="field-hint error">
+        This is the same combination as the global hotkey - only one of them will work.
+      </p>
+    </div>
+
+    <div class="field-grid">
+      <div class="field">
+        <label class="field-label">What it selects</label>
+        <select v-model="props.settings.select_all_capture_mode" class="input" :disabled="!props.settings.select_all_hotkey">
+          <option value="ctrl_shift_home">Everything above the cursor (Ctrl + Shift + Home)</option>
+          <option value="ctrl_a">Whole document (Ctrl + A)</option>
+          <option value="none">Off - use what is already selected</option>
+        </select>
       </div>
-      <div v-if="hotkeysCollide" class="settings-hint error">This is the same combination as the Global Hotkey - only one of them will work.</div>
-    </div>
 
-    <div class="settings-row col">
-      <label class="label">Select-All Text Selection</label>
-      <select v-model="props.settings.select_all_capture_mode" class="input" :disabled="!props.settings.select_all_hotkey">
-        <option value="ctrl_shift_home">Everything above the cursor (Ctrl + Shift + Home)</option>
-        <option value="ctrl_a">Whole document (Ctrl + A)</option>
-        <option value="none">Off - use what is already selected</option>
-      </select>
-      <div class="settings-hint">
-        What the hotkey selects before running the prompt. <em>Ctrl + Shift + Home</em> is the default because it fits the
-        correct-what-I-just-typed case: in a chat box or comment field it grabs your draft without also selecting the conversation
-        above it. Pick <em>Ctrl + A</em> to rewrite a whole document instead.
+      <div class="field">
+        <label class="field-label">Prompt it runs</label>
+        <select v-model.number="props.settings.select_all_quick_prompt" class="input" :disabled="!props.settings.select_all_hotkey">
+          <option v-for="n in 9" :key="'sa-qp-' + n" :value="n">{{ n }} - {{ quickPromptLabels[n - 1] || '(empty)' }}</option>
+        </select>
       </div>
     </div>
+    <p class="field-hint">
+      <em>Ctrl + Shift + Home</em> is the default because it fits the correct-what-I-just-typed case: in a chat box or
+      comment field it grabs your draft without also selecting the conversation above it. Pick <em>Ctrl + A</em> to
+      rewrite a whole document instead. Prompts are edited under Settings → Quick Prompts.
+    </p>
+  </CollapsibleCard>
 
-    <div class="settings-row col">
-      <label class="label">Select-All Quick Prompt</label>
-      <select v-model.number="props.settings.select_all_quick_prompt" class="input" :disabled="!props.settings.select_all_hotkey">
-        <option v-for="n in 9" :key="'sa-qp-'+n" :value="n">{{ n }} - {{ quickPromptLabels[n - 1] || '(empty)' }}</option>
-      </select>
-      <div class="settings-hint">Which of the nine quick prompts the Select-All hotkey runs. Edit the prompts under Settings → Quick Prompts.</div>
-    </div>
-
-    <div class="settings-title">AI Provider</div>
-    <div class="settings-row col">
-      <label class="label">OpenAI API Key</label>
-      <div class="row-inline">
+  <CollapsibleCard
+    id="settings.general.provider"
+    title="AI Provider"
+    desc="Credentials and the model used for chat and quick prompts."
+  >
+    <div class="field">
+      <label class="field-label">OpenAI API key</label>
+      <div class="actions">
         <input
           :type="showApiKey ? 'text' : 'password'"
           v-model="props.settings.openai_api_key"
@@ -97,41 +118,47 @@ onMounted(async () => {
           autocomplete="off"
           spellcheck="false"
         />
-        <button class="btn ghost" @click="showApiKey = !showApiKey">{{ showApiKey ? 'Hide' : 'Show' }}</button>
+        <button class="btn ghost" type="button" @click="showApiKey = !showApiKey">{{ showApiKey ? 'Hide' : 'Show' }}</button>
       </div>
+      <p class="field-hint">Stored in settings.json. Leave empty to fall back to the <code>OPENAI_API_KEY</code> environment variable.</p>
     </div>
 
-    <div class="settings-row col">
-      <label class="label">Model</label>
-      <div class="row-inline">
+    <div class="field">
+      <label class="field-label">Model</label>
+      <div class="actions">
         <select v-model="props.settings.openai_chat_model" class="input">
           <option v-if="!props.models.list.includes(props.settings.openai_chat_model)" :value="props.settings.openai_chat_model">{{ props.settings.openai_chat_model }} (current)</option>
           <option v-for="m in props.models.list" :key="m" :value="m">{{ m }}</option>
         </select>
-        <button class="btn" :disabled="props.models.loading" @click="props.onRefreshModels">{{ props.models.loading ? 'Fetching…' : 'Fetch Models' }}</button>
+        <button class="btn ghost" type="button" :disabled="props.models.loading" @click="props.onRefreshModels">
+          {{ props.models.loading ? 'Fetching…' : 'Fetch models' }}
+        </button>
       </div>
-      <div v-if="props.models.error" class="settings-hint error">{{ props.models.error }}</div>
+      <p v-if="props.models.error" class="field-hint error">{{ props.models.error }}</p>
     </div>
 
-    <div class="settings-row col">
-      <label class="label">Tokenizer</label>
-      <div class="row-inline">
-        <select v-model="props.settings.tokenizer_mode" class="input" style="max-width: 220px;">
+    <div class="field-grid">
+      <div class="field">
+        <label class="field-label">Tokenizer</label>
+        <select v-model="props.settings.tokenizer_mode" class="input">
           <option value="approx">Approximate (fast, lightweight)</option>
           <option value="tiktoken">Tokenizer (more accurate)</option>
         </select>
+        <p class="field-hint">Approximate uses a character heuristic; the tokenizer is exact but adds a little overhead.</p>
       </div>
-      <div class="settings-hint">Approx uses a character heuristic. Tokenizer uses a library for higher accuracy and may add slight overhead.</div>
+
+      <div class="field">
+        <label class="field-label">
+          Temperature
+          <span class="range-value">{{ Number(props.settings.temperature).toFixed(2) }}</span>
+        </label>
+        <input class="range" type="range" min="0" max="2" step="0.05" v-model.number="props.settings.temperature" />
+        <p class="field-hint">Lower is more deterministic, higher is more creative. Default 1.00.</p>
+      </div>
     </div>
 
-    <div class="settings-row col">
-      <label class="label">Temperature: {{ Number(props.settings.temperature).toFixed(2) }}</label>
-      <input type="range" min="0" max="2" step="0.05" v-model.number="props.settings.temperature" />
-      <div class="settings-hint">Lower = deterministic, Higher = creative. Default 1.0</div>
-    </div>
-
-    <div class="settings-row col">
-      <label class="label">System Prompt</label>
+    <div class="field">
+      <label class="field-label">System prompt</label>
       <textarea
         v-model="props.settings.system_prompt"
         class="input"
@@ -140,51 +167,71 @@ onMounted(async () => {
         autocomplete="off"
         spellcheck="false"
       />
-      <div class="settings-hint">
-        Used as the global system instruction for chat. When a Quick Prompt is active, its text is appended to the end of this system prompt.
-      </div>
+      <p class="field-hint">
+        Sent as the system message for every chat. When a Quick Prompt is active its text is appended to the end of this.
+      </p>
     </div>
-    <div class="settings-title">UI</div>
-    <div class="settings-row col">
-      <label class="label">UI Style</label>
-      <select v-model="props.settings.ui_style" class="input">
+  </CollapsibleCard>
+
+  <CollapsibleCard
+    id="settings.general.interface"
+    title="Interface"
+    desc="Appearance and what the app does at startup."
+  >
+    <div class="field">
+      <label class="field-label">UI style</label>
+      <select v-model="props.settings.ui_style" class="input w-md">
         <option value="sidebar-dark">Sidebar Dark (default)</option>
         <option value="sidebar-light">Sidebar Light</option>
       </select>
-      <div class="settings-hint">Switch between Sidebar Dark or Sidebar Light.</div>
     </div>
-    <div class="settings-row">
-      <label class="checkbox"><input type="checkbox" v-model="props.settings.start_in_tray"/> Start in tray</label>
-    </div>
-    <div class="settings-hint">When enabled, the main window stays hidden on app startup until you open it from the tray.</div>
-    <div class="settings-row">
-      <label class="checkbox"><input type="checkbox" v-model="props.settings.show_busy_indicator"/> Show busy indicator</label>
-    </div>
-    <div class="settings-hint">
-      Shows a small always-on-top pill with elapsed time while a background action runs (quick prompts, text to speech, transcription),
-      and the error message if the request fails or times out. Hidden while the main window is in front.
-    </div>
-    <div class="settings-title">Conversation</div>
-    <div class="settings-row">
-      <label class="checkbox"><input type="checkbox" v-model="props.settings.persist_conversations"/> Persist conversations</label>
-      <button class="btn danger" @click="props.onClearConversations">Clear All Conversations</button>
-    </div>
-    <div class="settings-hint">When enabled, conversation history is saved locally only.</div>
-    <div class="settings-row">
-      <label class="checkbox"><input type="checkbox" v-model="props.settings.hide_tool_calls_in_chat"/> Hide tool call details in chat</label>
-    </div>
-  </div>
-</template>
 
-<style scoped>
-/* Constrain the System Prompt textarea within the settings card */
-.settings-section :deep(textarea.input) {
-  display: block;
-  width: 100% !important;
-  max-width: 100% !important;
-  box-sizing: border-box;
-  flex: 0 0 auto !important; /* override global flex:1 on .input */
-  align-self: stretch;
-  overflow-x: hidden;
-}
-</style>
+    <label class="switch row">
+      <input type="checkbox" v-model="props.settings.start_in_tray" />
+      <span class="switch-text">
+        <span class="switch-label">Start in tray</span>
+        <span class="switch-hint">The main window stays hidden on startup until you open it from the tray icon.</span>
+      </span>
+    </label>
+
+    <label class="switch row">
+      <input type="checkbox" v-model="props.settings.show_busy_indicator" />
+      <span class="switch-text">
+        <span class="switch-label">Show busy indicator</span>
+        <span class="switch-hint">
+          A small always-on-top pill showing elapsed time while a background action runs - quick prompts, speech, transcription -
+          and the error if one fails or times out. Hidden while the main window is in front.
+        </span>
+      </span>
+    </label>
+  </CollapsibleCard>
+
+  <CollapsibleCard
+    id="settings.general.conversation"
+    title="Conversation"
+    desc="How chat history is stored and displayed."
+  >
+    <label class="switch row">
+      <input type="checkbox" v-model="props.settings.persist_conversations" />
+      <span class="switch-text">
+        <span class="switch-label">Persist conversations</span>
+        <span class="switch-hint">History is saved locally only, never uploaded anywhere.</span>
+      </span>
+    </label>
+
+    <label class="switch row">
+      <input type="checkbox" v-model="props.settings.hide_tool_calls_in_chat" />
+      <span class="switch-text">
+        <span class="switch-label">Hide tool call details in chat</span>
+        <span class="switch-hint">Collapses MCP request and response blocks so the conversation reads as prose.</span>
+      </span>
+    </label>
+
+    <div class="divider"></div>
+
+    <div class="actions">
+      <button class="btn danger" type="button" @click="props.onClearConversations">Clear all conversations</button>
+      <span class="field-hint">Deletes every saved conversation. This cannot be undone.</span>
+    </div>
+  </CollapsibleCard>
+</template>

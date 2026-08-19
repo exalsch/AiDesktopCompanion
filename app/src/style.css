@@ -1,9 +1,30 @@
+/* ============================================================================
+   Global base + shared design layer.
+
+   Layering, from the bottom up:
+
+     1. This file - design tokens (spacing, radii, type scale, control sizing)
+        and every structural rule: how a card is put together, how a field
+        stacks its label above its control, how big a button is.
+     2. styles/<name>/style.css - injected at runtime by App.vue for the
+        selected `ui_style`. Those files set COLOUR tokens only. They should
+        not need to restate layout, because everything here is expressed
+        against tokens.
+
+   The practical rule when adding UI: reach for a class here first. If a panel
+   needs a one-off, put it in that component's <style scoped>. Do not copy a
+   rule into a theme file - that is how the two themes drift apart.
+
+   Class names here are used only by the main window, so sub-windows
+   (QuickActions, CaptureOverlay, BusyIndicator) are unaffected.
+   ========================================================================= */
+
 :root {
   font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
 
-  /* Default (dark) theme tokens */
+  /* --- Colour tokens (dark default; overridden per ui_style) ------------- */
   --adc-accent: #2e5cff;
   --adc-fg: #e0e0ea;
   --adc-fg-muted: #9fa0aa;
@@ -16,11 +37,63 @@
   --adc-focus-ring: rgba(46, 92, 255, 0.22);
   --adc-hover: rgba(255, 255, 255, 0.06);
   --adc-surface-2: #2a2a34;
-  --content-max: 860px;
   --adc-assistant-bubble-bg: var(--adc-surface);
   --adc-assistant-bubble-border: var(--adc-border);
   --adc-assistant-bubble-fg: var(--adc-fg);
 
+  /* Status colours, used by both badges and toasts so a "connected" chip and a
+     success toast cannot drift apart. Each theme overrides all nine. */
+  --adc-ok-fg: #7ee2a8;
+  --adc-ok-bg: #10281c;
+  --adc-ok-border: #1f5136;
+  --adc-warn-fg: #f0c274;
+  --adc-warn-bg: #2b2113;
+  --adc-warn-border: #5a4423;
+  --adc-err-fg: #ff9b9b;
+  --adc-err-bg: #2e1616;
+  --adc-err-border: #5c2828;
+
+  --adc-select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%239fa0aa' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E");
+
+  /* --- Spacing scale ---------------------------------------------------- *
+   * Every margin, gap and padding in the main window comes from this scale.
+   * Values are multiples of 4 so vertical rhythm lines up on its own. */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 28px;
+  --sp-7: 40px;
+
+  /* --- Radii ------------------------------------------------------------ */
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  /* --- Type scale ------------------------------------------------------- */
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-base: 13px;
+  --fs-md: 15px;
+  --fs-lg: 18px;
+  --fs-xl: 22px;
+  --font-mono: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, monospace;
+
+  /* --- Controls --------------------------------------------------------- *
+   * One height for every input, select and button so rows align without
+   * per-component nudging. */
+  --ctrl-h: 32px;
+  --ctrl-h-sm: 26px;
+
+  /* --- Elevation -------------------------------------------------------- */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.28);
+  --shadow-2: 0 6px 20px rgba(0, 0, 0, 0.35);
+
+  /* Reading measure for the main content column. Long prose lines are the
+     single biggest reason a settings screen feels unfinished. */
+  --content-max: 860px;
 
   color-scheme: light dark;
   color: var(--adc-fg);
@@ -34,49 +107,19 @@
 
 a {
   font-weight: 500;
-  color: #646cff;
+  color: var(--adc-accent);
   text-decoration: inherit;
 }
-a:hover {
-  color: #535bf2;
-}
+a:hover { filter: brightness(1.15); }
 
 body {
   margin: 0;
   /* Let app-specific layouts control positioning and scroll */
 }
 
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
-}
-
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
-}
-
-.card {
-  padding: 2em;
-}
-
 #app {
   max-width: none;
-  min-width: 760px;  
+  min-width: 760px;
   text-align: center;
 }
 
@@ -101,4 +144,395 @@ html.busy-window {
   background: transparent;
 }
 
-/* The app uses explicit themes; the prefers-color-scheme block is not needed. */
+/* ============================================================================
+   Design layer
+   ========================================================================= */
+
+/* --- Page scaffolding ----------------------------------------------------
+   A section renders one `.page`. It caps the reading measure and owns the
+   vertical rhythm between the header and the cards, so panels themselves no
+   longer need margins between their top-level blocks. */
+.page {
+  max-width: var(--content-max);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  text-align: left;
+}
+.page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-4);
+}
+.page-title {
+  font-size: var(--fs-xl);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  margin: 0;
+  color: var(--adc-fg);
+}
+.page-desc {
+  font-size: var(--fs-sm);
+  color: var(--adc-fg-muted);
+  margin: var(--sp-1) 0 0;
+  max-width: 62ch;
+}
+.page-actions {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* --- Card ----------------------------------------------------------------
+   The single grouping primitive. `.card-head` is used directly for a static
+   card and is what CollapsibleCard renders into its <button>. */
+.card {
+  background: var(--adc-surface);
+  border: 1px solid var(--adc-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  min-height: 44px;
+  box-sizing: border-box;
+}
+.card-head + .card-body { padding-top: 0; }
+.card-heading { min-width: 0; flex: 1; }
+.card-title {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--adc-fg);
+  margin: 0;
+  line-height: 1.3;
+}
+.card-desc {
+  font-size: var(--fs-sm);
+  color: var(--adc-fg-muted);
+  margin: 2px 0 0;
+  line-height: 1.45;
+}
+.card-body {
+  padding: var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+/* A divider between logically separate groups inside one card. */
+.card-body .divider {
+  height: 1px;
+  background: var(--adc-border);
+  margin: var(--sp-1) calc(var(--sp-4) * -1);
+}
+
+/* --- Fields --------------------------------------------------------------
+   `.field` stacks a label over its control over its hint. `.field-row` is the
+   inline variant for a control that reads better beside its label. */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+.field-row > .field-label { margin: 0; flex: 0 0 auto; }
+.field-row > .input { flex: 1 1 auto; }
+.field-label {
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--adc-fg);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.field-hint {
+  font-size: var(--fs-sm);
+  color: var(--adc-fg-muted);
+  margin: 0;
+  line-height: 1.5;
+  max-width: 68ch;
+}
+.field-hint.error { color: var(--adc-danger); }
+.field-hint code {
+  font-family: var(--font-mono);
+  font-size: 0.95em;
+  background: var(--adc-surface-2);
+  border-radius: var(--radius-sm);
+  padding: 1px 5px;
+}
+/* Two fields side by side, collapsing on a narrow window. */
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--sp-4);
+}
+
+/* --- Inputs --------------------------------------------------------------
+   One rule for text inputs, selects and textareas so they share height,
+   radius, border and focus treatment. */
+.input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: var(--ctrl-h);
+  padding: 0 var(--sp-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--adc-border);
+  background: var(--adc-bg);
+  color: var(--adc-fg);
+  font-family: inherit;
+  font-size: var(--fs-base);
+  line-height: calc(var(--ctrl-h) - 2px);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+textarea.input {
+  padding: var(--sp-2) var(--sp-3);
+  line-height: 1.55;
+  resize: vertical;
+  min-height: 84px;
+}
+textarea.input.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+select.input {
+  appearance: none;
+  padding-right: var(--sp-6);
+  cursor: pointer;
+  /* A data: URI cannot interpolate a colour var, so the whole image is the
+     token and each theme supplies one in its own stroke colour. */
+  background-image: var(--adc-select-chevron);
+  background-repeat: no-repeat;
+  background-position: right var(--sp-3) center;
+  background-size: 14px;
+}
+.input::placeholder { color: var(--adc-fg-muted); opacity: 0.75; }
+.input:hover:not(:disabled) { border-color: var(--adc-border-strong); }
+.input:focus,
+.input:focus-visible {
+  outline: none;
+  border-color: var(--adc-accent);
+  box-shadow: 0 0 0 3px var(--adc-focus-ring);
+}
+.input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.input.sm { min-height: var(--ctrl-h-sm); line-height: calc(var(--ctrl-h-sm) - 2px); font-size: var(--fs-sm); }
+/* Inputs that should size to their content rather than fill the row. */
+.input.w-auto { width: auto; }
+.input.w-xs { width: 88px; flex: 0 0 auto; }
+.input.w-sm { width: 150px; flex: 0 0 auto; }
+.input.w-md { width: 240px; flex: 0 0 auto; }
+
+/* --- Switch --------------------------------------------------------------
+   Replaces the native checkbox for on/off settings. The input stays in the
+   DOM (never `display:none`) so it keeps keyboard focus and screen-reader
+   semantics; it is the visual that is swapped. */
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+  cursor: pointer;
+  user-select: none;
+  min-width: 0;
+}
+.switch input[type="checkbox"] {
+  appearance: none;
+  margin: 0;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 20px;
+  border-radius: var(--radius-pill);
+  background: var(--adc-surface-2);
+  border: 1px solid var(--adc-border);
+  position: relative;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.switch input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--adc-fg-muted);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.switch input[type="checkbox"]:checked {
+  background: var(--adc-accent);
+  border-color: var(--adc-accent);
+}
+.switch input[type="checkbox"]:checked::after {
+  transform: translateY(-50%) translateX(14px);
+  background: #fff;
+}
+.switch input[type="checkbox"]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--adc-focus-ring);
+}
+.switch input[type="checkbox"]:disabled { opacity: 0.5; cursor: not-allowed; }
+.switch-text { min-width: 0; }
+.switch-label { font-size: var(--fs-base); color: var(--adc-fg); }
+.switch-hint { font-size: var(--fs-sm); color: var(--adc-fg-muted); margin-top: 2px; }
+/* Switch as a full-width row inside a card, label left, control right. */
+.switch.row {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  flex-direction: row-reverse;
+}
+
+/* --- Range ---------------------------------------------------------------
+   Paired with a value readout in the label, so the number is always visible
+   without the user having to drag to find out where they are. */
+.range {
+  width: 100%;
+  max-width: 320px;
+  accent-color: var(--adc-accent);
+  height: 20px;
+  margin: 0;
+  cursor: pointer;
+}
+.range:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--adc-focus-ring); border-radius: var(--radius-pill); }
+.range-value {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--adc-fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Checkbox (for multi-select lists, where a switch would be wrong) ---- */
+.checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-base);
+  cursor: pointer;
+}
+.checkbox input[type="checkbox"] { accent-color: var(--adc-accent); width: 15px; height: 15px; margin: 0; }
+
+/* --- Buttons ------------------------------------------------------------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-height: var(--ctrl-h);
+  padding: 0 var(--sp-4);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--adc-accent);
+  background: var(--adc-accent);
+  color: #fff;
+  font-family: inherit;
+  font-size: var(--fs-base);
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: filter 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.btn:hover:not(:disabled) { filter: brightness(1.08); }
+.btn:active:not(:disabled) { filter: brightness(0.95); }
+.btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--adc-focus-ring);
+}
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn.ghost {
+  background: transparent;
+  color: var(--adc-fg);
+  border-color: var(--adc-border);
+}
+.btn.ghost:hover:not(:disabled) { background: var(--adc-hover); filter: none; }
+.btn.danger { background: var(--adc-danger); border-color: var(--adc-danger); color: #fff; }
+.btn.sm { min-height: var(--ctrl-h-sm); padding: 0 var(--sp-3); font-size: var(--fs-sm); }
+.btn.icon { padding: 0; width: var(--ctrl-h); flex: 0 0 auto; }
+.btn.icon.sm { width: var(--ctrl-h-sm); }
+.btn svg { width: 15px; height: 15px; flex: 0 0 auto; }
+
+/* --- Button group: segmented control for mutually exclusive choices ------ */
+.btn-group {
+  display: inline-flex;
+  border: 1px solid var(--adc-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+.btn-group > button {
+  appearance: none;
+  border: 0;
+  border-right: 1px solid var(--adc-border);
+  background: transparent;
+  color: var(--adc-fg-muted);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  padding: 0 var(--sp-3);
+  min-height: var(--ctrl-h-sm);
+  cursor: pointer;
+}
+.btn-group > button:last-child { border-right: 0; }
+.btn-group > button:hover { background: var(--adc-hover); }
+.btn-group > button.active { background: var(--adc-accent); color: #fff; }
+
+/* --- Small pieces -------------------------------------------------------- */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  padding: 2px var(--sp-2);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--adc-border);
+  color: var(--adc-fg-muted);
+  background: var(--adc-surface-2);
+  white-space: nowrap;
+}
+.badge.ok { color: var(--adc-ok-fg); border-color: var(--adc-ok-border); background: var(--adc-ok-bg); }
+.badge.warn { color: var(--adc-warn-fg); border-color: var(--adc-warn-border); background: var(--adc-warn-bg); }
+.badge.err { color: var(--adc-err-fg); border-color: var(--adc-err-border); background: var(--adc-err-bg); }
+/* A dot that carries the status colour without the chip around it. */
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--adc-fg-muted);
+}
+.dot.ok { background: var(--adc-ok-fg); }
+.dot.warn { background: var(--adc-warn-fg); }
+.dot.err { background: var(--adc-err-fg); }
+
+/* An inline row of controls that wraps rather than overflowing. */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+.actions.end { justify-content: flex-end; }
+.spacer { flex: 1 1 auto; min-width: 0; }
+
+/* Empty-state block for lists with nothing in them yet. */
+.empty {
+  text-align: center;
+  padding: var(--sp-6) var(--sp-4);
+  color: var(--adc-fg-muted);
+  font-size: var(--fs-sm);
+}

@@ -1,88 +1,44 @@
-/* Sidebar Dark theme CSS
-   Applied when settings.ui_style === 'sidebar-dark'
-   Based on the previous 'sidebar' theme.
-   
-   ‼️ Placeholder: customize variables and overrides for the dark sidebar theme. */
+/* Sidebar Dark theme - applied when settings.ui_style === 'sidebar-dark'.
+
+   Tokens only. Every layout rule (sizing, spacing, radii, focus treatment)
+   lives in src/style.css and is written against these names, so a new theme is
+   a copy of this file with different colours and nothing else.
+
+   If you find yourself adding a selector here, that rule probably belongs in
+   the design layer instead - putting it here is what makes the themes drift. */
 
 :root {
-  /* Theme variables */
   --adc-accent: #2e5cff;
   --adc-fg: #e6e9f2;
   --adc-fg-muted: #a6b0c3;
   --adc-bg: #101015;
   --adc-surface: #171924;
+  --adc-surface-2: #1e2130;
   --adc-border: #2a2f3a;
   --adc-border-strong: #3a4050;
-  --adc-danger: #ff4d4f;
+  --adc-danger: #d84345;
   --adc-sidebar-bg: #10131b;
-  --adc-focus-ring: rgba(46, 92, 255, 0.22);
+  --adc-focus-ring: rgba(46, 92, 255, 0.28);
   --adc-hover: rgba(255, 255, 255, 0.06);
-  --adc-surface-2: #2a2a34;
-  --content-max: 860px;
-  /* Assistant bubble theme variables */
-  --adc-assistant-bubble-bg: #1e2533; /* fallback darker surface for assistant */
+
+  /* Assistant bubble */
+  --adc-assistant-bubble-bg: #1e2533;
   --adc-assistant-bubble-border: var(--adc-border);
   --adc-assistant-bubble-fg: var(--adc-fg);
-}
 
-/* Global shells */
-.shell { background: var(--adc-bg); color: var(--adc-fg); }
-.content { background: var(--adc-bg); color: var(--adc-fg); }
-.section { color: var(--adc-fg); }
-.section-title { color: var(--adc-fg); }
-.section-hint { color: var(--adc-fg-muted); }
+  /* Status */
+  --adc-ok-fg: #7ee2a8;
+  --adc-ok-bg: #10281c;
+  --adc-ok-border: #1f5136;
+  --adc-warn-fg: #f0c274;
+  --adc-warn-bg: #2b2113;
+  --adc-warn-border: #5a4423;
+  --adc-err-fg: #ff9b9b;
+  --adc-err-bg: #2e1616;
+  --adc-err-border: #5c2828;
 
-/* Buttons */
-.btn { background: var(--adc-accent); border-color: var(--adc-accent); color: #fff; }
-.btn:hover { filter: brightness(1.05); }
-.btn.ghost { background: transparent; color: var(--adc-fg); border-color: var(--adc-border); }
-.btn.danger { background: var(--adc-danger); border-color: #c23a3c; color: #fff; }
+  --adc-select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23a6b0c3' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E");
 
-/* Tighter vertical padding for buttons */
-.btn,
-.send { padding-block: 4px; }
-.side-tab { padding-block: 4px; }
-.side-subtab { padding-block: 3px; }
-.burger { padding-block: 3px; }
-.qp-btn { padding-block: 1px; }
-
-/* Inputs */
-.input { background: var(--adc-surface); color: var(--adc-fg); border-color: var(--adc-border); }
-.label { color: var(--adc-fg-muted); }
-
-/* Toast */
-.toast { background: var(--adc-surface); color: var(--adc-fg); border-color: var(--adc-border-strong); box-shadow: 0 6px 24px rgba(0,0,0,0.35); }
-.toast.success { background: #09301a; border-color: #14532d; }
-.toast.error { background: #3b1212; border-color: #6b1f1f; }
-
-/* Sidebar layout */
-.sidebar { background: var(--adc-sidebar-bg); border-right-color: var(--adc-border); }
-.burger { background: var(--adc-surface); color: var(--adc-fg); border-color: var(--adc-border); }
-.side-tab { background: var(--adc-surface); color: var(--adc-fg); border-color: var(--adc-border); }
-.side-tab.active { background: var(--adc-accent); border-color: var(--adc-accent); color: #fff; }
-.side-subtab { background: #131722; color: var(--adc-fg); border-color: var(--adc-border); }
-.side-subtab.active { background: var(--adc-accent); border-color: var(--adc-accent); color: #fff; }
-
-/* Prompt layout containers */
-.settings { color: var(--adc-fg); }
-.settings-section { background: var(--adc-surface); border-color: var(--adc-border); }
-.settings-title { color: var(--adc-fg); }
-.settings-hint { color: var(--adc-fg-muted); }
-
-/* Conversation area backgrounds (optional) */
-.convo-wrap { background: var(--adc-surface); border: 1px solid var(--adc-border); border-radius: 10px; }
-
-/* Focus and elevation */
-.settings-section, .convo-wrap { box-shadow: 0 4px 14px rgba(0,0,0,0.5); }
-.input:focus, .input:focus-visible, select.input:focus {
-  outline: none;
-  border-color: var(--adc-accent);
-  box-shadow: 0 0 0 3px var(--adc-focus-ring);
-}
-.btn:focus, .btn:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px var(--adc-focus-ring);
-}
-.side-tab:hover, .side-subtab:hover, .burger:hover {
-  border-color: var(--adc-accent);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
