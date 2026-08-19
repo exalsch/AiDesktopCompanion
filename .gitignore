@@ -8,3 +8,6 @@ GEMINI.md
 # AI assistant files
 CLAUDE.md
 .claude/
+
+# Generated release notes (CI artifact)
+release-notes.md

@@ -20,6 +20,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate release notes (Conventional Commits)
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/release-notes.sh "${GITHUB_REF_NAME}" | tee release-notes.md
+
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
@@ -69,17 +75,6 @@ jobs:
         working-directory: app
         run: npm run tauri -- build
 
-      - name: Generate release notes (Conventional Commits)
-        id: changelog
-        uses: TriPSs/conventional-changelog-action@v5
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          preset: conventionalcommits
-          skip-commit: true
-          skip-git-pull: true
-          output-file: false
-          tag-prefix: 'v'
-
       # - name: Code-sign Windows artifacts (optional)
       #   if: env.CERT_PATH != ''
       #   shell: pwsh
@@ -100,7 +95,7 @@ jobs:
           files: |
             app/src-tauri/target/**/release/bundle/**/*
           generate_release_notes: false
-          body: ${{ steps.changelog.outputs.clean_changelog }}
+          body_path: release-notes.md
           fail_on_unmatched_files: true
           draft: false
           prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
