@@ -86,6 +86,7 @@ pub fn run() {
     })
     .invoke_handler(tauri::generate_handler![
       quick_actions::prompt_action,
+      quick_actions::assistant_action,
       quick_actions::position_quick_actions,
       quick_actions::clamp_quick_actions_to_screen,
       quick_actions::tts_selection,

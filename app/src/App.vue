@@ -175,6 +175,7 @@ const { registerAppEvents } = useAppEvents({
   findServerById: (id: string) => mcp.findServerById(id),
   showToast,
   setSection: (s: 'Prompt' | 'Assistant' | 'TTS' | 'STT' | 'Settings') => { ui.activeSection = s; if (s === 'Prompt') ui.promptSubview = 'Chat' },
+  openAssistant,
 })
 
 async function saveSettings() { try { await saveSettingsNow() } catch {} }
@@ -303,6 +304,16 @@ function handleUseAsPrompt(text: string) {
   }
 }
 
+// Set by the assistant:open event so the panel starts once it is on screen.
+const assistantAutostart = ref(0)
+
+function openAssistant(autostart: boolean) {
+  ui.activeSection = 'Assistant'
+  // A counter rather than a boolean: pressing the hotkey twice has to start a
+  // session twice, and a boolean that is already true emits no change.
+  if (autostart) assistantAutostart.value += 1
+}
+
 function setSection(s: 'Prompt' | 'Assistant' | 'TTS' | 'STT' | 'Settings') {
   ui.activeSection = s
   if (s === 'Prompt') ui.promptSubview = 'Chat'
@@ -397,14 +408,14 @@ async function autoConnectServers() {
             </div>
           </template>
 
-          <div v-if="ui.activeSection === 'Assistant'" class="page">
+          <div v-show="ui.activeSection === 'Assistant'" class="page">
             <header class="page-head">
               <div>
                 <h1 class="page-title">Assistant Mode</h1>
                 <p class="page-desc">A live voice session over WebRTC. Speak and it answers; tools and the supervisor are optional.</p>
               </div>
             </header>
-            <AssistantMode :mcpServers="settings.mcp_servers" :notify="showToast" />
+            <AssistantMode :mcpServers="settings.mcp_servers" :notify="showToast" :autostart="assistantAutostart" />
           </div>
 
           <div v-show="ui.activeSection === 'TTS'" class="page">

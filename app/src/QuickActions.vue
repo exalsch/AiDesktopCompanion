@@ -299,9 +299,14 @@ async function cancelCommandMode(): Promise<void> {
   await hidePopup('command-cancel', true)
 }
 
-async function handleAction(action: 'prompt' | 'tts' | 'stt' | 'image'): Promise<void> {
+async function handleAction(action: 'prompt' | 'tts' | 'stt' | 'image' | 'assistant'): Promise<void> {
   dbg('handleAction', action)
   try {
+    if (action === 'assistant') {
+      await hidePopup()
+      await invoke('assistant_action')
+      return
+    }
     if (action === 'prompt') {
       // Close first so focus returns to previous app; then capture selection
       await hidePopup()
@@ -412,7 +417,7 @@ function onKeydown(e: KeyboardEvent): void {
   // P/T/I: only preventDefault on keydown to suppress repeats; action fires on keyup
   // S: start recording on keydown (push-to-talk)
   // Only active in home mode — info and preview have their own key handling
-  if (uiMode.value === 'home' && ['p', 't', 's', 'i', 'c'].includes(key)) {
+  if (uiMode.value === 'home' && ['p', 't', 's', 'i', 'c', 'a'].includes(key)) {
     e.preventDefault()
     if (e.repeat) return  // skip key repeats
     if (key === 's') {
@@ -426,6 +431,7 @@ function onKeydown(e: KeyboardEvent): void {
         if (key === 'p') handleAction('prompt')
         else if (key === 't') handleAction('tts')
         else if (key === 'i') handleAction('image')
+        else if (key === 'a') handleAction('assistant')
       })
     }
     return
@@ -1008,6 +1014,10 @@ async function onInsert(): Promise<void> {
         <button class="qa-btn" @click="() => handleAction('image')" aria-label="Image (I)">
           <span class="letter">I</span>
           <span class="label">Image</span>
+        </button>
+        <button class="qa-btn" @click="() => handleAction('assistant')" aria-label="Assistant (A)">
+          <span class="letter">A</span>
+          <span class="label">Assistant</span>
         </button>
         <button
           v-if="commandEnabled"

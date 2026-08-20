@@ -27,6 +27,9 @@ export interface UseAppEventsDeps {
 
   // Section helper
   setSection: (s: 'Prompt' | 'Assistant' | 'TTS' | 'STT' | 'Settings') => void
+
+  /** Switch to Assistant Mode, optionally starting a session straight away. */
+  openAssistant: (autostart: boolean) => void
 }
 
 export function useAppEvents(deps: UseAppEventsDeps) {
@@ -34,7 +37,7 @@ export function useAppEvents(deps: UseAppEventsDeps) {
     const {
       prompt, ui, ttsRef, composerInput, composerRef,
       appendMessage, newConversation, updateMessage,
-      findServerById, showToast, setSection,
+      findServerById, showToast, setSection, openAssistant,
     } = deps
 
     const unsubs: Array<() => void> = []
@@ -48,6 +51,13 @@ export function useAppEvents(deps: UseAppEventsDeps) {
       prompt.visible = true
     })
     unsubs.push(u1)
+
+    // Quick Actions asked for a voice session.
+    const uAssistant = await listen<{ autostart?: boolean }>('assistant:open', (e) => {
+      const p = (e?.payload as any) || {}
+      openAssistant(p.autostart === true)
+    })
+    unsubs.push(uAssistant)
 
     // Quick Prompts config error surfaced to UI
     const u2 = await listen<{ message: string; path?: string }>('settings:quick-prompts-error', (e) => {

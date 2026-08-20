@@ -147,6 +147,21 @@ pub fn refocus_previous_app() -> Result<(), String> {
   Ok(())
 }
 
+/// Bring the main window forward on Assistant Mode and start a session.
+///
+/// Unlike the other Quick Actions this captures no selection - a voice session
+/// has nothing to do with whatever text happens to be highlighted.
+#[tauri::command]
+pub fn assistant_action(app: tauri::AppHandle) -> Result<(), String> {
+  if let Some(win) = app.get_webview_window("main") {
+    let _ = win.show();
+    let _ = win.unminimize();
+    let _ = win.set_focus();
+  }
+  let _ = app.emit("assistant:open", serde_json::json!({ "autostart": true }));
+  Ok(())
+}
+
 /// Set clipboard text directly. Used by Quick Actions result preview 'Copy' action.
 #[tauri::command]
 pub fn copy_text_to_clipboard(text: String) -> Result<(), String> {
