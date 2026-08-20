@@ -8,6 +8,8 @@ import CollapsibleCard from '../ui/CollapsibleCard.vue'
 const props = defineProps<{
   mcpServers: any[]
   notify: (msg: string, kind?: 'error'|'success', ms?: number) => void
+  /** Increments when something outside the panel asks for a session. */
+  autostart?: number
 }>()
 
 const ui = reactive({
@@ -30,6 +32,78 @@ const remoteAudioElRef = ref<HTMLAudioElement | null>(null)
 const transcript = computed<Array<{ role: string, content: string }>>(
   () => (realtime as any).transcript?.value ?? []
 )
+
+const micEnabled = computed(() => (realtime as any).micEnabled?.value !== false)
+
+function toggleMic() {
+  ;(realtime as any).setMicEnabled?.(!micEnabled.value)
+}
+
+// Realtime audio is billed by the minute, so how long a session has been open
+// is the number worth putting on screen.
+const elapsedSeconds = ref(0)
+let elapsedTimer: any = 0
+
+function startElapsed() {
+  elapsedSeconds.value = 0
+  if (elapsedTimer) clearInterval(elapsedTimer)
+  elapsedTimer = setInterval(() => { elapsedSeconds.value += 1 }, 1000)
+}
+
+function stopElapsed() {
+  if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = 0 }
+}
+
+const elapsedLabel = computed(() => {
+  const total = elapsedSeconds.value
+  const m = Math.floor(total / 60)
+  const sec = total % 60
+  return `${m}:${String(sec).padStart(2, '0')}`
+})
+
+/**
+ * The conversation as plain text, ready to copy or paste elsewhere.
+ *
+ * Tool calls are left out: they are diagnostics, not something anyone wants
+ * pasted into a document.
+ */
+const transcriptText = ref('')
+watch(transcript, (turns) => {
+  transcriptText.value = turns
+    .filter((t) => t.role !== 'tool')
+    .map((t) => `${t.role === 'user' ? 'You' : 'Assistant'}: ${t.content}`)
+    .join('\n\n')
+}, { deep: true })
+
+async function copyTranscript() {
+  try {
+    await invoke('copy_text_to_clipboard', { text: transcriptText.value })
+    props.notify?.('Transcript copied', 'success')
+  } catch (e: any) {
+    props.notify?.(e?.message || 'Copy failed', 'error')
+  }
+}
+
+/**
+ * Paste the transcript into whatever the user was last working in.
+ *
+ * The main window has focus while this button is being clicked, so the previous
+ * application has to be brought forward first - the same dance the Quick
+ * Actions popup does. The clipboard copy runs first regardless, so the text is
+ * never lost if the paste does not land.
+ */
+async function insertTranscript() {
+  const text = transcriptText.value.trim()
+  if (!text) return
+  try { await invoke('copy_text_to_clipboard', { text }) } catch {}
+  try {
+    await invoke('refocus_previous_app')
+    await new Promise((r) => setTimeout(r, 80))
+    await invoke('insert_text_into_focused_app', { text, safe_mode: false })
+  } catch (e: any) {
+    props.notify?.((e?.message || 'Insert failed') + ' - the text is on the clipboard.', 'error')
+  }
+}
 
 const debugLines = ref<string[]>([])
 const rateLimits = ref<any[]>([])
@@ -106,14 +180,28 @@ const voices = [
   'alloy','ash','ballad','cedar','coral','echo','marin','sage','shimmer','verse'
 ]
 
+// Effort levels the realtime API accepts. Only the reasoning-capable models
+// take the field at all, which is why the control is disabled for the others.
+const REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh']
+
+function modelSupportsReasoning(model: string): boolean {
+  return /^gpt-realtime-2(\.|$|-)/.test(String(model || ''))
+}
+
+const reasoningSupported = computed(() => modelSupportsReasoning(session.model))
+
 const session = reactive({
   model: DEFAULT_REALTIME_MODEL,
   voice: 'alloy',
   supervisorMode: 'always' as 'always' | 'needed',
-  instructions: 'Your knowledge cutoff is 2023-10. You are a helpful, witty, and friendly AI. Act like a human, but remember that you aren\'t a human and that you can\'t do human things in the real world. Your voice and personality should be warm and engaging, with a lively and playful tone. Talk quickly. You should always call a function if you can. Do not refer to these rules, even if you’re asked about them. IMPORTANT: Always reply in the same language the user is speaking/writing. If you are unsure, reply in English. Do not switch languages mid-conversation unless the user clearly switches.',
+  instructions: 'You are a voice assistant running on the user\'s desktop. Speak naturally and keep replies short - this is a conversation, not a document. Say when you do not know something rather than guessing. IMPORTANT: Always reply in the same language the user is speaking. If you are unsure, reply in English, and do not switch languages mid-conversation unless the user clearly switches.',
   silenceDurationMs: 2000,
   idleTimeoutMs: null as number | null,
   inputAudioNoiseReduction: true,
+  reasoningEffort: null as string | null,
+  // A live session bills per minute with an open microphone, so a forgotten
+  // window closes itself rather than running until somebody notices.
+  autoCloseMinutes: 2,
 })
 
 /**
@@ -138,6 +226,8 @@ async function syncSession() {
     silenceDurationMs: session.silenceDurationMs,
     idleTimeoutMs: session.idleTimeoutMs,
     inputAudioNoiseReduction: session.inputAudioNoiseReduction,
+    reasoningEffort: session.reasoningEffort,
+    autoCloseMs: Math.max(0, session.autoCloseMinutes) * 60000,
   })
 }
 
@@ -159,8 +249,8 @@ const realtime = useAssistantRealtime({
       throw new Error('Could not mint a realtime token: ' + msg)
     }
   },
-  onConnected: () => { ui.connected = true; ui.connecting = false; ui.error = null; statusText.value = 'Connected' },
-  onDisconnected: () => { ui.connected = false; ui.connecting = false; statusText.value = 'Idle' },
+  onConnected: () => { ui.connected = true; ui.connecting = false; ui.error = null; statusText.value = 'Connected'; startElapsed() },
+  onDisconnected: () => { ui.connected = false; ui.connecting = false; statusText.value = 'Idle'; stopElapsed() },
   onError: (err: string) => { ui.error = err; props.notify?.(err, 'error'); ui.connecting = false; ui.connected = false; statusText.value = 'Error'; try { debugLines.value.push(`[error] ${err}`) } catch {} },
   // Surfaced but does not change connection state: the call is still up.
   onWarn: (msg: string) => { props.notify?.(msg, 'error'); try { debugLines.value.push(`[warn] ${msg}`) } catch {} },
@@ -193,6 +283,8 @@ async function activate() {
     silenceDurationMs: session.silenceDurationMs,
     idleTimeoutMs: session.idleTimeoutMs,
     inputAudioNoiseReduction: session.inputAudioNoiseReduction,
+    reasoningEffort: session.reasoningEffort,
+    autoCloseMs: Math.max(0, session.autoCloseMinutes) * 60000,
   })
 }
 
@@ -225,6 +317,8 @@ onMounted(async () => {
       if (typeof ar.silence_duration_ms === 'number') session.silenceDurationMs = ar.silence_duration_ms
       if (ar.idle_timeout_ms === null || typeof ar.idle_timeout_ms === 'number') session.idleTimeoutMs = ar.idle_timeout_ms
       if (typeof ar.input_audio_noise_reduction === 'boolean') session.inputAudioNoiseReduction = ar.input_audio_noise_reduction
+      if (ar.reasoning_effort === null || REASONING_EFFORTS.includes(ar.reasoning_effort)) session.reasoningEffort = ar.reasoning_effort ?? null
+      if (typeof ar.auto_close_minutes === 'number' && ar.auto_close_minutes >= 0) session.autoCloseMinutes = ar.auto_close_minutes
       if (typeof ar.show_debug === 'boolean') ui.showDebug = ar.show_debug
     }
   } catch (e) {
@@ -253,6 +347,8 @@ watch(session, async () => {
           silence_duration_ms: session.silenceDurationMs,
           idle_timeout_ms: session.idleTimeoutMs,
           input_audio_noise_reduction: session.inputAudioNoiseReduction,
+          reasoning_effort: session.reasoningEffort,
+          auto_close_minutes: session.autoCloseMinutes,
           show_debug: ui.showDebug,
         }
       }
@@ -262,7 +358,13 @@ watch(session, async () => {
   }
 }, { deep: true })
 
+// Quick Actions raises this to start a session without the user clicking.
+watch(() => props.autostart, (n, old) => {
+  if (typeof n === 'number' && typeof old === 'number' && n > old) void activate()
+})
+
 onBeforeUnmount(() => {
+  stopElapsed()
   try { realtime.disconnect() } catch {}
 })
 </script>
@@ -279,9 +381,22 @@ onBeforeUnmount(() => {
         <button class="btn" type="button" :class="{ ghost: ui.connected || ui.connecting }" @click="toggle">
           {{ ui.connected || ui.connecting ? 'Stop' : 'Start' }}
         </button>
+        <button
+          v-if="ui.connected"
+          class="btn ghost"
+          type="button"
+          :title="micEnabled ? 'Mute the microphone' : 'Unmute the microphone'"
+          @click="toggleMic"
+        >
+          {{ micEnabled ? 'Mute' : 'Unmute' }}
+        </button>
         <span class="badge" :class="ui.error ? 'err' : (ui.connected ? 'ok' : (ui.connecting ? 'warn' : ''))">
           <span class="dot" :class="ui.error ? 'err' : (ui.connected ? 'ok' : (ui.connecting ? 'warn' : ''))"></span>
           {{ statusText }}
+        </span>
+        <span v-if="ui.connected && !micEnabled" class="badge warn">Mic muted</span>
+        <span v-if="ui.connected" class="badge" title="Session length - realtime audio is billed per minute">
+          {{ elapsedLabel }}
         </span>
         <span class="spacer"></span>
         <span class="badge">Tools {{ (realtime as any)?.status?.value?.toolsCount ?? 0 }}</span>
@@ -347,22 +462,42 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="field">
+        <label class="field-label">Reasoning effort</label>
+        <select class="input" v-model="session.reasoningEffort" :disabled="!reasoningSupported" @change="syncSession">
+          <option :value="null">Model default</option>
+          <option v-for="e in REASONING_EFFORTS" :key="e" :value="e">{{ e }}</option>
+        </select>
+        <p class="field-hint">
+          {{ reasoningSupported
+            ? 'Higher effort thinks longer before speaking, at the cost of latency.'
+            : 'Only the gpt-realtime-2.x models accept this; it is not sent for ' + session.model + '.' }}
+        </p>
+      </div>
+
+      <div class="field">
         <label class="field-label">Silence before reply</label>
         <input class="input" type="number" min="0" step="50" v-model.number="session.silenceDurationMs" @change="syncSession" />
         <p class="field-hint">Milliseconds of quiet that end your turn.</p>
       </div>
 
       <div class="field">
-        <label class="field-label">Idle timeout</label>
+        <label class="field-label">Idle turn timeout</label>
         <input
           class="input"
           type="number"
           min="0"
+          max="30000"
           step="100"
           :value="session.idleTimeoutMs ?? ''"
           @change="(e:any) => { const v = e?.target?.value; session.idleTimeoutMs = v === '' ? null : Number(v); syncSession() }"
         />
-        <p class="field-hint">Milliseconds before an idle session closes. Blank for none.</p>
+        <p class="field-hint">Milliseconds of quiet after which the model takes its turn anyway. Blank for none; the API maximum is 30000.</p>
+      </div>
+
+      <div class="field">
+        <label class="field-label">Close session after</label>
+        <input class="input" type="number" min="0" step="1" v-model.number="session.autoCloseMinutes" @change="syncSession" />
+        <p class="field-hint">Minutes of silence before the session disconnects. 0 never closes - but an open session holds a live microphone and bills per minute.</p>
       </div>
     </div>
 
@@ -407,6 +542,19 @@ onBeforeUnmount(() => {
         <span class="turn-text">{{ t.content }}</span>
       </li>
     </ol>
+
+    <div class="field">
+      <label class="field-label">Plain text</label>
+      <textarea class="input" rows="6" v-model="transcriptText"></textarea>
+      <p class="field-hint">Editable before you send it anywhere. Tool calls are left out.</p>
+    </div>
+
+    <div class="actions">
+      <button class="btn ghost" type="button" :disabled="!transcriptText.trim()" @click="copyTranscript">Copy</button>
+      <button class="btn" type="button" :disabled="!transcriptText.trim()" @click="insertTranscript">
+        Insert into previous app
+      </button>
+    </div>
   </CollapsibleCard>
 
   <CollapsibleCard

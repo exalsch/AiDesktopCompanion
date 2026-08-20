@@ -22,6 +22,43 @@ const DEFAULT_TRANSCRIPTION_MODEL = 'gpt-4o-transcribe'
 // spin forever on a live microphone.
 const MAX_TOOL_ROUNDS = 6
 
+// The API's hard ceiling for turn_detection.idle_timeout_ms. Anything larger is
+// rejected, and a rejected session.update discards every other setting with it.
+const MAX_IDLE_TIMEOUT_MS = 30000
+
+// Escalation to the supervisor, expressed as something the model can choose to
+// do. This replaces a keyword list that only recognised English - the model
+// knows when a question is beyond it regardless of the language it is asked in.
+const SUPERVISOR_TOOL_NAME = 'consult_supervisor'
+const SUPERVISOR_TOOL = {
+  type: 'function',
+  name: SUPERVISOR_TOOL_NAME,
+  description:
+    'Ask the supervisor model, which is slower but far more capable and has access to tools, '
+    + 'files and the internet. Call this for anything you cannot answer confidently from your own '
+    + 'knowledge: current events, the user\'s files or applications, calculations, look-ups, or '
+    + 'multi-step reasoning. Pass the question in the language the user asked it. '
+    + 'Read the answer back to the user.',
+  parameters: {
+    type: 'object',
+    properties: {
+      question: {
+        type: 'string',
+        description: 'The full question, with any context needed to answer it standalone.',
+      },
+    },
+    required: ['question'],
+    additionalProperties: false,
+  },
+}
+
+// Reasoning effort is only accepted by the reasoning-capable realtime models.
+// Sending it to `gpt-realtime` or `gpt-realtime-1.5` fails the whole session
+// with "Unsupported option for this model".
+function modelSupportsReasoning(model?: string): boolean {
+  return /^gpt-realtime-2(\.|$|-)/.test(String(model || ''))
+}
+
 export interface AssistantRealtimeOptions {
   getEphemeralToken: () => Promise<string>
   onConnected?: () => void
@@ -45,6 +82,10 @@ export interface ConnectParams {
   silenceDurationMs?: number
   idleTimeoutMs?: number | null
   inputAudioNoiseReduction?: boolean
+  /** 'minimal' | 'low' | 'medium' | 'high' | 'xhigh', or null for the model default. */
+  reasoningEffort?: string | null
+  /** Disconnect after this long with nothing said. 0 or null disables it. */
+  autoCloseMs?: number | null
   // Overrides DEFAULT_TRANSCRIPTION_MODEL. Useful for OpenAI-compatible
   // endpoints that only implement whisper-1.
   transcriptionModel?: string
@@ -63,6 +104,11 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
   // model has produced audio, so it is only sent on the first session.update.
   let voiceSent = false
   let toolRounds = 0
+  // The microphone stays open for the whole session, so muting has to be an
+  // explicit control rather than something that only happens on disconnect.
+  const micEnabled = ref(true)
+  let autoCloseMs = 0
+  let autoCloseTimer: any = 0
   // Whether the SDP exchange has completed. Server-side errors before that
   // point are fatal; after it, the audio call survives them.
   let connected = false
@@ -89,6 +135,22 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     try { opts.onLog?.(msg) } catch {}
   }
 
+  /**
+   * Restart the inactivity countdown.
+   *
+   * Called whenever either side says something. An open realtime session holds
+   * a live microphone and bills by the minute, so walking away from the window
+   * should not keep costing money.
+   */
+  function resetAutoClose() {
+    if (autoCloseTimer) { clearTimeout(autoCloseTimer); autoCloseTimer = 0 }
+    if (!autoCloseMs || autoCloseMs <= 0) return
+    autoCloseTimer = setTimeout(() => {
+      log(`[session] no activity for ${Math.round(autoCloseMs / 1000)}s, closing`)
+      void disconnect()
+    }, autoCloseMs)
+  }
+
   function send(payload: any): boolean {
     if (!eventsDc || eventsDc.readyState !== 'open') {
       log('[warn] data channel not open, dropped: ' + (payload?.type || 'event'))
@@ -101,35 +163,6 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       log('[error] send failed (' + (payload?.type || 'event') + '): ' + (e?.message || e))
       return false
     }
-  }
-
-  function shouldCallSupervisorForText(userText: string) {
-    const t = (userText || '').trim().toLowerCase()
-    if (!t) return false
-    if (t.length >= 220) return true
-
-    const keywords = [
-      'tool', 'tools', 'mcp', 'server', 'open', 'launch', 'run', 'execute',
-      'search', 'look up', 'browse', 'website', 'url', 'http',
-      'file', 'folder', 'directory',
-      'calendar', 'email', 'slack', 'teams',
-      'weather', 'news', 'stock', 'price',
-      'debug', 'error', 'stack trace', 'refactor', 'code'
-    ]
-    for (const k of keywords) {
-      if (t.includes(k)) return true
-    }
-    return false
-  }
-
-  function respondDirectlyViaRealtime(userText: string) {
-    const ok = send({
-      type: 'response.create',
-      response: {
-        instructions: `Reply to the user's last message. The user said: """${userText}""" IMPORTANT: Always reply in the same language the user is speaking/writing. If you are unsure, reply in English. Do not switch languages unless the user clearly switches.`
-      }
-    })
-    if (ok) log('[supervisor-needed] realtime responded (no supervisor)')
   }
 
   /**
@@ -146,30 +179,50 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
    * has to deliver the text; telling it to repeat the answer exactly is what
    * stops it from rewriting the supervisor's words.
    */
+  /**
+   * Put a question to the supervisor and return its answer as plain text.
+   *
+   * The supervisor is a normal chat completion using the Prompt-section model,
+   * which already has the MCP tools wired in. It receives this session's
+   * transcript so a follow-up question still makes sense on its own.
+   */
+  async function askSupervisor(userText: string): Promise<string> {
+    // Logging the configuration is best-effort; failing to read it must not
+    // stop the question being asked.
+    try {
+      const s: any = await invoke('get_settings').catch(() => null)
+      const promptModel = (s?.prompt && s.prompt.model) ? s.prompt.model : (s?.model || 'n/a')
+      const promptTemp = (s?.prompt && typeof s.prompt.temperature === 'number') ? s.prompt.temperature : (typeof s?.temperature === 'number' ? s.temperature : 'n/a')
+      log(`[supervisor] using backend Prompt settings model=${promptModel}, temperature=${promptTemp}`)
+    } catch {}
+
+    const messages = [
+      {
+        role: 'system',
+        content: 'You are the reasoning half of a voice assistant. Your reply is read aloud verbatim, so answer in plain spoken prose with no markdown, no code fences and no bullet lists. Keep it short unless asked for detail. Reply in the same language the user is speaking. If you are unsure, reply in English. Do not switch languages unless the user clearly switches.'
+      },
+      // Everything before the current turn, so the supervisor can follow up.
+      // Tool entries are display-only; a chat completion would reject the role.
+      ...history.value.slice(-20).filter((t) => t.role !== 'tool'),
+      { role: 'user', content: userText }
+    ] as any
+
+    const text = await invoke<string>('chat_complete', { messages })
+    return (text || '').trim()
+  }
+
+  /**
+   * Ask the supervisor and have the realtime model read the answer out.
+   *
+   * Used by the "always" mode, where the realtime model is held silent
+   * (`create_response: false`) and the supervisor answers every turn. The
+   * verbatim instruction is what stops the voice model rewriting the answer in
+   * its own words, which is what it did when this was phrased as a prompt.
+   */
   async function supervisorRespond(userText: string) {
     try {
-      try {
-        const s: any = await invoke('get_settings').catch(() => null)
-        const promptModel = (s?.prompt && s.prompt.model) ? s.prompt.model : (s?.model || 'n/a')
-        const promptTemp = (s?.prompt && typeof s.prompt.temperature === 'number') ? s.prompt.temperature : (typeof s?.temperature === 'number' ? s.temperature : 'n/a')
-        log(`[supervisor] using backend Prompt settings model=${promptModel}, temperature=${promptTemp}`)
-      } catch {}
-
-      const messages = [
-        {
-          role: 'system',
-          content: 'You are the reasoning half of a voice assistant. Your reply is read aloud verbatim, so answer in plain spoken prose with no markdown, no code fences and no bullet lists. Keep it short unless asked for detail. Reply in the same language the user is speaking. If you are unsure, reply in English. Do not switch languages unless the user clearly switches.'
-        },
-        // Everything before the current turn, so the supervisor can follow up.
-        // Tool entries are display-only; a chat completion would reject the role.
-        ...history.value.slice(-20).filter((t) => t.role !== 'tool'),
-        { role: 'user', content: userText }
-      ] as any
-
-      const text = await invoke<string>('chat_complete', { messages })
-      const spoken = (text || '').trim() || 'Sorry, I did not get a result for that.'
+      const spoken = (await askSupervisor(userText)) || 'Sorry, I did not get a result for that.'
       history.value.push({ role: 'assistant', content: spoken })
-
       const ok = send({
         type: 'response.create',
         response: {
@@ -222,10 +275,22 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       if (!callId) { log('[tools] skipping call with no call_id: ' + name); continue }
       log(`[tools] -> ${name} ${argsJson.slice(0, 200)}`)
       let output: string
-      try {
-        output = await invoke<string>('realtime_call_tool', { name, argsJson })
-      } catch (e: any) {
-        output = JSON.stringify({ error: (e?.message || String(e)) })
+      if (name === SUPERVISOR_TOOL_NAME) {
+        // Handled here rather than in Rust: the supervisor is a chat completion
+        // that needs this session's transcript for context.
+        try {
+          const question = String(JSON.parse(argsJson || '{}')?.question || '').trim()
+          const answer = await askSupervisor(question)
+          output = JSON.stringify({ answer: answer || 'No answer available.' })
+        } catch (e: any) {
+          output = JSON.stringify({ error: (e?.message || String(e)) })
+        }
+      } else {
+        try {
+          output = await invoke<string>('realtime_call_tool', { name, argsJson })
+        } catch (e: any) {
+          output = JSON.stringify({ error: (e?.message || String(e)) })
+        }
       }
       log(`[tools] <- ${name} ${output.slice(0, 200)}`)
       history.value.push({ role: 'tool', content: `${name} ${output.slice(0, 300)}` })
@@ -277,12 +342,11 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       if (itemId) handledUserItems.add(itemId)
       history.value.push({ role: 'user', content: transcript })
       log(`[user] ${transcript}`)
-      if (currentUseSupervisor) {
-        if (currentSupervisorMode === 'needed' && !shouldCallSupervisorForText(transcript)) {
-          respondDirectlyViaRealtime(transcript)
-        } else {
-          supervisorRespond(transcript).catch((e) => log('[supervisor] error in respond: ' + (e?.message || e)))
-        }
+      resetAutoClose()
+      // "needed" mode leaves the realtime model in charge; it escalates on its
+      // own by calling consult_supervisor, so nothing to do here.
+      if (currentUseSupervisor && currentSupervisorMode === 'always') {
+        supervisorRespond(transcript).catch((e) => log('[supervisor] error in respond: ' + (e?.message || e)))
       }
       return
     }
@@ -298,6 +362,7 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
         }
         log(`[assistant] ${text}`)
       }
+      resetAutoClose()
       return
     }
 
@@ -365,6 +430,7 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       // Capture microphone and add as sendonly track
       const mic = await navigator.mediaDevices.getUserMedia({ audio: true })
       mic.getAudioTracks().forEach((t) => pc.addTrack(t, mic))
+      micEnabled.value = true
 
       // Data channel for OpenAI Realtime events
       eventsDc = pc.createDataChannel('oai-events')
@@ -455,6 +521,8 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     }
     currentUseSupervisor = params.useSupervisor === true
     currentSupervisorMode = (params.supervisorMode === 'needed') ? 'needed' : 'always'
+    autoCloseMs = typeof params.autoCloseMs === 'number' ? params.autoCloseMs : 0
+    resetAutoClose()
 
     // Prefer the backend, which applies the same MCP tool filtering as the
     // Prompt section, and falls back to client-side discovery if it fails.
@@ -466,27 +534,37 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       log('[warn] realtime_build_tools failed, falling back to client discovery: ' + (e?.message || e))
       tools = await buildMcpToolsClientSide()
     }
-    // With the supervisor on, tools belong to the supervisor's chat completion,
-    // not to the realtime model.
+    // Three arrangements, one per mode:
+    //  - supervisor "always": the realtime model is only a voice, no tools.
+    //  - supervisor "needed": it answers what it can and escalates by tool.
+    //  - supervisor off: MCP tools go directly to the realtime model.
+    const supervisorNeeded = params.useSupervisor === true && currentSupervisorMode === 'needed'
     const includeTools = params.enableTools === true && params.useSupervisor !== true
-    const toolsToSend = includeTools ? tools : []
+    let toolsToSend: any[] = includeTools ? tools : []
+    if (supervisorNeeded) toolsToSend = [SUPERVISOR_TOOL]
 
-    const supervisorNote = params.useSupervisor ? ' A supervisor model may be consulted for tool calls.' : ''
+    const supervisorNote = supervisorNeeded
+      ? ` Call ${SUPERVISOR_TOOL_NAME} whenever a question needs current information, the user's files or applications, or careful reasoning, and read its answer back.`
+      : (params.useSupervisor ? ' A supervisor model answers on your behalf.' : '')
 
     const turnDetection: Record<string, any> = {
       type: 'server_vad',
       threshold: 0.5,
       prefix_padding_ms: 300,
       silence_duration_ms: typeof params.silenceDurationMs === 'number' ? params.silenceDurationMs : 2000,
-      // With the supervisor on, the realtime model must stay quiet until the
-      // supervisor has produced an answer to speak.
-      create_response: params.useSupervisor ? false : true,
+      // Only "always" mode holds the model silent; in "needed" mode it has to
+      // answer in order to decide whether it needs help at all.
+      create_response: !(params.useSupervisor === true && currentSupervisorMode === 'always'),
       interrupt_response: true,
     }
     // Omit rather than send null: the field is optional and an explicit null is
-    // rejected.
+    // rejected. Clamp rather than pass through - one value over the ceiling
+    // fails the whole update, silently discarding every other setting.
     if (typeof params.idleTimeoutMs === 'number' && params.idleTimeoutMs > 0) {
-      turnDetection.idle_timeout_ms = params.idleTimeoutMs
+      turnDetection.idle_timeout_ms = Math.min(params.idleTimeoutMs, MAX_IDLE_TIMEOUT_MS)
+      if (params.idleTimeoutMs > MAX_IDLE_TIMEOUT_MS) {
+        log(`[warn] idle timeout ${params.idleTimeoutMs}ms exceeds the ${MAX_IDLE_TIMEOUT_MS}ms maximum, clamped`)
+      }
     }
 
     const audioInput: Record<string, any> = {
@@ -520,6 +598,11 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
         tools: toolsToSend,
         tool_choice: 'auto',
         audio,
+        // Omitted unless both the model and the user asked for it: the
+        // non-reasoning models reject the field outright.
+        ...(params.reasoningEffort && modelSupportsReasoning(params.model)
+          ? { reasoning: { effort: params.reasoningEffort } }
+          : {}),
       }
     }
 
@@ -531,7 +614,9 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
         idle_timeout_ms: turnDetection.idle_timeout_ms ?? null,
         noise_reduction: audioInput.noise_reduction ?? null,
         transcription: audioInput.transcription.model,
+        reasoning_effort: (params.reasoningEffort && modelSupportsReasoning(params.model)) ? params.reasoningEffort : null,
         useSupervisor: params.useSupervisor === true,
+        supervisorMode: currentSupervisorMode,
         enableTools: includeTools,
         tool_count: toolsToSend.length,
         tool_names_sample: toolNames,
@@ -546,15 +631,6 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     } catch {}
 
     send(payload)
-  }
-
-  function promptSpeak(text?: string) {
-    send({
-      type: 'response.create',
-      response: {
-        instructions: text || 'Please say hello and confirm audio output is working.',
-      }
-    })
   }
 
   async function buildMcpToolsClientSide(): Promise<any[]> {
@@ -604,11 +680,27 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     } catch {}
     pcRef.value = null
     try { if (remoteAudioEl) (remoteAudioEl as any).srcObject = null } catch {}
+    if (autoCloseTimer) { clearTimeout(autoCloseTimer); autoCloseTimer = 0 }
     handledUserItems.clear()
     voiceSent = false
     toolRounds = 0
     connected = false
     try { opts.onDisconnected?.() } catch {}
+  }
+
+  /**
+   * Mute or unmute the microphone for the rest of the session.
+   *
+   * Disables the track rather than stopping it: a stopped track cannot be
+   * restarted on the same connection, and re-negotiating just to unmute would
+   * drop the conversation.
+   */
+  function setMicEnabled(enabled: boolean) {
+    micEnabled.value = enabled
+    try {
+      micStreamRef.value?.getAudioTracks().forEach((t) => { t.enabled = enabled })
+    } catch {}
+    log(enabled ? '[mic] unmuted' : '[mic] muted')
   }
 
   function attachAudioElement(el: HTMLAudioElement) {
@@ -627,5 +719,5 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
 
   // The transcript deliberately survives disconnect, so the last conversation
   // is still readable after the session ends; `connect` clears it.
-  return { connect, disconnect, attachAudioElement, promptSpeak, updateSession, status: statusRef, transcript: history }
+  return { connect, disconnect, attachAudioElement, updateSession, setMicEnabled, micEnabled, status: statusRef, transcript: history }
 }
