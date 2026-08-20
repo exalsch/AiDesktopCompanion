@@ -22,12 +22,46 @@ let cleanupTimer: any = 0
 
 // Streaming handled in composable when engine === 'openai' and form.openaiStreaming
 
-// OpenAI voices (static list; API does not expose a public voices endpoint)
-const openaiVoiceOptions = ref<string[]>([
-  'alloy','verse','amber','onyx','coral','sage','nova','shimmer','pebble'
-])
-// OpenAI models (load from backend; fallback defaults)
-const openaiModelOptions = ref<string[]>(['gpt-4o-mini-tts', 'tts-1', 'tts-1-hd'])
+// OpenAI voices. There is no public voices endpoint, so these are static - but
+// they are the values the API actually accepts. `amber` and `pebble` used to be
+// offered here and are not OpenAI voices; both are rejected outright.
+//
+// The two families differ: the older tts-1 models never gained the voices added
+// for gpt-4o-mini-tts, so picking one of those with tts-1 fails.
+const GPT_TTS_VOICES = [
+  'alloy','ash','ballad','cedar','coral','echo','fable','marin','nova','onyx','sage','shimmer','verse'
+]
+const TTS1_VOICES = [
+  'alloy','ash','coral','echo','fable','nova','onyx','sage','shimmer'
+]
+
+const openaiVoiceOptions = computed(() => {
+  const m = String(form.openaiModel || '')
+  return m.startsWith('tts-1') ? TTS1_VOICES : GPT_TTS_VOICES
+})
+
+// Only these speak through /v1/audio/speech. `refreshOpenaiModels` extends the
+// list with whatever the account can see, which is how dated snapshots such as
+// gpt-4o-mini-tts-2025-12-15 show up without another release.
+const FALLBACK_TTS_MODELS = ['gpt-4o-mini-tts', 'tts-1', 'tts-1-hd']
+const openaiModelOptions = ref<string[]>([...FALLBACK_TTS_MODELS])
+
+/**
+ * Pull the speech models this API key can reach.
+ *
+ * `/v1/models` also lists `gpt-audio*`, which are audio-in/audio-out chat
+ * models rather than speech synthesis models, so they are filtered out - they
+ * would only fail if picked.
+ */
+async function refreshOpenaiModels() {
+  try {
+    const all = await invoke<string[]>('list_openai_models')
+    const tts = (Array.isArray(all) ? all : []).filter((m) => m.includes('tts'))
+    if (tts.length) openaiModelOptions.value = tts
+  } catch {
+    // No key yet or offline - the fallback list still lets the panel render.
+  }
+}
 const openaiFormatOptions = ref<Array<'wav'|'mp3'|'opus'>>(['wav','mp3','opus'])
 const hasSavableOutput = computed(() => !!String(wavPath.value || '').trim())
 const openaiInputLength = computed(() => form.text.trim().length)
@@ -148,6 +182,7 @@ watch(() => form.openaiStreaming, scheduleSaveTtsSettings)
 onMounted(() => {
   if (!props.lightMount) {
     loadVoices().catch(() => {})
+    void refreshOpenaiModels()
     ensureTtsSettingsLoaded().catch(() => {})
     // Kick off stale cleanup now and periodically (every 30 minutes)
     invoke('cleanup_stale_tts_wavs', { maxAgeMinutes: 240 }).catch(() => {})
@@ -278,7 +313,7 @@ const ttsTokenHint = computed(() => formatTokenInfo([{ label: 'text', tokens: tt
         <datalist id="openai-models">
           <option v-for="m in openaiModelOptions" :key="m" :value="m" />
         </datalist>
-        <p class="field-hint">Pick one or type your own. Not every model in the list speaks.</p>
+        <p class="field-hint">gpt-4o-mini-tts is the current model and the only one that honours Tone below.</p>
       </div>
 
       <div class="field" v-if="engine === 'openai'">
@@ -287,13 +322,19 @@ const ttsTokenHint = computed(() => formatTokenInfo([{ label: 'text', tokens: tt
         <datalist id="openai-voices">
           <option v-for="v in openaiVoiceOptions" :key="v" :value="v" />
         </datalist>
-        <p class="field-hint">Suggestions may be incomplete; a custom name is fine.</p>
+        <p class="field-hint">
+          {{ String(form.openaiModel || '').startsWith('tts-1')
+            ? 'tts-1 supports the nine original voices only.'
+            : 'All thirteen voices are available on this model.' }}
+        </p>
       </div>
 
       <div class="field" v-if="engine === 'openai'">
         <label class="field-label">Tone</label>
         <input class="input" v-model="form.openaiInstructions" placeholder="e.g. Cheerful and positive" />
-        <p class="field-hint">Optional hint influencing speaking style.</p>
+        <p class="field-hint">
+          Optional hint influencing speaking style. Ignored by tts-1 and tts-1-hd.
+        </p>
       </div>
 
       <div class="field" v-if="engine === 'openai'">
