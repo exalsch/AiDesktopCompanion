@@ -212,7 +212,15 @@ html.busy-window {
   box-sizing: border-box;
 }
 .card-head + .card-body { padding-top: 0; }
-.card-heading { min-width: 0; flex: 1; }
+/* Column layout belongs here rather than in CollapsibleCard: the title and
+   description are often spans, and without it they run together on one line in
+   any statically-headed card. */
+.card-heading {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
 .card-title {
   font-size: var(--fs-md);
   font-weight: 600;
@@ -338,6 +346,16 @@ select.input {
   cursor: not-allowed;
 }
 .input.sm { min-height: var(--ctrl-h-sm); line-height: calc(var(--ctrl-h-sm) - 2px); font-size: var(--fs-sm); }
+
+/* An input sharing a row with buttons has to flex rather than claim the full
+   width, or its `width: 100%` consumes the line and every button next to it
+   wraps onto its own row. Declared before the `.w-*` utilities so an explicit
+   width still wins - same specificity, so source order decides. */
+.actions > .input {
+  flex: 1 1 200px;
+  width: auto;
+  min-width: 0;
+}
 /* Inputs that should size to their content rather than fill the row. */
 .input.w-auto { width: auto; }
 .input.w-xs { width: 88px; flex: 0 0 auto; }
@@ -394,9 +412,15 @@ select.input {
   box-shadow: 0 0 0 3px var(--adc-focus-ring);
 }
 .switch input[type="checkbox"]:disabled { opacity: 0.5; cursor: not-allowed; }
-.switch-text { min-width: 0; }
+/* These are spans, so they need to be told to stack - otherwise the label and
+   its hint render as one run-on line. */
+.switch-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
 .switch-label { font-size: var(--fs-base); color: var(--adc-fg); }
-.switch-hint { font-size: var(--fs-sm); color: var(--adc-fg-muted); margin-top: 2px; }
+.switch-hint { font-size: var(--fs-sm); color: var(--adc-fg-muted); margin-top: 2px; line-height: 1.45; }
 /* Switch as a full-width row inside a card, label left, control right. */
 .switch.row {
   display: flex;

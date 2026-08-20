@@ -100,8 +100,6 @@ watch(open, (v) => {
 }
 .closed .chevron { transform: rotate(0deg); }
 
-.card-heading { display: flex; flex-direction: column; }
-
 .head-aside {
   display: flex;
   align-items: center;

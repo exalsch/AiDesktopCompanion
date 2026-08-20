@@ -1074,6 +1074,11 @@ async function onInsert(): Promise<void> {
 </template>
 
 <style scoped>
+/* The popup inherited `.label` from the per-theme stylesheet. That file is now
+   tokens only, so the rule lives here - the popup is deliberately not built on
+   the main window's design layer. */
+.label { color: var(--adc-fg-muted); }
+
 .qa-root {
   height: max-content; /* shrink-wrap */
   width: max-content; /* shrink-wrap horizontally */

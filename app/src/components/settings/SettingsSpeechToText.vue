@@ -2,6 +2,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import CollapsibleCard from '../ui/CollapsibleCard.vue'
 import { listen } from '@tauri-apps/api/event'
 
 const props = defineProps<{
@@ -420,41 +421,51 @@ function infoTitle(v: string): string {
 </script>
 
 <template>
-  <div class="settings-section">
-    <div class="settings-title">Speech To Text</div>
-
-    <div class="settings-row col">
+  <CollapsibleCard
+    id="settings.stt.engine"
+    title="Engine and input"
+    desc="Where transcription happens and which microphone feeds it."
+  >
+    <div class="field">
       <div class="row-label">
-        <label class="label">Engine</label>
+        <label class="field-label">Engine</label>
         <span class="info-icon" :title="infoTitle('Local runs fully on-device. Cloud sends audio to the configured endpoint (POST /v1/audio/transcriptions).')">i</span>
       </div>
-      <div class="row-inline">
-        <select v-model="props.settings.stt_engine" class="input" style="max-width: 220px;">
+      <div class="actions">
+        <select v-model="props.settings.stt_engine" class="input w-md">
           <option value="openai">Cloud (OpenAI compatible)</option>
           <option value="local">Local (on-device)</option>
         </select>
       </div>
     </div>
 
-    <div class="settings-row col">
+    <div class="field">
       <div class="row-label">
-        <label class="label">Microphone Input</label>
+        <label class="field-label">Microphone Input</label>
         <span class="info-icon" :title="infoTitle('Select which microphone is used for STT recording in both the main STT panel and Quick Actions (S/C).')">i</span>
       </div>
-      <div class="row-inline" style="gap: 10px; align-items: center; flex-wrap: wrap;">
-        <select v-model="props.settings.stt_input_device_id" class="input" style="min-width: 360px; max-width: 520px;">
+      <div class="actions">
+        <select v-model="props.settings.stt_input_device_id" class="input">
           <option value="">System default microphone</option>
           <option v-for="d in inputDevices" :key="d.id" :value="d.id">{{ d.label }}</option>
         </select>
         <button class="btn ghost" :disabled="inputDevicesBusy" @click="refreshInputDevices">{{ inputDevicesBusy ? 'Refreshing…' : 'Refresh' }}</button>
       </div>
-      <div class="settings-hint">If another audio app hijacks your mic (e.g. virtual devices), select the physical input here.</div>
-      <div class="settings-hint" v-if="inputDevicesError">{{ inputDevicesError }}</div>
+      <div class="field-hint">If another audio app hijacks your mic (e.g. virtual devices), select the physical input here.</div>
+      <div class="field-hint" v-if="inputDevicesError">{{ inputDevicesError }}</div>
     </div>
 
-    <div v-if="props.settings.stt_engine === 'local'" class="settings-row col">
+  </CollapsibleCard>
+
+  <CollapsibleCard
+    v-if="props.settings.stt_engine === 'local'"
+    id="settings.stt.local"
+    title="On-device models"
+    desc="Downloaded once, then run entirely on this machine."
+  >
+    <div class="field">
       <div class="row-label">
-        <label class="label">Local Provider</label>
+        <label class="field-label">Provider</label>
         <span class="info-icon" :title="infoTitle('Choose the on-device speech-to-text engine. Additional options appear below.')">i</span>
       </div>
 
@@ -477,9 +488,9 @@ function infoTitle(v: string): string {
       </div>
     </div>
 
-    <div v-if="props.settings.stt_engine === 'local' && !isParakeetLocal" class="settings-row col">
+    <div v-if="props.settings.stt_engine === 'local' && !isParakeetLocal" class="field">
       <div class="row-label">
-        <label class="label">Whisper Model File</label>
+        <label class="field-label">Whisper Model File</label>
         <span class="info-icon" :title="infoTitle('Select a Whisper model and download it. The file is stored in your app data folder.')">i</span>
       </div>
 
@@ -507,26 +518,26 @@ function infoTitle(v: string): string {
         </div>
       </div>
 
-      <div class="settings-hint">
+      <div class="field-hint">
         Default folder: <code>%APPDATA%/AiDesktopCompanion/models/whisper</code>
       </div>
-      <div class="settings-hint" v-if="localModelStatusError">{{ localModelStatusError }}</div>
-      <div class="settings-hint" v-else>
+      <div class="field-hint" v-if="localModelStatusError">{{ localModelStatusError }}</div>
+      <div class="field-hint" v-else>
         Status:
-        <span class="status-pill" :class="{ ok: localModelDownloaded, bad: !localModelDownloaded }">{{ localModelDownloaded ? 'Downloaded' : 'Not downloaded' }}</span>
+        <span class="badge" :class="localModelDownloaded ? 'ok' : 'err'">{{ localModelDownloaded ? 'Downloaded' : 'Not downloaded' }}</span>
         <span v-if="localModelPath">(<code>{{ localModelPath }}</code>)</span>
         <span v-if="!localModelDownloaded && localModelMissing.length">Missing: <code>{{ localModelMissing.join(', ') }}</code></span>
       </div>
-      <div v-if="prefetchWhisperError" class="settings-hint error">{{ prefetchWhisperError }}</div>
-      <div v-else-if="prefetchWhisperBusy && prefetchWhisperTotal" class="settings-hint">
+      <div v-if="prefetchWhisperError" class="field-hint error">{{ prefetchWhisperError }}</div>
+      <div v-else-if="prefetchWhisperBusy && prefetchWhisperTotal" class="field-hint">
         Downloading: {{ (prefetchWhisperReceived/1024/1024).toFixed(1) }} / {{ (prefetchWhisperTotal/1024/1024).toFixed(1) }} MB
       </div>
-      <div v-else-if="prefetchWhisperDonePath" class="settings-hint">Downloaded to: <code>{{ prefetchWhisperDonePath }}</code></div>
+      <div v-else-if="prefetchWhisperDonePath" class="field-hint">Downloaded to: <code>{{ prefetchWhisperDonePath }}</code></div>
     </div>
 
-    <div v-if="props.settings.stt_engine === 'local' && isParakeetLocal" class="settings-row col">
+    <div v-if="props.settings.stt_engine === 'local' && isParakeetLocal" class="field">
       <div class="row-label">
-        <label class="label">Parakeet Model</label>
+        <label class="field-label">Parakeet Model</label>
         <span class="info-icon" :title="infoTitle('Select a Parakeet model variant. Then download the ONNX files into your app data folder.')">i</span>
       </div>
 
@@ -548,41 +559,49 @@ function infoTitle(v: string): string {
         </div>
       </div>
 
-      <div class="row-inline" style="gap: 10px; align-items: center; flex-wrap: wrap;">
+      <div class="actions">
         <button class="btn ghost" :disabled="prefetchParakeetBusy" @click="prefetchParakeetModel">
           {{ parakeetDownloadLabel() }}
         </button>
-        <label class="checkbox" style="margin: 0;">
+        <label class="checkbox">
           <input type="checkbox" v-model="props.settings.stt_parakeet_has_cuda" :disabled="parakeetCudaCheckBusy" />
           Use CUDA (if available)
         </label>
         <span class="info-icon" :title="infoTitle('Requires NVIDIA driver + CUDA runtime (CUDA/cuDNN DLLs). If missing, the toggle will auto-disable.')">i</span>
       </div>
 
-      <div class="settings-hint">
+      <div class="field-hint">
         Default folder:
         <code v-if="isParakeetV3Local">%APPDATA%/AiDesktopCompanion/models/parakeet/parakeet-tdt-0.6b-v3</code>
         <code v-else>%APPDATA%/AiDesktopCompanion/models/parakeet/parakeet-tdt-0.6b-v2</code>
       </div>
-      <div class="settings-hint" v-if="localModelStatusError">{{ localModelStatusError }}</div>
-      <div class="settings-hint" v-else>
+      <div class="field-hint" v-if="localModelStatusError">{{ localModelStatusError }}</div>
+      <div class="field-hint" v-else>
         Status:
-        <span class="status-pill" :class="{ ok: localModelDownloaded, bad: !localModelDownloaded }">{{ localModelDownloaded ? 'Downloaded' : 'Not downloaded' }}</span>
+        <span class="badge" :class="localModelDownloaded ? 'ok' : 'err'">{{ localModelDownloaded ? 'Downloaded' : 'Not downloaded' }}</span>
         <span v-if="localModelPath">(<code>{{ localModelPath }}</code>)</span>
         <span v-if="!localModelDownloaded && localModelMissing.length">Missing: <code>{{ localModelMissing.join(', ') }}</code></span>
       </div>
-      <div v-if="parakeetCudaCheckBusy" class="settings-hint">Checking CUDA availability…</div>
-      <div v-if="parakeetCudaCheckError" class="settings-hint error">{{ parakeetCudaCheckError }}</div>
-      <div v-if="prefetchParakeetError" class="settings-hint error">{{ prefetchParakeetError }}</div>
-      <div v-else-if="prefetchParakeetBusy && prefetchParakeetTotal" class="settings-hint">
+      <div v-if="parakeetCudaCheckBusy" class="field-hint">Checking CUDA availability…</div>
+      <div v-if="parakeetCudaCheckError" class="field-hint error">{{ parakeetCudaCheckError }}</div>
+      <div v-if="prefetchParakeetError" class="field-hint error">{{ prefetchParakeetError }}</div>
+      <div v-else-if="prefetchParakeetBusy && prefetchParakeetTotal" class="field-hint">
         Downloading: {{ (prefetchParakeetReceived/1024/1024).toFixed(1) }} / {{ (prefetchParakeetTotal/1024/1024).toFixed(1) }} MB
       </div>
-      <div v-else-if="prefetchParakeetDonePath" class="settings-hint">Downloaded to: <code>{{ prefetchParakeetDonePath }}</code></div>
+      <div v-else-if="prefetchParakeetDonePath" class="field-hint">Downloaded to: <code>{{ prefetchParakeetDonePath }}</code></div>
     </div>
 
-    <div v-if="props.settings.stt_engine === 'openai'" class="settings-row col">
+  </CollapsibleCard>
+
+  <CollapsibleCard
+    v-if="props.settings.stt_engine === 'openai'"
+    id="settings.stt.cloud"
+    title="Cloud endpoint"
+    desc="Any server implementing POST /v1/audio/transcriptions."
+  >
+    <div class="field">
       <div class="row-label">
-        <label class="label">Cloud STT Model</label>
+        <label class="field-label">Model</label>
         <span class="info-icon" :title="infoTitle('Choose a suggested model. No free text field: the goal is to keep this predictable.')">i</span>
       </div>
 
@@ -605,23 +624,23 @@ function infoTitle(v: string): string {
       </div>
     </div>
 
-    <div v-if="props.settings.stt_engine === 'openai'" class="settings-row col">
+    <div v-if="props.settings.stt_engine === 'openai'" class="field">
       <div class="row-label">
-        <label class="label">Cloud STT Base URL</label>
+        <label class="field-label">Cloud STT Base URL</label>
         <span class="info-icon" :title="infoTitle('Must support POST /v1/audio/transcriptions (OpenAI compatible).')">i</span>
       </div>
-      <div class="row-inline" style="gap: 10px; align-items: center; flex-wrap: wrap;">
-        <input v-model="props.settings.stt_cloud_base_url" class="input" style="min-width: 360px;" placeholder="https://api.openai.com" />
+      <div class="actions">
+        <input v-model="props.settings.stt_cloud_base_url" class="input" placeholder="https://api.openai.com" />
         <button class="btn" @click="props.settings.stt_cloud_base_url = 'https://api.openai.com'">Use OpenAI</button>
       </div>
     </div>
 
-    <div v-if="props.settings.stt_engine === 'openai'" class="settings-row col">
+    <div v-if="props.settings.stt_engine === 'openai'" class="field">
       <div class="row-label">
-        <label class="label">Cloud STT API Key (optional)</label>
+        <label class="field-label">Cloud STT API Key (optional)</label>
         <span class="info-icon" :title="infoTitle('Only used for non-OpenAI base URLs that require auth. For OpenAI base URL, the OpenAI API key is used.')">i</span>
       </div>
-      <div class="row-inline">
+      <div class="actions">
         <input
           :type="showSttCloudKey ? 'text' : 'password'"
           v-model="props.settings.stt_cloud_api_key"
@@ -634,47 +653,60 @@ function infoTitle(v: string): string {
       </div>
     </div>
 
-    <div class="settings-row col">
+  </CollapsibleCard>
+
+  <CollapsibleCard
+    id="settings.stt.postprocess"
+    title="Post-processing"
+    desc="Optional cleanup pass over the transcript. Switched on in the STT panel."
+  >
+    <div class="field">
       <div class="row-label">
-        <label class="label">AI Post-Processing Model</label>
+        <label class="field-label">Model</label>
         <span class="info-icon" :title="infoTitle('Select the model used for STT post-processing. Enable/disable and prompt are configured in the STT view.')">i</span>
       </div>
 
-      <div class="row-inline" style="gap: 10px; align-items: center; flex-wrap: wrap;">
-        <select v-model="props.settings.stt_post_process_model" class="input" style="max-width: 320px;">
+      <div class="actions">
+        <select v-model="props.settings.stt_post_process_model" class="input">
           <option v-for="m in postProcessModelOptions" :key="m" :value="m">{{ m }}</option>
         </select>
         <button class="btn" :disabled="props.models?.loading" @click="props.onRefreshModels?.()">
           {{ props.models?.loading ? 'Fetching…' : 'Fetch Models' }}
         </button>
       </div>
-      <div v-if="props.models?.error" class="settings-hint error">{{ props.models.error }}</div>
+      <div v-if="props.models?.error" class="field-hint error">{{ props.models.error }}</div>
     </div>
 
-    <div class="settings-title">Command Mode</div>
-    <div class="settings-row col">
-      <div class="settings-hint">
+  </CollapsibleCard>
+
+  <CollapsibleCard
+    id="settings.stt.command"
+    title="Command Mode"
+    desc="Run a script with the transcript instead of pasting it."
+    :default-open="false"
+  >
+    <div class="field">
+      <div class="field-hint">
         Command Mode adds a fifth Quick Action: press <code>C</code> in the popup to record a voice command. Instead of pasting the transcript, AiDesktopCompanion runs a script from <code>%APPDATA%/AiDesktopCompanion/hooks/</code> and passes the transcript on stdin.
       </div>
     </div>
 
-    <div class="settings-row">
+    <div class="field-row">
       <label class="checkbox">
         <input type="checkbox" v-model="props.settings.command_enabled" />
         Enable Command Mode
       </label>
     </div>
 
-    <div class="settings-row col" :style="{ opacity: props.settings.command_enabled ? 1 : 0.6 }">
+    <div class="field" :style="{ opacity: props.settings.command_enabled ? 1 : 0.6 }">
       <div class="row-label">
-        <label class="label">Active Script</label>
+        <label class="field-label">Active Script</label>
         <span class="info-icon" :title="infoTitle('Scripts are discovered from %APPDATA%/AiDesktopCompanion/hooks/. Supported extensions: .ps1, .cmd, .bat, .exe')">i</span>
       </div>
-      <div class="row-inline" style="gap: 10px; align-items: center; flex-wrap: wrap;">
+      <div class="actions">
         <select
           v-model="props.settings.command_active_script"
           class="input"
-          style="min-width: 360px;"
           :disabled="!props.settings.command_enabled || commandScriptsBusy || commandScripts.length === 0"
         >
           <option value="" :disabled="commandScripts.length > 0">(none - click Create default script to start)</option>
@@ -684,7 +716,7 @@ function infoTitle(v: string): string {
           {{ commandScriptsBusy ? 'Refreshing…' : 'Refresh' }}
         </button>
       </div>
-      <div class="row-inline" style="gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 8px;">
+      <div class="actions">
         <button
           v-if="commandScripts.length === 0"
           class="btn"
@@ -702,95 +734,115 @@ function infoTitle(v: string): string {
           {{ commandScriptOpBusy ? 'Opening…' : 'Open hooks folder' }}
         </button>
       </div>
-      <div class="settings-hint" v-if="!commandScriptsError && commandScripts.length === 0">No scripts found in hooks directory yet.</div>
-      <div class="settings-hint error" v-if="commandScriptsError">{{ commandScriptsError }}</div>
+      <div class="field-hint" v-if="!commandScriptsError && commandScripts.length === 0">No scripts found in hooks directory yet.</div>
+      <div class="field-hint error" v-if="commandScriptsError">{{ commandScriptsError }}</div>
     </div>
 
-    <div class="settings-row col" :style="{ opacity: props.settings.command_enabled ? 1 : 0.6 }">
+    <div class="field" :style="{ opacity: props.settings.command_enabled ? 1 : 0.6 }">
       <div class="row-label">
-        <label class="label">Hook timeout (seconds)</label>
+        <label class="field-label">Hook timeout (seconds)</label>
         <span class="info-icon" :title="infoTitle('Maximum allowed runtime for a command hook process before it is killed.')">i</span>
       </div>
       <input
         type="number"
-        class="input"
+        class="input w-sm"
         min="5"
         max="3600"
         step="1"
         v-model.number="props.settings.command_hook_timeout_secs"
         :disabled="!props.settings.command_enabled"
         @blur="props.settings.command_hook_timeout_secs = Math.min(3600, Math.max(5, Math.floor(Number(props.settings.command_hook_timeout_secs || 120))))"
-        style="max-width: 180px;"
       />
     </div>
-  </div>
+  </CollapsibleCard>
 </template>
 
 <style scoped>
-.row-label { display: flex; align-items: center; gap: 8px; }
+/* Only the pieces with no equivalent in the shared layer live here: the
+   model picker, the label-plus-info-icon row, and the disclosure "i". */
+
+.row-label {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+/* A hoverable "i" rather than a paragraph of hint text under every control -
+   this screen has fifteen of them and they would bury the controls. */
 .info-icon {
-  width: 18px;
-  height: 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--adc-border);
-  border-radius: 999px;
-  font-size: 11px;
-  line-height: 1;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 1px solid var(--adc-border-strong);
   color: var(--adc-fg-muted);
-  background: var(--adc-surface);
-  cursor: default;
+  font-size: 10px;
+  font-style: italic;
+  font-weight: 600;
+  cursor: help;
   user-select: none;
+  flex: 0 0 auto;
+}
+.info-icon:hover { color: var(--adc-fg); border-color: var(--adc-accent); }
+
+/* Model picker: a radio group that needs room for a name, a rationale and an
+   action, so it is a list of rows rather than a <select>. */
+.model-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
 }
 
-.model-list { display: flex; flex-direction: column; gap: 8px; width: 100%; }
 .model-item {
-  border: 1px solid var(--adc-border);
-  border-radius: 10px;
-  padding: 10px 12px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  background: var(--adc-surface);
-  cursor: pointer;
-}
-.model-item.active { border-color: var(--adc-accent); }
-.model-main { min-width: 0; }
-.model-name { font-weight: 700; }
-.model-hint { font-size: 12px; color: var(--adc-fg-muted); margin-top: 2px; }
-.model-meta { display: inline-flex; align-items: center; gap: 10px; flex: 0 0 auto; }
-.model-active { color: var(--adc-accent); font-size: 12px; font-weight: 700; }
-
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 8px;
-  border-radius: 999px;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
   border: 1px solid var(--adc-border);
-  font-size: 12px;
-  line-height: 1.4;
-  margin: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--adc-bg);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.model-item:hover { border-color: var(--adc-border-strong); background: var(--adc-hover); }
+.model-item.active {
+  border-color: var(--adc-accent);
+  background: var(--adc-hover);
 }
 
-.status-pill.ok {
-  border-color: rgba(60, 180, 120, 0.7);
-  color: rgba(60, 180, 120, 1);
+.model-main { flex: 1; min-width: 0; }
+.model-name { font-size: var(--fs-base); color: var(--adc-fg); font-weight: 500; }
+.model-hint {
+  font-size: var(--fs-sm);
+  color: var(--adc-fg-muted);
+  margin-top: 2px;
+  line-height: 1.45;
 }
 
-.status-pill.bad {
-  border-color: rgba(220, 90, 90, 0.7);
-  color: rgba(220, 90, 90, 1);
+.model-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: 0 0 auto;
+}
+.model-active {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--adc-accent);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
-.settings-section :deep(textarea.input) {
-  display: block;
-  width: 100% !important;
-  max-width: 100% !important;
-  box-sizing: border-box;
-  flex: 0 0 auto !important;
-  align-self: stretch;
-  overflow-x: hidden;
+/* Paths appear inline in hints all over this screen and are long enough to
+   force horizontal scroll if they are not allowed to break. */
+code {
+  font-family: var(--font-mono);
+  font-size: 0.95em;
+  background: var(--adc-surface-2);
+  border-radius: var(--radius-sm);
+  padding: 1px 5px;
+  overflow-wrap: anywhere;
 }
 </style>
