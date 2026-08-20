@@ -100,7 +100,6 @@ pub fn run() {
       tts_openai_synthesize_file,
       tts_openai_stream_start,
       tts_openai_stream_stop,
-      tts_openai_responses_stream_start,
       tts_create_stream_session,
       tts_stop_stream_session,
       tts_stream_session_count,
@@ -211,15 +210,6 @@ use rmcp::{
 // ---------------------------
 
 // settings_config_path wrapper removed; use config::settings_config_path() directly where needed
-
-/// Start streaming using OpenAI Responses API with SSE, emitting tts:stream:* events.
-#[tauri::command]
-async fn tts_openai_responses_stream_start(app: tauri::AppHandle, text: String, voice: Option<String>, model: Option<String>, format: Option<String>) -> Result<u64, String> {
-  let key = settings::get_api_key_from_settings_or_env()?;
-  tts_openai::responses_stream_start(app, key, text, voice, model, format)
-}
-
-// Helpers to parse SSE lines from a raw byte buffer (moved to tts module)
 
 /// Create a new TTS streaming session and return the stream URL
 #[tauri::command]

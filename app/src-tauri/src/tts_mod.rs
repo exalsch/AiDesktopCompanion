@@ -18,8 +18,6 @@ pub use crate::tts_openai::{
   openai_stream_start,
   openai_stream_stop,
   spawn_speech_stream,
-  responses_stream_start,
-  spawn_responses_stream,
   ensure_streaming_server,
   create_stream_session,
   stop_stream_session,

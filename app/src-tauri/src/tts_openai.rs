@@ -7,12 +7,7 @@ use once_cell::sync::Lazy as GlobalLazy;
 use serde_json;
 use tauri::Emitter;
 use tokio::sync::oneshot;
-use crate::tts_utils::{
-  write_pcm16_wav_from_any,
-  find_sse_event_boundary,
-  consume_leading_newlines,
-  extract_sse_data,
-};
+use crate::tts_utils::write_pcm16_wav_from_any;
 
 use std::collections::HashMap;
 use std::sync::Mutex as StdMutex;
@@ -121,39 +116,6 @@ pub fn openai_stream_stop(id: u64) -> Result<bool, String> {
   if let Some(tx) = tx { let _ = tx.send(()); Ok(true) } else { Ok(false) }
 }
 
-pub fn responses_stream_start(
-  app: tauri::AppHandle,
-  key: String,
-  text: String,
-  voice: Option<String>,
-  model: Option<String>,
-  format: Option<String>,
-) -> Result<u64, String> {
-  if text.trim().is_empty() { return Err("Text is empty".into()); }
-  if text.len() > OPENAI_TTS_MAX_INPUT_CHARS { return Err(format!("Text exceeds TTS limit of {} characters", OPENAI_TTS_MAX_INPUT_CHARS)); }
-  let fmt = format.unwrap_or_else(|| "opus".to_string());
-  let req_model = model.unwrap_or_else(|| "gpt-4o-mini-tts".to_string());
-  let m = if req_model.contains("tts") { "gpt-4o-realtime-preview".to_string() } else { req_model };
-  let v = voice.unwrap_or_else(|| "alloy".to_string());
-  let body = serde_json::json!({
-    "model": m,
-    "modalities": ["text", "audio"],
-    "audio": { "voice": v, "format": fmt },
-    "input": text,
-    "stream": true
-  });
-  let (tx, rx) = oneshot::channel::<()>();
-  let id = STREAM_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
-  {
-    let mut map = STREAM_STOPPERS.lock().map_err(|_| "Mutex poisoned")?;
-    map.insert(id, tx);
-  }
-  spawn_responses_stream(app, key, body, fmt, id, rx, move |rid| {
-    if let Ok(mut map) = STREAM_STOPPERS.lock() { map.remove(&rid); }
-  });
-  Ok(id)
-}
-
 pub fn spawn_speech_stream(
   app: tauri::AppHandle,
   key: String,
@@ -204,94 +166,6 @@ pub fn spawn_speech_stream(
             }
             Some(Err(e)) => { emit_err(format!("stream error: {e}")); break; }
             None => { let _ = app.emit("tts:stream:end", serde_json::json!({ "id": id })); break; }
-          }
-        }
-      }
-    }
-
-    on_remove(id);
-  });
-}
-
-pub fn spawn_responses_stream(
-  app: tauri::AppHandle,
-  key: String,
-  body: serde_json::Value,
-  fmt: String,
-  id: u64,
-  mut rx: tokio::sync::oneshot::Receiver<()>,
-  on_remove: impl FnOnce(u64) + Send + 'static,
-) {
-  tauri::async_runtime::spawn(async move {
-    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).connect_timeout(std::time::Duration::from_secs(10)).build().unwrap_or_else(|_| reqwest::Client::new());
-    let resp_res = client
-      .post("https://api.openai.com/v1/responses")
-      .bearer_auth(key)
-      .header("Accept", "text/event-stream")
-      .json(&body)
-      .send()
-      .await;
-
-    let app2 = app.clone();
-    let emit_err = |msg: String| { let _ = app2.emit("tts:stream:error", serde_json::json!({ "id": id, "message": msg })); };
-
-    let resp = match resp_res {
-      Ok(r) => r,
-      Err(e) => { emit_err(format!("request failed: {e}")); on_remove(id); return; }
-    };
-
-    if !resp.status().is_success() {
-      let status = resp.status();
-      let body_text = resp.text().await.unwrap_or_default();
-      emit_err(format!("OpenAI error: {status} {body_text}"));
-      on_remove(id);
-      return;
-    }
-
-    let mime = match fmt.as_str() {
-      "mp3" => "audio/mpeg",
-      "wav" => "audio/wav",
-      _ => "audio/ogg; codecs=opus",
-    };
-    let _ = app.emit("tts:stream:start", serde_json::json!({ "id": id, "mime": mime }));
-
-    let mut stream = resp.bytes_stream();
-    let mut buf: Vec<u8> = Vec::new();
-    let mut done = false;
-    loop {
-      tokio::select! {
-        _ = &mut rx => { let _ = app.emit("tts:stream:cancelled", serde_json::json!({ "id": id })); break; }
-        next = stream.next() => {
-          match next {
-            Some(Ok(chunk)) => {
-              buf.extend_from_slice(&chunk);
-              loop {
-                if let Some(pos) = find_sse_event_boundary(&buf) {
-                  let ev_bytes = buf.drain(..pos).collect::<Vec<u8>>();
-                  let _ = consume_leading_newlines(&mut buf);
-                  if let Some(data_json) = extract_sse_data(&ev_bytes) {
-                    if data_json.trim() == "[DONE]" { let _ = app.emit("tts:stream:end", serde_json::json!({ "id": id })); done = true; break; }
-                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&data_json) {
-                      let typ = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                      // OpenAI Responses API uses "response.audio.delta" for audio chunks
-                      if typ == "response.audio.delta" || typ == "response.output_audio.delta" {
-                        let b64 = val.get("delta").and_then(|v| v.as_str())
-                          .or_else(|| val.get("audio").and_then(|v| v.as_str()))
-                          .unwrap_or("");
-                        if !b64.is_empty() { let _ = app.emit("tts:stream:chunk", serde_json::json!({ "id": id, "data": b64 })); }
-                      } else if typ == "response.completed" {
-                        let _ = app.emit("tts:stream:end", serde_json::json!({ "id": id }));
-                        done = true;
-                        break;
-                      }
-                    }
-                  }
-                } else { break; }
-              }
-              if done { break; }
-            }
-            Some(Err(e)) => { emit_err(format!("stream error: {e}")); break; }
-            None => { if !done { let _ = app.emit("tts:stream:end", serde_json::json!({ "id": id })); } break; }
           }
         }
       }
