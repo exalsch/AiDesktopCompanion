@@ -68,12 +68,6 @@ const elapsedLabel = computed(() => {
  * pasted into a document.
  */
 const transcriptText = ref('')
-watch(transcript, (turns) => {
-  transcriptText.value = turns
-    .filter((t) => t.role !== 'tool')
-    .map((t) => `${t.role === 'user' ? 'You' : 'Assistant'}: ${t.content}`)
-    .join('\n\n')
-}, { deep: true })
 
 async function copyTranscript() {
   try {
@@ -263,6 +257,15 @@ const realtime = useAssistantRealtime({
   },
   onRateLimits: (limits: any[]) => { rateLimits.value = limits },
 })
+
+// Declared after `realtime`: watch() evaluates its source immediately, and
+// this one reads through to the composable.
+watch(transcript, (turns) => {
+  transcriptText.value = turns
+    .filter((t) => t.role !== 'tool')
+    .map((t) => `${t.role === 'user' ? 'You' : 'Assistant'}: ${t.content}`)
+    .join('\n\n')
+}, { deep: true })
 
 async function activate() {
   if (ui.connecting || ui.connected) return
