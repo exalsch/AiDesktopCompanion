@@ -156,6 +156,7 @@ pub fn run() {
       mcp_is_connected,
       realtime_create_ephemeral_token,
       realtime_build_tools,
+      realtime_call_tool,
       busy::busy_get_state,
       busy::busy_hide
     ])
@@ -774,8 +775,22 @@ async fn chat_complete(app: tauri::AppHandle, messages: Vec<chat::ChatMessage>) 
 // OpenAI Realtime helpers
 // ---------------------------
 
-/// Create an ephemeral token for OpenAI Realtime WebRTC sessions.
-/// Frontend uses this token as the Bearer when exchanging the SDP offer.
+/// Default model for a Realtime session.
+///
+/// `gpt-realtime` is the moving alias OpenAI keeps pointed at the current GA
+/// snapshot. The previous default, `gpt-4o-realtime-preview`, was a pinned
+/// preview id; it has since been retired and no longer appears in `/v1/models`,
+/// which is how this whole feature ended up failing.
+const DEFAULT_REALTIME_MODEL: &str = "gpt-realtime";
+
+/// Mint an ephemeral client secret for an OpenAI Realtime WebRTC session.
+///
+/// The frontend uses the returned token as the Bearer when it posts its SDP
+/// offer, so the real API key never reaches the WebView.
+///
+/// Talks to `/v1/realtime/client_secrets`. The beta endpoint this used to call,
+/// `/v1/realtime/sessions`, was removed along with the rest of the realtime
+/// beta and now answers `404 Invalid URL` for every request.
 #[tauri::command]
 async fn realtime_create_ephemeral_token(model: Option<String>, voice: Option<String>) -> Result<String, String> {
   let key = settings::get_api_key_from_settings_or_env()?;
@@ -784,15 +799,26 @@ async fn realtime_create_ephemeral_token(model: Option<String>, voice: Option<St
     .connect_timeout(std::time::Duration::from_secs(10))
     .build()
     .unwrap_or_else(|_| reqwest::Client::new());
-  let model_name = model.unwrap_or_else(|| "gpt-4o-realtime-preview".to_string());
-  let voice_name = voice.unwrap_or_else(|| "verse".to_string());
+  let model_name = model
+    .filter(|m| !m.trim().is_empty())
+    .unwrap_or_else(|| DEFAULT_REALTIME_MODEL.to_string());
+  let voice_name = voice
+    .filter(|v| !v.trim().is_empty())
+    .unwrap_or_else(|| "alloy".to_string());
+  // Everything now hangs off `session`, and `voice` moved down into
+  // `session.audio.output`. The rest of the session (instructions, tools, turn
+  // detection) is sent over the data channel as `session.update` once the
+  // connection is up, so only the two fields that must be fixed at mint time
+  // are set here.
   let body = serde_json::json!({
-    "model": model_name,
-    "modalities": ["audio", "text"],
-    "voice": voice_name
+    "session": {
+      "type": "realtime",
+      "model": model_name,
+      "audio": { "output": { "voice": voice_name } }
+    }
   });
   let resp = client
-    .post("https://api.openai.com/v1/realtime/sessions")
+    .post("https://api.openai.com/v1/realtime/client_secrets")
     .bearer_auth(&key)
     .json(&body)
     .send()
@@ -804,18 +830,72 @@ async fn realtime_create_ephemeral_token(model: Option<String>, voice: Option<St
     return Err(format!("OpenAI error: {status} {text}"));
   }
   let v: serde_json::Value = resp.json().await.map_err(|e| format!("json error: {e}"))?;
+  // GA returns the secret at the top level; the beta wrapped it in
+  // `client_secret.value`. Accept both so an OpenAI-compatible proxy that still
+  // speaks the old shape keeps working.
   let token = v
-    .get("client_secret")
-    .and_then(|x| x.get("value"))
+    .get("value")
     .and_then(|x| x.as_str())
-    .ok_or_else(|| "missing client_secret.value in response".to_string())?;
+    .or_else(|| v.get("client_secret").and_then(|x| x.get("value")).and_then(|x| x.as_str()))
+    .ok_or_else(|| format!("missing `value` in client_secrets response: {v}"))?;
   Ok(token.to_string())
 }
 
-/// Build OpenAI tool definitions from connected MCP servers for Realtime sessions.
+/// Build tool definitions for a Realtime session from the connected MCP servers.
+///
+/// Realtime takes a flat function shape - `{type, name, description, parameters}` -
+/// while chat-completions nests those fields under `function`.
+/// `build_openai_tools_from_mcp` produces the nested form for `chat.rs`, so
+/// unwrap it here instead of forking the builder: the name mangling and the
+/// reverse-lookup map it populates have to stay shared with
+/// `parse_mcp_fn_call_name`, which is what turns a tool call back into a server.
 #[tauri::command]
 async fn realtime_build_tools() -> Result<serde_json::Value, String> {
   let map = MCP_CLIENTS.lock().await;
   let tools = mcp::build_openai_tools_from_mcp(&*map).await;
-  Ok(serde_json::Value::Array(tools))
+  let flat: Vec<serde_json::Value> = tools
+    .into_iter()
+    .filter_map(|t| {
+      let f = t.get("function")?;
+      let name = f.get("name")?.as_str()?.to_string();
+      Some(serde_json::json!({
+        "type": "function",
+        "name": name,
+        "description": f.get("description").and_then(|x| x.as_str()).unwrap_or(""),
+        "parameters": f.get("parameters").cloned().unwrap_or_else(|| serde_json::json!({
+          "type": "object", "properties": {}, "additionalProperties": true
+        })),
+      }))
+    })
+    .collect();
+  Ok(serde_json::Value::Array(flat))
+}
+
+/// Execute a single tool call issued by a Realtime session.
+///
+/// This is the WebRTC counterpart to the tool-call arm of
+/// `chat_complete_with_mcp`: there the call arrives inside a chat completion,
+/// here it arrives over the data channel, but both have to resolve the mangled
+/// `mcp__server__tool` name back to a live client.
+///
+/// Always returns Ok with a JSON string, because the value is fed straight back
+/// to the model as a `function_call_output` - a failed tool still has to produce
+/// output, or the model waits forever for a turn that never completes.
+#[tauri::command]
+async fn realtime_call_tool(name: String, args_json: Option<String>) -> Result<String, String> {
+  let args: serde_json::Value = args_json
+    .filter(|s| !s.trim().is_empty())
+    .and_then(|s| serde_json::from_str(&s).ok())
+    .unwrap_or_else(|| serde_json::json!({}));
+  let Some((server_id, tool_name)) = mcp::parse_mcp_fn_call_name(&name) else {
+    return Ok(serde_json::json!({ "error": format!("unknown tool: {name}") }).to_string());
+  };
+  match mcp::call_tool(&MCP_CLIENTS, &server_id, &tool_name, args).await {
+    Ok(res) => Ok(
+      serde_json::json!({ "serverId": server_id, "tool": tool_name, "result": res }).to_string()
+    ),
+    Err(e) => Ok(
+      serde_json::json!({ "serverId": server_id, "tool": tool_name, "error": e }).to_string()
+    ),
+  }
 }
