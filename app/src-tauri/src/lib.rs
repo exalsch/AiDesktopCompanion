@@ -157,6 +157,8 @@ pub fn run() {
       realtime_create_ephemeral_token,
       realtime_build_tools,
       realtime_call_tool,
+      updater::check_for_update,
+      updater::open_release_page,
       busy::busy_get_state,
       busy::busy_hide
     ])
@@ -195,6 +197,7 @@ mod settings;
 mod quick_actions;
 mod command_hook;
 mod busy;
+mod updater;
 
 use rmcp::{
   service::{RoleClient, RunningService},

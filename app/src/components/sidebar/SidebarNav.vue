@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import LoadingDots from '../LoadingDots.vue'
 import NavIcon, { type NavIconName } from './NavIcon.vue'
+import { useUpdateCheck } from '../../composables/useUpdateCheck'
 
 type Section = 'Prompt' | 'Assistant' | 'TTS' | 'STT' | 'Settings'
 type SettingsSubview = 'General' | 'Speech To Text' | 'Quick Prompts' | 'MCP Servers'
@@ -15,6 +16,9 @@ const props = defineProps<{
   busy: boolean
   version?: string
 }>()
+
+// Notify-only: a link to the release page, never a download.
+const { info: updateInfo, openRelease } = useUpdateCheck()
 
 const emit = defineEmits<{
   (e: 'toggle-sidebar'): void
@@ -116,6 +120,27 @@ const collapsed = computed(() => !props.sidebarOpen)
 
     <div class="side-foot">
       <div class="side-status"><LoadingDots v-if="props.busy" text="Working" /></div>
+      <button
+        v-if="updateInfo?.update_available && props.sidebarOpen"
+        class="side-update"
+        type="button"
+        :title="`Version ${updateInfo.latest} is available. Opens the release page.`"
+        @click="openRelease()"
+      >
+        <span class="side-update-dot"></span>
+        v{{ updateInfo.latest }}
+      </button>
+      <!-- Collapsed the label does not fit, but the fact of an update still has
+           to be visible, so it degrades to the dot alone. -->
+      <button
+        v-else-if="updateInfo?.update_available"
+        class="side-update collapsed-only"
+        type="button"
+        :title="`Version ${updateInfo.latest} is available. Opens the release page.`"
+        @click="openRelease()"
+      >
+        <span class="side-update-dot"></span>
+      </button>
       <div v-if="props.version && props.sidebarOpen" class="side-version">v{{ props.version }}</div>
     </div>
   </aside>
@@ -257,6 +282,34 @@ const collapsed = computed(() => !props.sidebarOpen)
   font-size: var(--fs-xs);
   color: var(--adc-fg-muted);
   font-variant-numeric: tabular-nums;
+}
+
+/* Reads as a quiet note next to the version, not a call to action - there is
+   nothing urgent about a new release being available. */
+.side-update {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px var(--sp-2);
+  border: 1px solid var(--adc-ok-border);
+  border-radius: var(--radius-pill);
+  background: var(--adc-ok-bg);
+  color: var(--adc-ok-fg);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.side-update:hover { border-color: var(--adc-accent); }
+.side-update.collapsed-only { padding: 4px; }
+
+.side-update-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: 0 0 auto;
 }
 .collapsed .side-foot { justify-content: center; padding-left: 0; padding-right: 0; }
 
