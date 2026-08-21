@@ -120,8 +120,7 @@ const localSttProviders = [
 ]
 
 const parakeetVariants = [
-  { label: 'Parakeet V2', value: 'parakeet-tdt-0.6b-v2', hint: 'Fast and accurate. Smaller download.' },
-  { label: 'Parakeet V3', value: 'parakeet-tdt-0.6b-v3', hint: 'Multilingual (25 languages). Newer variant.' },
+  { label: 'Parakeet V3', value: 'parakeet-tdt-0.6b-v3', hint: 'Multilingual - 25 languages including German.' },
 ]
 
 // Models offered for the cloud endpoint. Only models that answer POST
@@ -167,7 +166,7 @@ const localProvider = computed({
     if (v === 'parakeet') {
       const cur = String(props.settings.stt_local_model || '')
       if (!cur.toLowerCase().includes('parakeet')) {
-        props.settings.stt_local_model = 'parakeet-tdt-0.6b-v2'
+        props.settings.stt_local_model = 'parakeet-tdt-0.6b-v3'
       }
     } else {
       props.settings.stt_local_model = 'whisper'
@@ -308,11 +307,6 @@ function selectParakeetVariant(v: string) {
   props.settings.stt_local_model = v
 }
 
-const isParakeetV3Local = computed(() => {
-  const t = String(props.settings.stt_local_model || '').toLowerCase()
-  return t.includes('0.6b-v3') || (t.includes('parakeet') && t.includes('v3'))
-})
-
 const localModelStatusBusy = ref(false)
 const localModelStatusError = ref('')
 const localModelDownloaded = ref(false)
@@ -395,15 +389,19 @@ function selectCloudModel(v: string) {
 }
 
 /**
- * A cloud model field holding the name of an on-device model.
+ * A model OpenAI does not host, pointed at OpenAI.
  *
- * Easy to end up with by picking a local model while the cloud engine is
- * selected, and it fails only at transcription time with a remote 404 that says
- * nothing about the cause.
+ * The Parakeet entries below are legitimate: plenty of OpenAI-compatible servers
+ * serve them. They are only wrong against api.openai.com, and that combination
+ * fails at transcription time with a remote error that says nothing about the
+ * cause. Any other base URL is somebody else's server and none of our business.
  */
-const cloudModelLooksLocal = computed(() => {
+const cloudModelNotOnOpenai = computed(() => {
+  const url = String(props.settings.stt_cloud_base_url || '').toLowerCase()
+  if (!/(^|\/\/)api\.openai\.com/.test(url)) return false
   const v = String(props.settings.stt_cloud_model || '').toLowerCase()
-  return /parakeet|ggml|\.bin$/.test(v)
+  if (!v) return false
+  return !/^(gpt-|whisper-1$)/.test(v)
 })
 
 /**
@@ -610,8 +608,7 @@ function infoTitle(v: string): string {
 
       <div class="field-hint">
         Default folder:
-        <code v-if="isParakeetV3Local">%APPDATA%/AiDesktopCompanion/models/parakeet/parakeet-tdt-0.6b-v3</code>
-        <code v-else>%APPDATA%/AiDesktopCompanion/models/parakeet/parakeet-tdt-0.6b-v2</code>
+        <code>%APPDATA%/AiDesktopCompanion/models/parakeet/parakeet-tdt-0.6b-v3</code>
       </div>
       <div class="field-hint" v-if="localModelStatusError">{{ localModelStatusError }}</div>
       <div class="field-hint" v-else>
@@ -643,9 +640,10 @@ function infoTitle(v: string): string {
         <span class="info-icon" :title="infoTitle('Choose a suggested model. No free text field: the goal is to keep this predictable.')">i</span>
       </div>
 
-      <p v-if="cloudModelLooksLocal" class="field-hint error">
-        <code>{{ props.settings.stt_cloud_model }}</code> is an on-device model name, and this is the cloud endpoint.
-        The request will be rejected by the server. Pick one of the suggestions below.
+      <p v-if="cloudModelNotOnOpenai" class="field-hint error">
+        <code>{{ props.settings.stt_cloud_model }}</code> is not a model OpenAI hosts, and the base URL points at
+        api.openai.com. The request will be rejected. Either pick a GPT model below, or point the base URL at a server
+        that serves this one.
       </p>
 
       <div class="model-list">

@@ -79,24 +79,14 @@ bytes = "1"
 uuid = { version = "1.0", features = ["v4"] }
 tokio-stream = "0.1"
 whisper-rs = { version = "0.16", optional = true }
-parakeet_rs_jason = { package = "parakeet-rs", git = "https://github.com/jason-ni/parakeet-rs.git", branch = "master", optional = true }
-# Both pins are held down by `parakeet_rs_jason` above, which is a fork stuck on
-# ort 2.0.0-rc.10 / ndarray 0.16. crates.io parakeet-rs 0.3.7 wants ort rc.13,
-# and rc.13 moved to ndarray 0.17; taking it makes the fork fail to build with
-# ~50 type errors, because the two ndarray majors are different types.
-#
-# Unpinning therefore means dropping the fork, i.e. dropping the Parakeet V2
-# backend - the two use incompatible on-disk model layouts (V2: split
-# joint.*.onnx + tokens.txt from the jason-ni tarball; V3: encoder-model /
-# decoder_joint-model + vocab.txt from istupakov), so V3 cannot simply load a
-# V2 directory. That is a user-visible migration, not a dependency bump: every
-# existing V2 install would have to re-download a model.
-parakeet_rs_alt = { package = "parakeet-rs", version = "=0.2.6", optional = true }
-ort = { version = "=2.0.0-rc.10", optional = true, features = ["download-binaries"] }
-flate2 = { version = "1.0", optional = true }
-tar = { version = "0.4", optional = true }
+# Parakeet V3 only. The V2 backend ran on a git fork of this crate that was
+# stuck on ort 2.0.0-rc.10 / ndarray 0.16, which is what held both pins down;
+# with the fork gone they are free to move. V3 is multilingual where V2 was
+# English-only, so nothing is lost but the download.
+parakeet_rs_alt = { package = "parakeet-rs", version = "0.3", optional = true }
+ort = { version = "2.0.0-rc.13", optional = true, features = ["download-binaries"] }
 num_cpus = "1.16"
 
 [features]
 default = ["local-stt"]
-local-stt = ["whisper-rs", "parakeet_rs_jason", "parakeet_rs_alt", "parakeet_rs_alt/cuda", "ort", "flate2", "tar"]
+local-stt = ["whisper-rs", "parakeet_rs_alt", "parakeet_rs_alt/cuda", "ort"]

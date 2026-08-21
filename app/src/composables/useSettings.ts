@@ -205,7 +205,12 @@ export function useSettings() {
         settings.stt_engine = (se === 'local') ? 'local' : 'openai'
       }
       if (typeof (v as any).stt_local_model === 'string' && String((v as any).stt_local_model).trim()) {
-        settings.stt_local_model = String((v as any).stt_local_model).trim()
+        const stored = String((v as any).stt_local_model).trim()
+        // Parakeet V2 was English-only and has been removed. A profile still
+        // naming it is migrated to V3 rather than left pointing at a backend
+        // that no longer exists.
+        const retiredParakeet = stored.toLowerCase().includes('parakeet') && !stored.toLowerCase().includes('v3')
+        settings.stt_local_model = retiredParakeet ? 'parakeet-tdt-0.6b-v3' : stored
       }
       if (typeof (v as any).stt_parakeet_has_cuda === 'boolean') {
         settings.stt_parakeet_has_cuda = (v as any).stt_parakeet_has_cuda === true
