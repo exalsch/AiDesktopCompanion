@@ -64,6 +64,20 @@ function schemaProps(s: any): Record<string, any> | null {
         <button class="btn" type="button" @click="props.onAdd">Add server</button>
         <span class="field-hint">stdio and http transports. Changes save automatically.</span>
       </div>
+
+      <div class="divider"></div>
+
+      <label class="switch row">
+        <input type="checkbox" v-model="props.settings.mcp_show_console" />
+        <span class="switch-text">
+          <span class="switch-label">Show server console windows</span>
+          <span class="switch-hint">
+            stdio servers run as child processes, which Windows normally gives a console window of their own.
+            They are hidden because the app talks to them over pipes and there is nothing to type into.
+            Turn this on when a server dies at startup and its error only appears there. Takes effect on the next connect.
+          </span>
+        </span>
+      </label>
     </div>
   </section>
 

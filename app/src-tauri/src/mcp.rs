@@ -91,6 +91,21 @@ pub async fn connect(
       for (k, v) in obj.iter() { if let Some(s) = v.as_str() { cmd.env(k, s); } }
     }
   }
+  // Windows gives every child process its own console window unless asked not
+  // to. The app communicates with the server over its pipes and the user never
+  // types into it, so the window is pure noise - and with several servers set to
+  // connect on startup, it is several windows at once.
+  //
+  // The escape hatch matters: when a server fails to start, whatever it printed
+  // before dying is sometimes only visible in that console.
+  #[cfg(target_os = "windows")]
+  {
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    if !crate::config::mcp_show_console() {
+      cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+  }
+
   let child_transport = TokioChildProcess::new(cmd).map_err(|e| format!("spawn failed: {e}"))?;
   let service = ().serve(child_transport).await.map_err(|e| {
     let msg = format!("serve failed: {e}");

@@ -93,6 +93,18 @@ pub fn get_start_in_tray_from_settings() -> bool {
   v.get("start_in_tray").and_then(|x| x.as_bool()).unwrap_or(false)
 }
 
+/// Whether stdio MCP servers should keep their console window.
+///
+/// Off by default: the app talks to those processes over pipes and the user
+/// never types into them, so the window is noise. Worth turning on when a
+/// server dies at startup and its error only appears there.
+pub fn mcp_show_console() -> bool {
+  load_settings_json()
+    .get("mcp_show_console")
+    .and_then(|x| x.as_bool())
+    .unwrap_or(false)
+}
+
 /// Normalize a `select_all_capture_mode` value to one of the three supported
 /// modes, defaulting to `"ctrl_shift_home"`.
 pub fn normalize_select_all_capture_mode(value: &str) -> &'static str {
@@ -239,6 +251,7 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   if let Some(qpm) = map.get("quick_prompt_model").and_then(|x| x.as_str()) { obj.insert("quick_prompt_model".to_string(), serde_json::Value::String(qpm.to_string())); }
   if let Some(t) = map.get("temperature").and_then(|x| x.as_f64()) { obj.insert("temperature".to_string(), serde_json::Value::Number(serde_json::Number::from_f64(t).unwrap_or_else(|| serde_json::Number::from_f64(1.0).unwrap()))); }
   if let Some(p) = map.get("persist_conversations").and_then(|x| x.as_bool()) { obj.insert("persist_conversations".to_string(), serde_json::Value::Bool(p)); }
+  if let Some(b) = map.get("mcp_show_console").and_then(|x| x.as_bool()) { obj.insert("mcp_show_console".to_string(), serde_json::Value::Bool(b)); }
   if let Some(s) = map.get("start_in_tray").and_then(|x| x.as_bool()) { obj.insert("start_in_tray".to_string(), serde_json::Value::Bool(s)); }
   // Persist UI style selection
   if let Some(ui) = map.get("ui_style").and_then(|x| x.as_str()) { obj.insert("ui_style".to_string(), serde_json::Value::String(ui.to_string())); }

@@ -2,6 +2,8 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -261,6 +263,13 @@ fn build_command_for_script(script_path: &Path) -> Result<Command, String> {
     } else {
       return Err("Unsupported command script extension".to_string());
     };
+    let mut cmd = cmd;
+    // Windows attaches a console to a console-subsystem child unless told not
+    // to. stdout and stderr are already redirected to the command-hook log, so
+    // that console renders an empty black window and then vanishes - once per
+    // voice command.
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    cmd.creation_flags(CREATE_NO_WINDOW);
     Ok(cmd)
   }
 
