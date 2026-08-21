@@ -3,6 +3,7 @@ import QuickActions from './QuickActions.vue'
 import PromptPanel from './components/PromptPanel.vue'
 import CaptureOverlay from './components/CaptureOverlay.vue'
 import BusyIndicator from './components/BusyIndicator.vue'
+import AssistantPill from './components/AssistantPill.vue'
 import ConversationHistory from './components/ConversationHistory.vue'
 import PromptMain from './components/prompt/PromptMain.vue'
 import AssistantMode from './components/assistant/AssistantMode.vue'
@@ -28,7 +29,7 @@ import { useSettingsAutosave } from './composables/useSettingsAutosave'
 import { useSettingsSave } from './composables/useSettingsSave'
 import { preloadTokenizer, tokenizerLastError } from './composables/useTokenizer'
 
-const { isQuickActions, isCaptureOverlay, isBusyIndicator, addBodyClass, removeBodyClass } = useWindowMode()
+const { isQuickActions, isCaptureOverlay, isBusyIndicator, isAssistantPill, addBodyClass, removeBodyClass } = useWindowMode()
 
 // Reactive state for Prompt flow in the main window
 const prompt = reactive({
@@ -77,6 +78,8 @@ onMounted(async () => {
   // The busy indicator is a passive status pill: it drives itself from backend
   // events and must not pull in settings, MCP auto-connect or the tokenizer.
   if (isBusyIndicator.value) return
+  // The call pill is passive too: it renders backend state and emits hang-up.
+  if (isAssistantPill.value) return
   try {
     const unsubApp = await registerAppEvents()
     const unsubTtsBg = await registerBackgroundTtsEvents()
@@ -351,6 +354,7 @@ async function autoConnectServers() {
   <QuickActions v-if="isQuickActions" />
   <CaptureOverlay v-else-if="isCaptureOverlay" />
   <BusyIndicator v-else-if="isBusyIndicator" />
+  <AssistantPill v-else-if="isAssistantPill" />
   <div v-else>
     <PromptPanel
       v-if="prompt.visible"

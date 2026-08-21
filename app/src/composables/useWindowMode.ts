@@ -5,6 +5,7 @@ export function useWindowMode() {
   const isQuickActions = ref(winParam === 'quick-actions')
   const isCaptureOverlay = ref(winParam === 'capture-overlay')
   const isBusyIndicator = ref(winParam === 'busy')
+  const isAssistantPill = ref(winParam === 'assistant-pill')
 
   // Apply body class immediately (not deferred to onMounted) to prevent layout flash
   try {
@@ -22,5 +23,5 @@ export function useWindowMode() {
     } catch {}
   }
 
-  return { isQuickActions, isCaptureOverlay, isBusyIndicator, addBodyClass, removeBodyClass }
+  return { isQuickActions, isCaptureOverlay, isBusyIndicator, isAssistantPill, addBodyClass, removeBodyClass }
 }

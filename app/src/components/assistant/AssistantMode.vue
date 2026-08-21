@@ -4,6 +4,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { useAssistantRealtime } from '../../composables/useAssistantRealtime'
 import { useSettings } from '../../composables/useSettings'
 import CollapsibleCard from '../ui/CollapsibleCard.vue'
+import { listen } from '@tauri-apps/api/event'
+import type { UnlistenFn } from '@tauri-apps/api/event'
 import { HOTKEY_EVENT_PTT_DOWN, HOTKEY_EVENT_PTT_UP } from '../../hotkeys'
 
 const props = defineProps<{
@@ -40,8 +42,14 @@ function toggleMic() {
   ;(realtime as any).setMicEnabled?.(!micEnabled.value)
 }
 
-function startTalking() { (realtime as any).startTalking?.() }
-function stopTalking() { (realtime as any).stopTalking?.() }
+function startTalking() {
+  ;(realtime as any).startTalking?.()
+  if (ui.connected) syncPill('live')
+}
+function stopTalking() {
+  ;(realtime as any).stopTalking?.()
+  if (ui.connected) syncPill('live')
+}
 
 /**
  * Hold-to-talk from the global hotkey.
@@ -50,8 +58,57 @@ function stopTalking() { (realtime as any).stopTalking?.() }
  * another application - which is the point, given the answer can be pasted
  * straight back into it.
  */
-function onPttDown() { if (session.micMode === 'ptt') startTalking() }
-function onPttUp() { if (session.micMode === 'ptt') stopTalking() }
+/**
+  * How long the "press again" invitation stays armed.
+  *
+  * Long enough to be a deliberate double-press, short enough that a stray
+  * keystroke does not leave a live call waiting to be started minutes later.
+  */
+const ARM_WINDOW_MS = 6000
+
+const armed = ref(false)
+let armTimer: any = 0
+
+/** Push the current call state to the floating pill. */
+function syncPill(state: 'hidden' | 'armed' | 'live') {
+  void invoke('assistant_pill_set', {
+    state,
+    micOpen: state === 'live' ? micEnabled.value : false,
+    hotkey: appSettings.push_to_talk_hotkey || '',
+  }).catch(() => {})
+}
+
+function disarm() {
+  if (armTimer) { clearTimeout(armTimer); armTimer = 0 }
+  if (!armed.value) return
+  armed.value = false
+  if (!ui.connected && !ui.connecting) syncPill('hidden')
+}
+
+/**
+ * Push-to-talk pressed.
+ *
+ * With no call running the first press only arms: starting a session opens a
+ * microphone and starts spending money, which should not happen because a key
+ * was brushed. A second press inside the arm window starts the call.
+ */
+function onPttDown() {
+  if (ui.connected) {
+    if (session.micMode === 'ptt') startTalking()
+    return
+  }
+  if (ui.connecting) return
+  if (armed.value) {
+    disarm()
+    void activate()
+    return
+  }
+  armed.value = true
+  syncPill('armed')
+  armTimer = setTimeout(disarm, ARM_WINDOW_MS)
+}
+
+function onPttUp() { if (ui.connected && session.micMode === 'ptt') stopTalking() }
 
 // Realtime audio is billed by the minute, so how long a session has been open
 // is the number worth putting on screen.
@@ -262,8 +319,8 @@ const realtime = useAssistantRealtime({
       throw new Error('Could not mint a realtime token: ' + msg)
     }
   },
-  onConnected: () => { ui.connected = true; ui.connecting = false; ui.error = null; statusText.value = 'Connected'; startElapsed() },
-  onDisconnected: () => { ui.connected = false; ui.connecting = false; statusText.value = 'Idle'; stopElapsed() },
+  onConnected: () => { ui.connected = true; ui.connecting = false; ui.error = null; statusText.value = 'Connected'; startElapsed(); syncPill('live') },
+  onDisconnected: () => { ui.connected = false; ui.connecting = false; statusText.value = 'Idle'; stopElapsed(); syncPill('hidden') },
   onError: (err: string) => { ui.error = err; props.notify?.(err, 'error'); ui.connecting = false; ui.connected = false; statusText.value = 'Error'; try { debugLines.value.push(`[error] ${err}`) } catch {} },
   // Surfaced but does not change connection state: the call is still up.
   onWarn: (msg: string) => { props.notify?.(msg, 'error'); try { debugLines.value.push(`[warn] ${msg}`) } catch {} },
@@ -388,14 +445,23 @@ watch(() => props.autostart, (n, old) => {
   if (typeof n === 'number' && typeof old === 'number' && n > old) void activate()
 })
 
-onMounted(() => {
+let unlistenHangup: UnlistenFn | null = null
+
+onMounted(async () => {
   window.addEventListener(HOTKEY_EVENT_PTT_DOWN, onPttDown)
   window.addEventListener(HOTKEY_EVENT_PTT_UP, onPttUp)
+  // The pill runs in its own window and can only ask; ending the call is done
+  // here, where the connection actually lives.
+  try {
+    unlistenHangup = await listen('assistant:hangup', () => { void deactivate() })
+  } catch {}
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener(HOTKEY_EVENT_PTT_DOWN, onPttDown)
   window.removeEventListener(HOTKEY_EVENT_PTT_UP, onPttUp)
+  if (armTimer) { clearTimeout(armTimer); armTimer = 0 }
+  try { unlistenHangup?.() } catch {}
   stopElapsed()
   try { realtime.disconnect() } catch {}
 })

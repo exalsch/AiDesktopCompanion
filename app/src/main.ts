@@ -10,6 +10,11 @@ const winSearch = window.location.search
 if (winSearch.includes('window=')) document.documentElement.classList.add('sub-window')
 if (winSearch.includes('window=quick-actions')) document.body.classList.add('qa-window')
 if (winSearch.includes('window=capture-overlay')) document.body.classList.add('overlay-window')
+if (winSearch.includes('window=assistant-pill')) {
+  // Same treatment as the busy pill: a transparent, chromeless overlay window.
+  document.documentElement.classList.add('busy-window')
+  document.body.classList.add('busy-window')
+}
 if (winSearch.includes('window=busy')) {
   document.documentElement.classList.add('busy-window')
   document.body.classList.add('busy-window')

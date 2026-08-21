@@ -6,7 +6,8 @@
     "main",
     "quick-actions",
     "capture-overlay",
-    "busy-indicator"
+    "busy-indicator",
+    "assistant-pill"
   ],
   "permissions": [
     "core:default",

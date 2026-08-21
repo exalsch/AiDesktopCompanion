@@ -54,6 +54,21 @@
         "shadow": false,
         "transparent": true,
         "focus": false
+      },
+      {
+        "label": "assistant-pill",
+        "title": "Assistant call",
+        "url": "/?window=assistant-pill",
+        "width": 320,
+        "height": 60,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "focus": false
       }
     ],
     "security": {
