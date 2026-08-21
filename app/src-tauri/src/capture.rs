@@ -72,13 +72,23 @@ pub fn size_overlay_to_virtual_screen(app: tauri::AppHandle) -> Result<(), Strin
 // On success also opens the main window and emits `image:capture` with { path }.
 pub fn capture_region(app: tauri::AppHandle, x: i32, y: i32, width: i32, height: i32) -> Result<String, String> {
   if width <= 0 || height <= 0 { return Err("Invalid region size".into()); }
-  // Proactively hide/close overlay before capture, to avoid it lingering
+  // Proactively hide the overlay before capture, or its selection rectangle
+  // ends up in the screenshot.
   if let Some(overlay) = app.get_webview_window("capture-overlay") {
     // Hiding is sufficient; avoid costly state changes and close after capture
     let _ = overlay.hide();
+    // Wait for the window to actually be gone rather than sleeping a guessed
+    // amount. `hide()` returns before the window is off screen, and a fixed
+    // delay is wrong in both directions - too short and the red rectangle is
+    // captured, too long and every screenshot pays for it.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(300);
+    while overlay.is_visible().unwrap_or(false) && std::time::Instant::now() < deadline {
+      std::thread::sleep(std::time::Duration::from_millis(4));
+    }
   }
-  // Keep a tiny delay so the hide is applied before capture
-  std::thread::sleep(std::time::Duration::from_millis(5));
+  // The window is gone; the compositor still needs a frame to repaint what was
+  // behind it. This is the one delay that cannot be replaced by a question.
+  std::thread::sleep(std::time::Duration::from_millis(24));
   #[cfg(target_os = "windows")]
   {
     use screenshots::Screen;

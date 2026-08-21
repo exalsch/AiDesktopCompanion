@@ -394,6 +394,26 @@ function selectCloudModel(v: string) {
   props.settings.stt_cloud_model = v
 }
 
+/**
+ * A cloud model field holding the name of an on-device model.
+ *
+ * Easy to end up with by picking a local model while the cloud engine is
+ * selected, and it fails only at transcription time with a remote 404 that says
+ * nothing about the cause.
+ */
+const cloudModelLooksLocal = computed(() => {
+  const v = String(props.settings.stt_cloud_model || '').toLowerCase()
+  return /parakeet|ggml|\.bin$/.test(v)
+})
+
+/**
+ * Whisper's `.en` builds are English-only by construction - they cannot
+ * transcribe another language, they transcribe it badly as English.
+ */
+const whisperIsEnglishOnly = computed(() =>
+  String(props.settings.stt_whisper_model_preset || '').toLowerCase().includes('.en')
+)
+
 const whisperCurrentPreset = computed(() => {
   const v = String(props.settings.stt_whisper_model_preset || '').trim() || 'base'
   const found = whisperPresets.some(p => p.value === v)
@@ -506,6 +526,12 @@ function infoTitle(v: string): string {
         <span class="info-icon" :title="infoTitle('Select a Whisper model and download it. The file is stored in your app data folder.')">i</span>
       </div>
 
+      <p v-if="whisperIsEnglishOnly" class="field-hint error">
+        <code>{{ props.settings.stt_whisper_model_preset }}</code> is an English-only build. Speaking another language
+        into it does not fail - it returns a poor English transcription of what it heard. Pick a preset without
+        <code>.en</code> for anything else.
+      </p>
+
       <div class="model-list">
         <div
           v-for="p in whisperPresets"
@@ -616,6 +642,11 @@ function infoTitle(v: string): string {
         <label class="field-label">Model</label>
         <span class="info-icon" :title="infoTitle('Choose a suggested model. No free text field: the goal is to keep this predictable.')">i</span>
       </div>
+
+      <p v-if="cloudModelLooksLocal" class="field-hint error">
+        <code>{{ props.settings.stt_cloud_model }}</code> is an on-device model name, and this is the cloud endpoint.
+        The request will be rejected by the server. Pick one of the suggestions below.
+      </p>
 
       <div class="model-list">
         <div

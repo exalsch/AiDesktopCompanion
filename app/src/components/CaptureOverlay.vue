@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, reactive, computed, ref } from 'vue'
+import { onMounted, onBeforeUnmount, reactive, computed, ref, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { listen } from '@tauri-apps/api/event'
@@ -85,6 +85,10 @@ async function onMouseUp(_e: MouseEvent) {
     const w = getCurrentWebviewWindow()
     // Visually disable immediately to avoid lingering UI even if close is delayed
     closing.value = true
+    // Let Vue remove the rectangle from the DOM before the window is hidden.
+    // The backend waits for the window itself; this only makes sure there is
+    // nothing left to draw if the hide is torn down mid-frame.
+    await nextTick()
     try { document.documentElement.style.pointerEvents = 'none'; document.body.style.pointerEvents = 'none' } catch {}
     try { await w.hide() } catch {}
     await invoke<string>('capture_region', { x: r.x, y: r.y, width: r.w, height: r.h })
