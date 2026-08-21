@@ -256,13 +256,12 @@ pub async fn transcribe_local(_audio: Vec<u8>, _mime: String, _has_cuda: bool, _
 
 #[cfg(feature = "local-stt")]
 pub fn check_cuda_available() -> Result<(), String> {
-  // ort rc.13 moved the execution providers out of `execution_providers` into
-  // `ep`, and renamed CUDAExecutionProvider to CUDA.
-  use ort::ep::{ExecutionProvider, CUDA};
+  use ort::execution_providers::cuda::CUDAExecutionProvider;
+  use ort::execution_providers::ExecutionProvider;
   use ort::session::Session;
 
   let mut builder = Session::builder().map_err(|e| format!("ONNX Runtime init failed: {e}"))?;
-  CUDA::default().register(&mut builder).map_err(|e| {
+  CUDAExecutionProvider::default().register(&mut builder).map_err(|e| {
     let msg = format!("{e}");
     if msg.to_lowercase().contains("cudnn") {
       format!(

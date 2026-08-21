@@ -79,12 +79,16 @@ bytes = "1"
 uuid = { version = "1.0", features = ["v4"] }
 tokio-stream = "0.1"
 whisper-rs = { version = "0.16", optional = true }
-# Parakeet V3 only. The V2 backend ran on a git fork of this crate that was
-# stuck on ort 2.0.0-rc.10 / ndarray 0.16, which is what held both pins down;
-# with the fork gone they are free to move. V3 is multilingual where V2 was
-# English-only, so nothing is lost but the download.
-parakeet_rs_alt = { package = "parakeet-rs", version = "0.3", optional = true }
-ort = { version = "2.0.0-rc.13", optional = true, features = ["download-binaries"] }
+# Parakeet V3 only; the V2 backend and its git fork are gone.
+#
+# Both versions are pinned, and the reason is CUDA, not the old fork:
+# parakeet-rs 0.3.7 requires ort 2.0.0-rc.13, whose downloaded provider is built
+# against CUDA 13 and fails to load without cublasLt64_13.dll. rc.10 bundles
+# ONNX Runtime 1.22, which is CUDA 12 - still what most machines have. 0.2.6
+# runs the V3 model perfectly well, so the newer pair buys nothing here and
+# costs GPU acceleration for anyone who has not moved to CUDA 13.
+parakeet_rs_alt = { package = "parakeet-rs", version = "=0.2.6", optional = true }
+ort = { version = "=2.0.0-rc.10", optional = true, features = ["download-binaries"] }
 num_cpus = "1.16"
 
 [features]
