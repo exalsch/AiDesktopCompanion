@@ -40,8 +40,6 @@ function toggleMic() {
   ;(realtime as any).setMicEnabled?.(!micEnabled.value)
 }
 
-const pushToTalkHotkey = ref('')
-
 function startTalking() { (realtime as any).startTalking?.() }
 function stopTalking() { (realtime as any).stopTalking?.() }
 
@@ -351,10 +349,6 @@ onMounted(async () => {
     debugLines.value.push('[warn] failed to load assistant_realtime settings')
   }
   void refreshModels()
-  try {
-    const v: any = await invoke('get_settings')
-    if (v && typeof v.push_to_talk_hotkey === 'string') pushToTalkHotkey.value = v.push_to_talk_hotkey.trim()
-  } catch {}
   // Do not reload global settings here; App.vue already loads them.
   // Reloading would rehydrate settings and could inadvertently reset MCP runtime statuses.
   // try { await loadSettings() } catch {}
@@ -525,8 +519,8 @@ onBeforeUnmount(() => {
           <template v-if="session.micMode !== 'ptt'">
             The microphone stays live for the whole session.
           </template>
-          <template v-else-if="pushToTalkHotkey">
-            Hold <code>{{ pushToTalkHotkey }}</code> from anywhere, or hold the button above.
+          <template v-else-if="appSettings.push_to_talk_hotkey">
+            Hold <code>{{ appSettings.push_to_talk_hotkey }}</code> from anywhere, or hold the button above.
           </template>
           <template v-else>
             Hold the button above. Set a hotkey in Settings &rsaquo; General to hold from any application.

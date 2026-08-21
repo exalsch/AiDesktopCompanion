@@ -52,6 +52,19 @@ function toPluginShortcut(shortcut: string | null | undefined): string {
   return (typeof shortcut === 'string' ? shortcut.trim() : '').replace(/\bWin\b/gi, 'Super')
 }
 
+// Names the plugin treats as modifiers rather than keys.
+const MODIFIER_TOKENS = new Set([
+  'control', 'ctrl', 'alt', 'option', 'shift', 'super', 'meta', 'command', 'cmd', 'commandorcontrol',
+])
+
+/// True when a shortcut is only modifiers, i.e. still being assembled in the
+/// picker. The plugin rejects these outright, so there is nothing to register.
+function isIncompleteShortcut(shortcut: string): boolean {
+  const parts = shortcut.split('+').map((p) => p.trim()).filter(Boolean)
+  if (!parts.length) return true
+  return MODIFIER_TOKENS.has(parts[parts.length - 1].toLowerCase())
+}
+
 function isOwnedByUs(shortcut: string): boolean {
   return Object.values(slots).some((s) => s.current === shortcut)
 }
@@ -215,6 +228,13 @@ async function applyForSlot(name: SlotName, shortcut: string | null | undefined)
   }
   // Fast path: no change
   if (slot.current === s) return
+
+  // Half-built combination from the picker: keep whatever is bound now and wait
+  // for the user to finish rather than reporting a failure they did not cause.
+  if (isIncompleteShortcut(s)) {
+    console.info(`[hotkeys] ${name} shortcut "${s}" is incomplete, keeping ${slot.current || 'none'}`)
+    return
+  }
 
   // The two slots must not fight over the same combination: the OS would hand
   // the shortcut to whichever registered first and the other would look broken.
