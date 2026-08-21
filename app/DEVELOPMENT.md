@@ -72,3 +72,9 @@ Notes:
 - If CSS does not apply, check for `<link id="theme-style-css">` in DevTools
 - Verify `OPENAI_API_KEY` is set for API-backed features
 - Windows-specific build toolchain issues: consult Tauri Windows setup docs
+- **CUDA reports "a dynamic link library (DLL) initialization routine failed"** after an `ort` version
+  change: delete `onnxruntime*.dll` from the cargo target directory and rebuild. `ort`'s
+  `download-binaries` does not overwrite provider DLLs that are already present, so an incremental
+  build can end up running a new `onnxruntime.dll` against an old `onnxruntime_providers_cuda.dll`.
+  The message reads like a missing CUDA install and is not one. Local builds only - installers are
+  built from a clean tree.
