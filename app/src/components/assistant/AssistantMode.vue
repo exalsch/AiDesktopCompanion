@@ -470,11 +470,6 @@ onBeforeUnmount(() => {
 <template>
   <section class="card">
     <div class="card-body">
-      <p class="warn-banner" role="status">
-        <strong>Experimental.</strong>
-        Assistant Mode is still under active development and may be unstable.
-      </p>
-
       <div class="actions">
         <button class="btn" type="button" :class="{ ghost: ui.connected || ui.connecting }" @click="toggle">
           {{ ui.connected || ui.connecting ? 'Stop' : 'Start' }}
@@ -735,17 +730,6 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.warn-banner {
-  margin: 0;
-  padding: var(--sp-2) var(--sp-3);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--adc-warn-border);
-  background: var(--adc-warn-bg);
-  color: var(--adc-warn-fg);
-  font-size: var(--fs-sm);
-  line-height: 1.5;
-}
-
 .rates {
   display: grid;
   grid-template-columns: minmax(120px, max-content) 1fr;
