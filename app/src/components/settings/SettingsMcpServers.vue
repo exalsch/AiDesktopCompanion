@@ -1,6 +1,27 @@
 <script setup lang="ts">
 import CollapsibleCard from '../ui/CollapsibleCard.vue'
 
+// A card's identity must not change while the user types in it.
+//
+// `s.id` is the server name and the very field being edited, so keying on it
+// tore the card down on every keystroke: the input lost focus, and the rebuilt
+// card read its saved open state under a persistence id that had changed too,
+// found none, and folded. Keying on the array index instead would survive
+// typing but not deletion, where every later card would inherit the previous
+// one's open state. Tying identity to the object keeps both stable.
+const cardKeys = new WeakMap<object, string>()
+let cardKeySeq = 0
+
+function cardKey(server: any): string {
+  if (!server || typeof server !== 'object') return 'mcp-unknown'
+  let key = cardKeys.get(server)
+  if (!key) {
+    key = `mcp-${++cardKeySeq}`
+    cardKeys.set(server, key)
+  }
+  return key
+}
+
 const props = defineProps<{
   settings: any
   onAdd: () => void
@@ -55,8 +76,8 @@ function schemaProps(s: any): Record<string, any> | null {
        visible in the header while the card is folded. -->
   <CollapsibleCard
     v-for="(s, i) in props.settings.mcp_servers"
-    :key="s.id || i"
-    :id="'settings.mcp.' + (s.id || i)"
+    :key="cardKey(s)"
+    :id="'settings.mcp.' + cardKey(s)"
     :title="s.id || 'Unnamed server'"
     :desc="s.transport === 'http' ? (s.command || 'no URL set') : (s.command || 'no command set')"
     :default-open="false"
