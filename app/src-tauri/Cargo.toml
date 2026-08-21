@@ -32,7 +32,12 @@ windows = { version = "0.62", features = [
   "Win32_Foundation",
   "Win32_Graphics_Gdi",
   "Win32_System_Threading",
-  "Win32_UI_Input_KeyboardAndMouse"
+  "Win32_UI_Input_KeyboardAndMouse",
+  # WinRT media transport controls, used to pause playback while recording.
+  # The media key would be simpler but is a blind toggle - it starts music when
+  # nothing is playing. These can be asked what state the session is in.
+  "Media_Control",
+  "Foundation"
 ] }
 # 0.13 renamed the TLS feature `rustls-tls` -> `rustls`, and moved system proxy
 # detection (HTTP_PROXY / HTTPS_PROXY / WinHTTP) behind `system-proxy`, which

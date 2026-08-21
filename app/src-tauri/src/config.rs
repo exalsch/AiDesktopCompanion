@@ -252,6 +252,8 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   if let Some(t) = map.get("temperature").and_then(|x| x.as_f64()) { obj.insert("temperature".to_string(), serde_json::Value::Number(serde_json::Number::from_f64(t).unwrap_or_else(|| serde_json::Number::from_f64(1.0).unwrap()))); }
   if let Some(p) = map.get("persist_conversations").and_then(|x| x.as_bool()) { obj.insert("persist_conversations".to_string(), serde_json::Value::Bool(p)); }
   if let Some(b) = map.get("mcp_show_console").and_then(|x| x.as_bool()) { obj.insert("mcp_show_console".to_string(), serde_json::Value::Bool(b)); }
+  if let Some(b) = map.get("pause_media_on_stt").and_then(|x| x.as_bool()) { obj.insert("pause_media_on_stt".to_string(), serde_json::Value::Bool(b)); }
+  if let Some(b) = map.get("pause_media_on_assistant").and_then(|x| x.as_bool()) { obj.insert("pause_media_on_assistant".to_string(), serde_json::Value::Bool(b)); }
   if let Some(s) = map.get("start_in_tray").and_then(|x| x.as_bool()) { obj.insert("start_in_tray".to_string(), serde_json::Value::Bool(s)); }
   // Persist UI style selection
   if let Some(ui) = map.get("ui_style").and_then(|x| x.as_str()) { obj.insert("ui_style".to_string(), serde_json::Value::String(ui.to_string())); }

@@ -595,6 +595,19 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="field">
+        <label class="switch row">
+          <input type="checkbox" v-model="appSettings.pause_media_on_assistant" />
+          <span class="switch-text">
+            <span class="switch-label">Pause playback while speaking</span>
+            <span class="switch-hint">
+              Pauses whatever is playing for as long as the talk key or button is held, then resumes it.
+              Push-to-talk only.
+            </span>
+          </span>
+        </label>
+      </div>
+
+      <div class="field">
         <label class="field-label">Reasoning effort</label>
         <select class="input" v-model="session.reasoningEffort" :disabled="!reasoningSupported" @change="syncSession">
           <option :value="null">Model default</option>

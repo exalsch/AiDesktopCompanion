@@ -39,6 +39,8 @@ const settings = reactive({
   select_all_hotkey: '' as string,
   push_to_talk_hotkey: '' as string,
   mcp_show_console: false as boolean,
+  pause_media_on_stt: false as boolean,
+  pause_media_on_assistant: false as boolean,
   select_all_quick_prompt: 1 as number,
   select_all_capture_mode: 'ctrl_shift_home' as SelectAllCaptureMode,
   // Floating status pill for background operations (quick prompts, TTS, STT)
@@ -88,6 +90,8 @@ export function useSettings() {
       if (typeof (v as any).select_all_hotkey === 'string') settings.select_all_hotkey = (v as any).select_all_hotkey
       if (typeof (v as any).push_to_talk_hotkey === 'string') settings.push_to_talk_hotkey = (v as any).push_to_talk_hotkey
       if (typeof (v as any).mcp_show_console === 'boolean') settings.mcp_show_console = (v as any).mcp_show_console
+      if (typeof (v as any).pause_media_on_stt === 'boolean') settings.pause_media_on_stt = (v as any).pause_media_on_stt
+      if (typeof (v as any).pause_media_on_assistant === 'boolean') settings.pause_media_on_assistant = (v as any).pause_media_on_assistant
       {
         const mode = (v as any).select_all_capture_mode
         settings.select_all_capture_mode = SELECT_ALL_CAPTURE_MODES.includes(mode) ? mode : 'ctrl_shift_home'

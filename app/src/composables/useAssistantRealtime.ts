@@ -119,6 +119,8 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
   // which is the exact thing push-to-talk exists to prevent. Global shortcuts
   // can miss a release when focus changes mid-press, so the hold is bounded.
   let talkTimeout: any = 0
+  // Whether this session's push-to-talk paused the user's music.
+  let mediaHeld = false
   // Whether the SDP exchange has completed. Server-side errors before that
   // point are fatal; after it, the audio call survives them.
   let connected = false
@@ -727,6 +729,11 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
   /** Open the microphone for as long as the key or button is held. */
   function startTalking() {
     if (!connected || micMode !== 'ptt') return
+    // Pause the user's music for the length of the hold. Fire and forget: a
+    // media session that will not answer must not delay the microphone.
+    invoke<boolean>('media_hold', { reason: 'assistant' })
+      .then((held) => { mediaHeld = held === true })
+      .catch(() => {})
     if (talkTimeout) { clearTimeout(talkTimeout); talkTimeout = 0 }
     talkTimeout = setTimeout(() => {
       log(`[mic] hold exceeded ${Math.round(MAX_TALK_MS / 1000)}s, closing the microphone`)
@@ -738,6 +745,10 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
   /** Close it again on release. Safe to call when already closed. */
   function stopTalking() {
     if (talkTimeout) { clearTimeout(talkTimeout); talkTimeout = 0 }
+    if (mediaHeld) {
+      mediaHeld = false
+      void invoke('media_release').catch(() => {})
+    }
     if (micMode !== 'ptt') return
     if (micEnabled.value) setMicEnabled(false)
   }

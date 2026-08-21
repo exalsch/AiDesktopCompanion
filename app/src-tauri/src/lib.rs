@@ -157,6 +157,8 @@ pub fn run() {
       realtime_create_ephemeral_token,
       realtime_build_tools,
       realtime_call_tool,
+      media::media_hold,
+      media::media_release,
       assistant_pill::assistant_pill_set,
       assistant_pill::assistant_pill_get_state,
       updater::check_for_update,
@@ -201,6 +203,7 @@ mod command_hook;
 mod busy;
 mod updater;
 mod assistant_pill;
+mod media;
 
 use rmcp::{
   service::{RoleClient, RunningService},

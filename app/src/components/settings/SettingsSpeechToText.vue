@@ -439,6 +439,18 @@ function infoTitle(v: string): string {
       </div>
     </div>
 
+    <label class="switch row">
+      <input type="checkbox" v-model="props.settings.pause_media_on_stt" />
+      <span class="switch-text">
+        <span class="switch-label">Pause playback while recording</span>
+        <span class="switch-hint">
+          Pauses whatever is playing - Spotify, a browser tab, anything that registers with Windows media controls -
+          for the length of the recording, then resumes it. Music the microphone can hear ends up in the transcript.
+          Nothing is resumed that was not playing to begin with.
+        </span>
+      </span>
+    </label>
+
     <div class="field">
       <div class="row-label">
         <label class="field-label">Microphone Input</label>

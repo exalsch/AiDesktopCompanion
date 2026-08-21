@@ -2,11 +2,15 @@
 // - startRecording(): requests mic, starts capturing into WEBM/Opus
 // - stopRecording(): stops and returns { blob, mime }
 // NOTE: Requires user gesture and OS permission to use microphone.
+import { invoke } from '@tauri-apps/api/core'
 
 let mediaStream: MediaStream | null = null
 let recorder: MediaRecorder | null = null
 let chunks: BlobPart[] = []
 let recording = false
+// Whether this recording asked for the user's music to be paused, so it is only
+// resumed when we were the ones who stopped it.
+let heldMedia = false
 let recordingStartTime = 0
 
 export async function startRecording(preferredMime = 'audio/webm;codecs=opus', inputDeviceId = ''): Promise<void> {
@@ -32,6 +36,11 @@ export async function startRecording(preferredMime = 'audio/webm;codecs=opus', i
     recorder.start()
     recording = true
     recordingStartTime = Date.now()
+    // Pause whatever is playing, if the user asked for that. Fire and forget:
+    // a media session that will not answer must not delay the recording.
+    invoke<boolean>('media_hold', { reason: 'stt' })
+      .then((held) => { heldMedia = held === true })
+      .catch(() => {})
   } catch (e) {
     cleanup()
     throw e
@@ -81,6 +90,13 @@ export function getRecordingDurationMs(): number {
 }
 
 function cleanup() {
+  // Release here rather than in stopRecording: this runs on every exit path,
+  // including the onstop timeout and the failed-to-start case, so the music
+  // cannot be left paused by a recording that ended badly.
+  if (heldMedia) {
+    heldMedia = false
+    void invoke('media_release').catch(() => {})
+  }
   try { recorder && recorder.stream.getTracks().forEach(t => t.stop()) } catch {}
   try { mediaStream && mediaStream.getTracks().forEach(t => t.stop()) } catch {}
   recorder = null
