@@ -19,13 +19,21 @@ const showApiKey = ref(false)
 // recognisable prompt instead of a bare number.
 const quickPromptLabels = ref<string[]>([])
 
-// Both hotkeys go through the same OS registration, so an identical pair means
+// All three hotkeys go through the same OS registration, so a duplicate means
 // one of them silently never fires.
-const hotkeysCollide = computed(() => {
-  const a = String(props.settings.global_hotkey || '').trim()
-  const b = String(props.settings.select_all_hotkey || '').trim()
-  return !!a && a === b
-})
+function duplicateHotkey(): string {
+  const entries = [
+    String(props.settings.global_hotkey || '').trim(),
+    String(props.settings.select_all_hotkey || '').trim(),
+    String(props.settings.push_to_talk_hotkey || '').trim(),
+  ].filter(Boolean)
+  for (let i = 0; i < entries.length; i++) {
+    if (entries.indexOf(entries[i]) !== i) return entries[i]
+  }
+  return ''
+}
+
+const hotkeysCollide = computed(() => !!duplicateHotkey())
 
 function shorten(text: string): string {
   const t = (text || '').replace(/\s+/g, ' ').trim()
@@ -73,9 +81,6 @@ onMounted(async () => {
         no popup in between. Leave every part empty to disable.
         Current: <code>{{ props.settings.select_all_hotkey || 'disabled' }}</code>
       </p>
-      <p v-if="hotkeysCollide" class="field-hint error">
-        This is the same combination as the global hotkey - only one of them will work.
-      </p>
     </div>
 
     <div class="field-grid">
@@ -99,6 +104,22 @@ onMounted(async () => {
       <em>Ctrl + Shift + Home</em> is the default because it fits the correct-what-I-just-typed case: in a chat box or
       comment field it grabs your draft without also selecting the conversation above it. Pick <em>Ctrl + A</em> to
       rewrite a whole document instead. Prompts are edited under Settings → Quick Prompts.
+    </p>
+
+    <div class="divider"></div>
+
+    <div class="field">
+      <label class="field-label">Push-to-talk hotkey</label>
+      <HotkeyPicker v-model="props.settings.push_to_talk_hotkey" />
+      <p class="field-hint">
+        Hold to open the Assistant Mode microphone, release to close it. Only does anything while a session is running
+        and the microphone is set to push-to-talk. Leave every part empty to disable.
+        Current: <code>{{ props.settings.push_to_talk_hotkey || 'disabled' }}</code>
+      </p>
+    </div>
+
+    <p v-if="hotkeysCollide" class="field-hint error">
+      <code>{{ duplicateHotkey() }}</code> is assigned to more than one action - only one of them will work.
     </p>
   </CollapsibleCard>
 

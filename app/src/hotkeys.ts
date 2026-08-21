@@ -7,7 +7,8 @@
 //                             Ctrl+Shift+Home, or nothing - see
 //                             `select_all_capture_mode`) and immediately runs
 //                             the configured quick prompt on it
-// Both are registered through the same helpers so re-registration after a
+//   - `push_to_talk_hotkey` -> hold to unmute the Assistant Mode microphone
+// All are registered through the same helpers so re-registration after a
 // Windows sleep/resume, availability checks and cleanup behave identically.
 
 import { register, unregisterAll, unregister, isRegistered } from '@tauri-apps/plugin-global-shortcut'
@@ -18,19 +19,25 @@ let initialized = false
 // DOM events dispatched when a shortcut fires. `main.ts` owns the reactions.
 export const HOTKEY_EVENT_POPUP = 'ai-desktop:hotkey'
 export const HOTKEY_EVENT_SELECT_ALL = 'ai-desktop:hotkey-select-all'
+export const HOTKEY_EVENT_PTT_DOWN = 'ai-desktop:hotkey-ptt-down'
+export const HOTKEY_EVENT_PTT_UP = 'ai-desktop:hotkey-ptt-up'
 
-type SlotName = 'popup' | 'selectAll'
+type SlotName = 'popup' | 'selectAll' | 'pushToTalk'
 
 type Slot = {
   /// Currently registered shortcut for this slot, in plugin format.
   current: string | null
   /// DOM event dispatched on the window when the shortcut fires.
   event: string
+  /// Dispatched when the key is released. Only push-to-talk needs this; a slot
+  /// without one behaves exactly as before and ignores the release entirely.
+  releaseEvent?: string
 }
 
 const slots: Record<SlotName, Slot> = {
   popup: { current: null, event: HOTKEY_EVENT_POPUP },
   selectAll: { current: null, event: HOTKEY_EVENT_SELECT_ALL },
+  pushToTalk: { current: null, event: HOTKEY_EVENT_PTT_DOWN, releaseEvent: HOTKEY_EVENT_PTT_UP },
 }
 
 // Normalize UI modifier tokens to plugin format (maps 'Win' -> 'Super')
@@ -77,6 +84,8 @@ async function registerForSlot(slot: Slot, shortcut: string): Promise<void> {
     if (event.state === 'Pressed') {
       console.log(`[hotkeys] ${event.shortcut} pressed`)
       window.dispatchEvent(new CustomEvent(slot.event))
+    } else if (event.state === 'Released' && slot.releaseEvent) {
+      window.dispatchEvent(new CustomEvent(slot.releaseEvent))
     }
   })
 }
@@ -93,10 +102,12 @@ export async function initGlobalHotkeys(): Promise<void> {
   // NO global hotkey.
   let configuredPopup = ''
   let configuredSelectAll = ''
+  let configuredPushToTalk = ''
   try {
     const v: any = await invoke('get_settings')
     configuredPopup = (v && typeof v.global_hotkey === 'string') ? v.global_hotkey.trim() : ''
     configuredSelectAll = (v && typeof v.select_all_hotkey === 'string') ? v.select_all_hotkey.trim() : ''
+    configuredPushToTalk = (v && typeof v.push_to_talk_hotkey === 'string') ? v.push_to_talk_hotkey.trim() : ''
   } catch (e) {
     console.warn('[hotkeys] get_settings failed, falling back to defaults', e)
   }
@@ -106,6 +117,14 @@ export async function initGlobalHotkeys(): Promise<void> {
       await applySelectAllHotkey(configuredSelectAll)
     } catch (err) {
       console.warn(`[hotkeys] select-all shortcut "${configuredSelectAll}" failed to register`, err)
+    }
+  }
+
+  if (configuredPushToTalk) {
+    try {
+      await applyPushToTalkHotkey(configuredPushToTalk)
+    } catch (err) {
+      console.warn(`[hotkeys] push-to-talk shortcut "${configuredPushToTalk}" failed to register`, err)
     }
   }
 
@@ -234,4 +253,8 @@ export async function applyGlobalHotkey(shortcut: string | null | undefined): Pr
 /// Hotkey that selects all text in the focused app and runs a quick prompt on it.
 export async function applySelectAllHotkey(shortcut: string | null | undefined): Promise<void> {
   return applyForSlot('selectAll', shortcut)
+}
+
+export async function applyPushToTalkHotkey(shortcut: string | null | undefined): Promise<void> {
+  return applyForSlot('pushToTalk', shortcut)
 }

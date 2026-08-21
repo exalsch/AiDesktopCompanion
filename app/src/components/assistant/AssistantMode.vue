@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { useAssistantRealtime } from '../../composables/useAssistantRealtime'
 import { useSettings } from '../../composables/useSettings'
 import CollapsibleCard from '../ui/CollapsibleCard.vue'
+import { HOTKEY_EVENT_PTT_DOWN, HOTKEY_EVENT_PTT_UP } from '../../hotkeys'
 
 const props = defineProps<{
   mcpServers: any[]
@@ -38,6 +39,21 @@ const micEnabled = computed(() => (realtime as any).micEnabled?.value !== false)
 function toggleMic() {
   ;(realtime as any).setMicEnabled?.(!micEnabled.value)
 }
+
+const pushToTalkHotkey = ref('')
+
+function startTalking() { (realtime as any).startTalking?.() }
+function stopTalking() { (realtime as any).stopTalking?.() }
+
+/**
+ * Hold-to-talk from the global hotkey.
+ *
+ * The shortcut is registered process-wide, so this works while the user is in
+ * another application - which is the point, given the answer can be pasted
+ * straight back into it.
+ */
+function onPttDown() { if (session.micMode === 'ptt') startTalking() }
+function onPttUp() { if (session.micMode === 'ptt') stopTalking() }
 
 // Realtime audio is billed by the minute, so how long a session has been open
 // is the number worth putting on screen.
@@ -138,6 +154,7 @@ async function scrollDebugToBottomIfEnabled() {
  * request against them failed.
  */
 const FALLBACK_REALTIME_MODELS = [
+  'gpt-realtime-2',
   'gpt-realtime',
   'gpt-realtime-2.1',
   'gpt-realtime-2.1-mini',
@@ -146,7 +163,7 @@ const FALLBACK_REALTIME_MODELS = [
   'gpt-realtime-1.5',
 ]
 
-const DEFAULT_REALTIME_MODEL = 'gpt-realtime'
+const DEFAULT_REALTIME_MODEL = 'gpt-realtime-2'
 
 const models = ref<string[]>([...FALLBACK_REALTIME_MODELS])
 
@@ -193,6 +210,9 @@ const session = reactive({
   idleTimeoutMs: null as number | null,
   inputAudioNoiseReduction: true,
   reasoningEffort: null as string | null,
+  // 'open' is the previous behaviour and stays the default; push-to-talk is
+  // opt-in because it needs a hotkey or a held button to be usable.
+  micMode: 'open' as 'open' | 'ptt',
   // A live session bills per minute with an open microphone, so a forgotten
   // window closes itself rather than running until somebody notices.
   autoCloseMinutes: 2,
@@ -222,6 +242,7 @@ async function syncSession() {
     inputAudioNoiseReduction: session.inputAudioNoiseReduction,
     reasoningEffort: session.reasoningEffort,
     autoCloseMs: Math.max(0, session.autoCloseMinutes) * 60000,
+    micMode: session.micMode,
   })
 }
 
@@ -288,6 +309,7 @@ async function activate() {
     inputAudioNoiseReduction: session.inputAudioNoiseReduction,
     reasoningEffort: session.reasoningEffort,
     autoCloseMs: Math.max(0, session.autoCloseMinutes) * 60000,
+    micMode: session.micMode,
   })
 }
 
@@ -322,12 +344,17 @@ onMounted(async () => {
       if (typeof ar.input_audio_noise_reduction === 'boolean') session.inputAudioNoiseReduction = ar.input_audio_noise_reduction
       if (ar.reasoning_effort === null || REASONING_EFFORTS.includes(ar.reasoning_effort)) session.reasoningEffort = ar.reasoning_effort ?? null
       if (typeof ar.auto_close_minutes === 'number' && ar.auto_close_minutes >= 0) session.autoCloseMinutes = ar.auto_close_minutes
+      if (ar.mic_mode === 'open' || ar.mic_mode === 'ptt') session.micMode = ar.mic_mode
       if (typeof ar.show_debug === 'boolean') ui.showDebug = ar.show_debug
     }
   } catch (e) {
     debugLines.value.push('[warn] failed to load assistant_realtime settings')
   }
   void refreshModels()
+  try {
+    const v: any = await invoke('get_settings')
+    if (v && typeof v.push_to_talk_hotkey === 'string') pushToTalkHotkey.value = v.push_to_talk_hotkey.trim()
+  } catch {}
   // Do not reload global settings here; App.vue already loads them.
   // Reloading would rehydrate settings and could inadvertently reset MCP runtime statuses.
   // try { await loadSettings() } catch {}
@@ -352,6 +379,7 @@ watch(session, async () => {
           input_audio_noise_reduction: session.inputAudioNoiseReduction,
           reasoning_effort: session.reasoningEffort,
           auto_close_minutes: session.autoCloseMinutes,
+          mic_mode: session.micMode,
           show_debug: ui.showDebug,
         }
       }
@@ -366,7 +394,14 @@ watch(() => props.autostart, (n, old) => {
   if (typeof n === 'number' && typeof old === 'number' && n > old) void activate()
 })
 
+onMounted(() => {
+  window.addEventListener(HOTKEY_EVENT_PTT_DOWN, onPttDown)
+  window.addEventListener(HOTKEY_EVENT_PTT_UP, onPttUp)
+})
+
 onBeforeUnmount(() => {
+  window.removeEventListener(HOTKEY_EVENT_PTT_DOWN, onPttDown)
+  window.removeEventListener(HOTKEY_EVENT_PTT_UP, onPttUp)
   stopElapsed()
   try { realtime.disconnect() } catch {}
 })
@@ -385,7 +420,7 @@ onBeforeUnmount(() => {
           {{ ui.connected || ui.connecting ? 'Stop' : 'Start' }}
         </button>
         <button
-          v-if="ui.connected"
+          v-if="ui.connected && session.micMode === 'open'"
           class="btn ghost"
           type="button"
           :title="micEnabled ? 'Mute the microphone' : 'Unmute the microphone'"
@@ -393,11 +428,27 @@ onBeforeUnmount(() => {
         >
           {{ micEnabled ? 'Mute' : 'Unmute' }}
         </button>
+        <!-- Pointer events rather than click: the microphone is open only for
+             as long as the button is actually held down. -->
+        <button
+          v-if="ui.connected && session.micMode === 'ptt'"
+          class="btn"
+          :class="{ ghost: !micEnabled }"
+          type="button"
+          title="Hold to talk"
+          @pointerdown="startTalking"
+          @pointerup="stopTalking"
+          @pointerleave="stopTalking"
+          @pointercancel="stopTalking"
+        >
+          {{ micEnabled ? 'Listening…' : 'Hold to talk' }}
+        </button>
         <span class="badge" :class="ui.error ? 'err' : (ui.connected ? 'ok' : (ui.connecting ? 'warn' : ''))">
           <span class="dot" :class="ui.error ? 'err' : (ui.connected ? 'ok' : (ui.connecting ? 'warn' : ''))"></span>
           {{ statusText }}
         </span>
         <span v-if="ui.connected && !micEnabled" class="badge warn">Mic muted</span>
+        <span v-else-if="ui.connected && session.micMode === 'ptt'" class="badge ok">Mic open</span>
         <span v-if="ui.connected" class="badge" title="Session length - realtime audio is billed per minute">
           {{ elapsedLabel }}
         </span>
@@ -462,6 +513,25 @@ onBeforeUnmount(() => {
           <option value="always">Always</option>
           <option value="needed">Only when needed</option>
         </select>
+      </div>
+
+      <div class="field">
+        <label class="field-label">Microphone</label>
+        <select class="input" v-model="session.micMode" @change="syncSession">
+          <option value="open">Open - always listening</option>
+          <option value="ptt">Push to talk - hold to speak</option>
+        </select>
+        <p class="field-hint">
+          <template v-if="session.micMode !== 'ptt'">
+            The microphone stays live for the whole session.
+          </template>
+          <template v-else-if="pushToTalkHotkey">
+            Hold <code>{{ pushToTalkHotkey }}</code> from anywhere, or hold the button above.
+          </template>
+          <template v-else>
+            Hold the button above. Set a hotkey in Settings &rsaquo; General to hold from any application.
+          </template>
+        </p>
       </div>
 
       <div class="field">

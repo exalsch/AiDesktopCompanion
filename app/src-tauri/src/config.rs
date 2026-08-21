@@ -248,6 +248,7 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   if let Some(hk) = map.get("global_hotkey").and_then(|x| x.as_str()) { obj.insert("global_hotkey".to_string(), serde_json::Value::String(hk.to_string())); }
   // Persist the dedicated "select all + run quick prompt" hotkey and the prompt it runs
   if let Some(hk) = map.get("select_all_hotkey").and_then(|x| x.as_str()) { obj.insert("select_all_hotkey".to_string(), serde_json::Value::String(hk.to_string())); }
+  if let Some(hk) = map.get("push_to_talk_hotkey").and_then(|x| x.as_str()) { obj.insert("push_to_talk_hotkey".to_string(), serde_json::Value::String(hk.to_string())); }
   if let Some(idx) = map.get("select_all_quick_prompt").and_then(|x| x.as_u64()) {
     obj.insert("select_all_quick_prompt".to_string(), serde_json::Value::Number(serde_json::Number::from(idx.clamp(1, 9))));
   }

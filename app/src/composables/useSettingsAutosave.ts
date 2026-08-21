@@ -1,6 +1,6 @@
 import { watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { applyGlobalHotkey, applySelectAllHotkey, checkShortcutAvailable } from '../hotkeys'
+import { applyGlobalHotkey, applySelectAllHotkey, applyPushToTalkHotkey, checkShortcutAvailable } from '../hotkeys'
 import { parseArgs, normalizeEnvInput } from './utils'
 import { getPersistState } from '../state/conversation'
 
@@ -91,6 +91,7 @@ export function useSettingsAutosave(settings: any, showToast: (msg: string, kind
       // Re-apply hotkeys silently
       try { await applyGlobalHotkey(settings.global_hotkey) } catch {}
       try { await applySelectAllHotkey(settings.select_all_hotkey) } catch {}
+      try { await applyPushToTalkHotkey(settings.push_to_talk_hotkey) } catch {}
 
       // Persist/clear conversation state based on toggle
       try {

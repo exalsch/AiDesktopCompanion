@@ -26,6 +26,9 @@ const MAX_TOOL_ROUNDS = 6
 // rejected, and a rejected session.update discards every other setting with it.
 const MAX_IDLE_TIMEOUT_MS = 30000
 
+// Longest a single push-to-talk hold may keep the microphone open.
+const MAX_TALK_MS = 60000
+
 // Escalation to the supervisor, expressed as something the model can choose to
 // do. This replaces a keyword list that only recognised English - the model
 // knows when a question is beyond it regardless of the language it is asked in.
@@ -86,6 +89,8 @@ export interface ConnectParams {
   reasoningEffort?: string | null
   /** Disconnect after this long with nothing said. 0 or null disables it. */
   autoCloseMs?: number | null
+  /** 'open' leaves the microphone live; 'ptt' keeps it muted until held. */
+  micMode?: 'open' | 'ptt'
   // Overrides DEFAULT_TRANSCRIPTION_MODEL. Useful for OpenAI-compatible
   // endpoints that only implement whisper-1.
   transcriptionModel?: string
@@ -109,6 +114,11 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
   const micEnabled = ref(true)
   let autoCloseMs = 0
   let autoCloseTimer: any = 0
+  let micMode: 'open' | 'ptt' = 'open'
+  // A dropped key-up would otherwise leave the microphone open indefinitely,
+  // which is the exact thing push-to-talk exists to prevent. Global shortcuts
+  // can miss a release when focus changes mid-press, so the hold is bounded.
+  let talkTimeout: any = 0
   // Whether the SDP exchange has completed. Server-side errors before that
   // point are fatal; after it, the audio call survives them.
   let connected = false
@@ -430,7 +440,11 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       // Capture microphone and add as sendonly track
       const mic = await navigator.mediaDevices.getUserMedia({ audio: true })
       mic.getAudioTracks().forEach((t) => pc.addTrack(t, mic))
-      micEnabled.value = true
+      // In push-to-talk the microphone must be closed the instant it exists,
+      // not once the first session.update lands.
+      const startMuted = params.micMode === 'ptt'
+      mic.getAudioTracks().forEach((t) => { t.enabled = !startMuted })
+      micEnabled.value = !startMuted
 
       // Data channel for OpenAI Realtime events
       eventsDc = pc.createDataChannel('oai-events')
@@ -523,6 +537,12 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     currentSupervisorMode = (params.supervisorMode === 'needed') ? 'needed' : 'always'
     autoCloseMs = typeof params.autoCloseMs === 'number' ? params.autoCloseMs : 0
     resetAutoClose()
+
+    // Switching into push-to-talk mid-session should close the microphone now,
+    // and switching out of it should hand the microphone back.
+    const previousMode = micMode
+    micMode = params.micMode === 'ptt' ? 'ptt' : 'open'
+    if (micMode !== previousMode) setMicEnabled(micMode === 'open')
 
     // Prefer the backend, which applies the same MCP tool filtering as the
     // Prompt section, and falls back to client-side discovery if it fails.
@@ -681,6 +701,7 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     pcRef.value = null
     try { if (remoteAudioEl) (remoteAudioEl as any).srcObject = null } catch {}
     if (autoCloseTimer) { clearTimeout(autoCloseTimer); autoCloseTimer = 0 }
+    if (talkTimeout) { clearTimeout(talkTimeout); talkTimeout = 0 }
     handledUserItems.clear()
     voiceSent = false
     toolRounds = 0
@@ -703,6 +724,24 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     log(enabled ? '[mic] unmuted' : '[mic] muted')
   }
 
+  /** Open the microphone for as long as the key or button is held. */
+  function startTalking() {
+    if (!connected || micMode !== 'ptt') return
+    if (talkTimeout) { clearTimeout(talkTimeout); talkTimeout = 0 }
+    talkTimeout = setTimeout(() => {
+      log(`[mic] hold exceeded ${Math.round(MAX_TALK_MS / 1000)}s, closing the microphone`)
+      setMicEnabled(false)
+    }, MAX_TALK_MS)
+    if (!micEnabled.value) setMicEnabled(true)
+  }
+
+  /** Close it again on release. Safe to call when already closed. */
+  function stopTalking() {
+    if (talkTimeout) { clearTimeout(talkTimeout); talkTimeout = 0 }
+    if (micMode !== 'ptt') return
+    if (micEnabled.value) setMicEnabled(false)
+  }
+
   function attachAudioElement(el: HTMLAudioElement) {
     remoteAudioEl = el
     try {
@@ -719,5 +758,5 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
 
   // The transcript deliberately survives disconnect, so the last conversation
   // is still readable after the session ends; `connect` clears it.
-  return { connect, disconnect, attachAudioElement, updateSession, setMicEnabled, micEnabled, status: statusRef, transcript: history }
+  return { connect, disconnect, attachAudioElement, updateSession, setMicEnabled, startTalking, stopTalking, micEnabled, status: statusRef, transcript: history }
 }

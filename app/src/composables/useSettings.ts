@@ -37,6 +37,7 @@ const settings = reactive({
   // Dedicated hotkey that enlarges the selection in the focused app and
   // immediately runs `select_all_quick_prompt` on it. Empty string disables it.
   select_all_hotkey: '' as string,
+  push_to_talk_hotkey: '' as string,
   select_all_quick_prompt: 1 as number,
   select_all_capture_mode: 'ctrl_shift_home' as SelectAllCaptureMode,
   // Floating status pill for background operations (quick prompts, TTS, STT)
@@ -84,6 +85,7 @@ export function useSettings() {
       if (typeof (v as any).hide_tool_calls_in_chat === 'boolean') settings.hide_tool_calls_in_chat = (v as any).hide_tool_calls_in_chat
       if (typeof (v as any).global_hotkey === 'string') settings.global_hotkey = (v as any).global_hotkey
       if (typeof (v as any).select_all_hotkey === 'string') settings.select_all_hotkey = (v as any).select_all_hotkey
+      if (typeof (v as any).push_to_talk_hotkey === 'string') settings.push_to_talk_hotkey = (v as any).push_to_talk_hotkey
       {
         const mode = (v as any).select_all_capture_mode
         settings.select_all_capture_mode = SELECT_ALL_CAPTURE_MODES.includes(mode) ? mode : 'ctrl_shift_home'
