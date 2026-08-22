@@ -21,6 +21,10 @@ pub fn run() {
             .build(),
         )?;
       }
+      // Instrumentation for issue #14 (blank window after hibernate). Watches
+      // only; the repair waits until the logs say which failure it is.
+      webview_health::watch_all(app.handle());
+
       // System tray: build a minimal menu and icon
       // Menu items: Show (shows and focuses main window) and Exit (quits app)
       let show_item = MenuItemBuilder::with_id("show", "Show").build(app)?;
@@ -204,6 +208,7 @@ mod busy;
 mod updater;
 mod assistant_pill;
 mod media;
+mod webview_health;
 
 use rmcp::{
   service::{RoleClient, RunningService},

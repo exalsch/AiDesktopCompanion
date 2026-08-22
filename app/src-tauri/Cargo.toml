@@ -90,6 +90,10 @@ whisper-rs = { version = "0.16", optional = true }
 parakeet_rs_alt = { package = "parakeet-rs", version = "=0.2.6", optional = true }
 ort = { version = "=2.0.0-rc.10", optional = true, features = ["download-binaries"] }
 num_cpus = "1.16"
+# Pinned to the version wry already resolves, so the COM interface types
+# match the ones `with_webview` hands back. A different major would bind to a
+# different `windows` crate and none of the types would line up.
+webview2-com = "0.38"
 
 [features]
 default = ["local-stt"]
