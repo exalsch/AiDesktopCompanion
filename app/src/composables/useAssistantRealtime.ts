@@ -343,6 +343,20 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
 
     if (type === 'session.updated') {
       try { log('[session.updated] ' + JSON.stringify(parsed?.session || {})) } catch {}
+      // The tools count was set optimistically before the payload was even
+      // sent, so it reported what this app built rather than what the session
+      // accepted - a rejected update left the badge reading 23 while the model
+      // had none. Correct it from the server's own echo when there is one.
+      try {
+        const accepted = parsed?.session?.tools
+        if (Array.isArray(accepted)) {
+          const sent = statusRef.value.toolsCount
+          if (accepted.length !== sent) {
+            log(`[warn] sent ${sent} tools but the session accepted ${accepted.length}`)
+          }
+          statusRef.value = { ...statusRef.value, toolsCount: accepted.length }
+        }
+      } catch {}
       return
     }
 

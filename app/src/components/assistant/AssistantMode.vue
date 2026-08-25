@@ -323,7 +323,10 @@ const realtime = useAssistantRealtime({
   onDisconnected: () => { ui.connected = false; ui.connecting = false; statusText.value = 'Idle'; stopElapsed(); syncPill('hidden') },
   onError: (err: string) => { ui.error = err; props.notify?.(err, 'error'); ui.connecting = false; ui.connected = false; statusText.value = 'Error'; try { debugLines.value.push(`[error] ${err}`) } catch {} },
   // Surfaced but does not change connection state: the call is still up.
-  onWarn: (msg: string) => { props.notify?.(msg, 'error'); try { debugLines.value.push(`[warn] ${msg}`) } catch {} },
+  // A rejected session.update leaves the audio call up but discards every
+  // setting in it, tools included. Surfacing that only as a transient toast
+  // made it look like nothing had happened, so it also stays on the panel.
+  onWarn: (msg: string) => { ui.error = msg; props.notify?.(msg, 'error'); try { debugLines.value.push(`[warn] ${msg}`) } catch {} },
   onLog: (msg: string) => {
     try {
       debugLines.value.push(msg)
@@ -401,6 +404,10 @@ onMounted(async () => {
       if (typeof ar.auto_close_minutes === 'number' && ar.auto_close_minutes >= 0) session.autoCloseMinutes = ar.auto_close_minutes
       if (ar.mic_mode === 'open' || ar.mic_mode === 'ptt') session.micMode = ar.mic_mode
       if (typeof ar.show_debug === 'boolean') ui.showDebug = ar.show_debug
+      // Without these the voice session came up with an empty tool list on every
+      // app start, and the only symptom was the model saying it had no tools.
+      if (typeof ar.enable_tools === 'boolean') ui.enableTools = ar.enable_tools
+      if (typeof ar.use_supervisor === 'boolean') ui.useSupervisor = ar.use_supervisor
     }
   } catch (e) {
     debugLines.value.push('[warn] failed to load assistant_realtime settings')
@@ -415,12 +422,20 @@ watch(() => debugLines.value.length, async () => {
   await scrollDebugToBottomIfEnabled()
 })
 
-watch(session, async () => {
+// `session` holds most controls, but the tools and supervisor switches live in
+// `ui` - and a `watch(session)` never fires for them. They were therefore never
+// written, and reset to false on every app start, which presented as the voice
+// model insisting it had no tools. `show_debug` was in the saved payload with
+// the same problem: it only reached disk when some unrelated `session` field
+// happened to change. Watch all three explicitly.
+watch([session, () => ui.enableTools, () => ui.useSupervisor, () => ui.showDebug], async () => {
   // Persist assistant_realtime settings immediately on change
   try {
     await invoke('save_settings', {
       map: {
         assistant_realtime: {
+          enable_tools: ui.enableTools,
+          use_supervisor: ui.useSupervisor,
           model: session.model,
           voice: session.voice,
           supervisor_mode: session.supervisorMode,
