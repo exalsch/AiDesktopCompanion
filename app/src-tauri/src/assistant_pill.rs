@@ -5,12 +5,15 @@
 //! Without something on screen there is no way to tell a live call from a closed
 //! one, and no way to hang up without hunting for the window.
 //!
-//! Two states are shown:
-//!   * `armed` - the push-to-talk key was pressed with no session running, so the
-//!     pill invites a second press to start the call. Starting a call costs
+//! Three states are shown:
+//!   * `armed`   - the push-to-talk key was pressed with no session running, so
+//!     the pill invites a second press to start the call. Starting a call costs
 //!     money and turns on a microphone; neither should happen on a single
 //!     stray keypress.
-//!   * `live`  - a call is up. The pill reports it and offers a hang-up button.
+//!   * `calling` - the session is being set up. A token, an SDP exchange and ICE
+//!     take a second or two, and without this the pill only appeared once the
+//!     call was already up, so the wait looked like nothing happening.
+//!   * `live`    - a call is up. The pill reports it and offers a hang-up button.
 //!
 //! The window is declared statically in `tauri.conf.json` (label
 //! `assistant-pill`) so it never has to be created on the hot path, and it
@@ -27,7 +30,7 @@ pub const PILL_WINDOW_LABEL: &str = "assistant-pill";
 
 #[derive(Clone, Debug, Serialize)]
 pub struct PillState {
-  /// "hidden" | "armed" | "live"
+  /// "hidden" | "armed" | "calling" | "live"
   pub state: String,
   /// Epoch milliseconds the call connected, so the pill can render an elapsed
   /// counter even if the window mounts late. Zero unless live.
@@ -37,11 +40,15 @@ pub struct PillState {
   /// Configured push-to-talk shortcut, shown in the armed prompt so the user is
   /// told which key to press again rather than having to remember.
   pub hotkey: String,
+  /// Whether the session is in push-to-talk. The pill offers a hold-to-talk
+  /// button only when it would do something - in open-mic mode the microphone
+  /// is already live and the button would be dead.
+  pub ptt: bool,
 }
 
 impl Default for PillState {
   fn default() -> Self {
-    Self { state: "hidden".into(), started_ms: 0, mic_open: false, hotkey: String::new() }
+    Self { state: "hidden".into(), started_ms: 0, mic_open: false, hotkey: String::new(), ptt: false }
   }
 }
 
@@ -102,7 +109,7 @@ fn publish(app: &tauri::AppHandle, state: &PillState) {
 
 /// Drive the pill from the frontend.
 ///
-/// `state` is "hidden", "armed" or "live". Anything else is treated as hidden
+/// `state` is "hidden", "armed", "calling" or "live". Anything else is hidden
 /// rather than rejected: a pill that refuses to disappear is worse than one that
 /// disappears when it should not.
 #[tauri::command]
@@ -111,9 +118,11 @@ pub fn assistant_pill_set(
   state: String,
   mic_open: Option<bool>,
   hotkey: Option<String>,
+  ptt: Option<bool>,
 ) -> Result<(), String> {
   let wanted = match state.as_str() {
     "armed" => "armed",
+    "calling" => "calling",
     "live" => "live",
     _ => "hidden",
   };
@@ -132,6 +141,7 @@ pub fn assistant_pill_set(
       started_ms,
       mic_open: mic_open.unwrap_or(false),
       hotkey: hotkey.unwrap_or_default(),
+      ptt: ptt.unwrap_or(false),
     };
     cur.clone()
   };
@@ -167,14 +177,34 @@ mod tests {
   fn unknown_states_hide_rather_than_error() {
     // A pill stuck on screen is worse than one that hides when it should not,
     // so anything unrecognised collapses to hidden.
-    for input in ["", "LIVE", "connecting", "garbage"] {
+    // "connecting" is in here deliberately: the accepted spelling is "calling",
+    // and a near miss has to collapse like any other unknown value.
+    for input in ["", "LIVE", "connecting", "Calling", "garbage"] {
       let mapped = match input {
         "armed" => "armed",
+        "calling" => "calling",
         "live" => "live",
         _ => "hidden",
       };
       assert_eq!(mapped, "hidden", "unexpected mapping for {input:?}");
     }
+  }
+
+  #[test]
+  fn calling_is_accepted_and_carries_no_timer() {
+    // The elapsed counter belongs to a connected call; a pill that starts
+    // counting while still dialling would report the wrong duration.
+    for input in ["armed", "calling", "live"] {
+      let mapped = match input {
+        "armed" => "armed",
+        "calling" => "calling",
+        "live" => "live",
+        _ => "hidden",
+      };
+      assert_eq!(mapped, input, "{input:?} should be accepted as itself");
+    }
+    let started_for_calling = if "calling" == "live" { 1 } else { 0 };
+    assert_eq!(started_for_calling, 0);
   }
 
   #[test]

@@ -29,6 +29,11 @@ const MAX_IDLE_TIMEOUT_MS = 30000
 // Longest a single push-to-talk hold may keep the microphone open.
 const MAX_TALK_MS = 60000
 
+// Shortest hold that is treated as speech. `input_audio_buffer.commit` is
+// rejected when the buffer holds less than 100ms of audio, so a stray tap of
+// the key would otherwise raise an API error instead of being ignored.
+const MIN_TALK_MS = 200
+
 // Escalation to the supervisor, expressed as something the model can choose to
 // do. This replaces a keyword list that only recognised English - the model
 // knows when a question is beyond it regardless of the language it is asked in.
@@ -119,6 +124,9 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
   // which is the exact thing push-to-talk exists to prevent. Global shortcuts
   // can miss a release when focus changes mid-press, so the hold is bounded.
   let talkTimeout: any = 0
+  // When the current push-to-talk hold began, or 0 when no turn is open. Both
+  // the length check and the idempotence of `commitPttTurn` hang off this.
+  let talkStartedAt = 0
   // Whether this session's push-to-talk paused the user's music.
   let mediaHeld = false
   // Whether the SDP exchange has completed. Server-side errors before that
@@ -161,6 +169,33 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       log(`[session] no activity for ${Math.round(autoCloseMs / 1000)}s, closing`)
       void disconnect()
     }, autoCloseMs)
+  }
+
+  // The API allows exactly one response at a time. A tool call that takes tens
+  // of seconds leaves the microphone live with `create_response: true`, so the
+  // server can commit a turn and open its own response while we are still
+  // waiting on the tool - and the `response.create` we send with the result is
+  // then rejected with "Conversation already has an active response in
+  // progress". Losing that one event costs the user the answer entirely: the
+  // tool ran, the result is in the conversation, and nothing ever speaks it.
+  let responseActive = false
+  let pendingResponse: any | null = null
+
+  /**
+   * Ask for a spoken response, waiting for the current one if there is one.
+   *
+   * Only the most recent deferred request is kept. Two queued responses would
+   * be spoken back to back with the second answering a turn the user has
+   * already moved past.
+   */
+  function requestResponse(response?: any) {
+    const event = response ? { type: 'response.create', response } : { type: 'response.create' }
+    if (responseActive) {
+      pendingResponse = event
+      log('[response] one already in progress, deferred until it finishes')
+      return
+    }
+    send(event)
   }
 
   function send(payload: any): boolean {
@@ -235,21 +270,15 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     try {
       const spoken = (await askSupervisor(userText)) || 'Sorry, I did not get a result for that.'
       history.value.push({ role: 'assistant', content: spoken })
-      const ok = send({
-        type: 'response.create',
-        response: {
-          instructions: `Say the following out loud, word for word, in the language it is written in. Do not summarise it, translate it, add to it, or comment on it:\n\n${spoken}`
-        }
+      requestResponse({
+        instructions: `Say the following out loud, word for word, in the language it is written in. Do not summarise it, translate it, add to it, or comment on it:\n\n${spoken}`
       })
-      if (ok) log('[supervisor] injected response (' + spoken.length + ' chars)')
+      log('[supervisor] injected response (' + spoken.length + ' chars)')
     } catch (e) {
       const msg = (e as any)?.message || String(e)
       log('[supervisor] failed: ' + msg)
       // Say something rather than leaving the user in silence.
-      send({
-        type: 'response.create',
-        response: { instructions: 'Tell the user briefly that the supervisor could not answer that, then stop.' }
-      })
+      requestResponse({ instructions: 'Tell the user briefly that the supervisor could not answer that, then stop.' })
     }
   }
 
@@ -275,7 +304,7 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
           }
         })
       }
-      send({ type: 'response.create' })
+      requestResponse()
       return
     }
     toolRounds += 1
@@ -312,7 +341,7 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       })
     }
     // One response for the whole batch: the model now has every result.
-    send({ type: 'response.create' })
+    requestResponse()
   }
 
   function handleServerEvent(raw: string) {
@@ -343,6 +372,20 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
 
     if (type === 'session.updated') {
       try { log('[session.updated] ' + JSON.stringify(parsed?.session || {})) } catch {}
+      // The tools count was set optimistically before the payload was even
+      // sent, so it reported what this app built rather than what the session
+      // accepted - a rejected update left the badge reading 23 while the model
+      // had none. Correct it from the server's own echo when there is one.
+      try {
+        const accepted = parsed?.session?.tools
+        if (Array.isArray(accepted)) {
+          const sent = statusRef.value.toolsCount
+          if (accepted.length !== sent) {
+            log(`[warn] sent ${sent} tools but the session accepted ${accepted.length}`)
+          }
+          statusRef.value = { ...statusRef.value, toolsCount: accepted.length }
+        }
+      } catch {}
       return
     }
 
@@ -378,7 +421,22 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       return
     }
 
+    if (type === 'response.created') {
+      responseActive = true
+      return
+    }
+
     if (type === 'response.done') {
+      // Clear the flag before anything below can ask for a new response, and
+      // flush whatever was deferred while this one was speaking.
+      responseActive = false
+      if (pendingResponse) {
+        const queued = pendingResponse
+        pendingResponse = null
+        log('[response] sending the deferred response')
+        send(queued)
+      }
+
       const output = Array.isArray(parsed?.response?.output) ? parsed.response.output : []
       const calls = output.filter((o: any) => o?.type === 'function_call')
       if (calls.length) {
@@ -400,6 +458,8 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       handledUserItems.clear()
       history.value = []
       voiceSent = false
+      responseActive = false
+      pendingResponse = null
       toolRounds = 0
       connected = false
 
@@ -565,9 +625,21 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     let toolsToSend: any[] = includeTools ? tools : []
     if (supervisorNeeded) toolsToSend = [SUPERVISOR_TOOL]
 
-    const supervisorNote = supervisorNeeded
-      ? ` Call ${SUPERVISOR_TOOL_NAME} whenever a question needs current information, the user's files or applications, or careful reasoning, and read its answer back.`
-      : (params.useSupervisor ? ' A supervisor model answers on your behalf.' : '')
+    // Which of the three tool arrangements this session actually ended up in.
+    //
+    // This has to survive custom instructions. The two switches are per-session
+    // and are not visible to whoever wrote the prompt, so a hand-written prompt
+    // cannot describe the arrangement correctly - and previously it replaced
+    // this note wholesale, which meant a prompt mentioning "the supervisor"
+    // outlived the supervisor being switched off, and a supervisor session lost
+    // the one sentence that tells the model to escalate at all.
+    const arrangementNote = supervisorNeeded
+      ? `Call ${SUPERVISOR_TOOL_NAME} whenever a question needs current information, the user's files or applications, or careful reasoning, and read its answer back. It is the only tool you have; there are no others in this session.`
+      : params.useSupervisor
+        ? 'A supervisor model answers on your behalf. Do not describe that arrangement to the user.'
+        : includeTools
+          ? 'There is no supervisor in this session, so do not mention one or wait for one. You have tools of your own: call them yourself when a question needs them. Some take up to a minute, so say you are checking before you call one, then give the answer when it arrives.'
+          : 'There is no supervisor and no tools in this session. Answer from your own knowledge, and say plainly when something is beyond it.'
 
     const turnDetection: Record<string, any> = {
       type: 'server_vad',
@@ -590,7 +662,18 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     }
 
     const audioInput: Record<string, any> = {
-      turn_detection: turnDetection,
+      // Push-to-talk already knows where the turn ends: the key coming up is
+      // the end of it. Leaving server VAD switched on made every release wait
+      // out silence_duration_ms before the model would answer - a disabled
+      // WebRTC track keeps transmitting silence, so the server sat listening
+      // for an end of speech it had already been given. That was dead air on
+      // every single turn, and at the configured 4200ms it dominated the
+      // conversation. `stopTalking` commits the buffer explicitly instead.
+      //
+      // null rather than omitted: session.update merges, so leaving the field
+      // out would preserve the previous value and switching back to open mic
+      // would never restore VAD.
+      turn_detection: micMode === 'ptt' ? null : turnDetection,
       // Always on. The transcript is what the debug log, the conversation
       // history and the supervisor all read; without it the session is a black
       // box even when it is working.
@@ -614,9 +697,13 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       session: {
         type: 'realtime',
         output_modalities: ['audio'],
-        instructions: (params.instructions && params.instructions.trim().length > 0)
-          ? params.instructions
-          : `You are an assistant in Assistant Mode. Speak clearly and concisely.${supervisorNote} IMPORTANT: Always reply in the same language the user is speaking/writing. If you are unsure, reply in English. Do not switch languages mid-conversation unless the user clearly switches.`,
+        // The arrangement note goes last so it wins on recency, and it is
+        // appended to custom instructions rather than replaced by them.
+        instructions: `${
+          (params.instructions && params.instructions.trim().length > 0)
+            ? params.instructions.trim()
+            : 'You are an assistant in Assistant Mode. Speak clearly and concisely. IMPORTANT: Always reply in the same language the user is speaking/writing. If you are unsure, reply in English. Do not switch languages mid-conversation unless the user clearly switches.'
+        }\n\n${arrangementNote}`,
         tools: toolsToSend,
         tool_choice: 'auto',
         audio,
@@ -632,14 +719,18 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       const toolNames = toolsToSend.map((t: any) => t?.name || t?.function?.name || '').filter(Boolean).slice(0, 8)
       log('[session.update] ' + JSON.stringify({
         voice: audio.output?.voice ?? '(unchanged)',
-        silence_ms: turnDetection.silence_duration_ms,
-        idle_timeout_ms: turnDetection.idle_timeout_ms ?? null,
+        turn_detection: micMode === 'ptt' ? 'manual (push-to-talk)' : 'server_vad',
+        silence_ms: micMode === 'ptt' ? null : turnDetection.silence_duration_ms,
+        idle_timeout_ms: micMode === 'ptt' ? null : (turnDetection.idle_timeout_ms ?? null),
         noise_reduction: audioInput.noise_reduction ?? null,
         transcription: audioInput.transcription.model,
         reasoning_effort: (params.reasoningEffort && modelSupportsReasoning(params.model)) ? params.reasoningEffort : null,
         useSupervisor: params.useSupervisor === true,
         supervisorMode: currentSupervisorMode,
         enableTools: includeTools,
+        arrangement: supervisorNeeded
+          ? 'supervisor-needed'
+          : params.useSupervisor ? 'supervisor-always' : (includeTools ? 'tools-direct' : 'no-tools'),
         tool_count: toolsToSend.length,
         tool_names_sample: toolNames,
       }))
@@ -706,6 +797,8 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     if (talkTimeout) { clearTimeout(talkTimeout); talkTimeout = 0 }
     handledUserItems.clear()
     voiceSent = false
+    responseActive = false
+    pendingResponse = null
     toolRounds = 0
     connected = false
     try { opts.onDisconnected?.() } catch {}
@@ -726,9 +819,47 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     log(enabled ? '[mic] unmuted' : '[mic] muted')
   }
 
+  /**
+   * End a push-to-talk turn: commit what was captured and ask for an answer.
+   *
+   * This is what replaces server VAD in push-to-talk. It is idempotent - the
+   * hold cap and the key release both route through here, and whichever runs
+   * first clears the marker.
+   */
+  function commitPttTurn() {
+    if (!talkStartedAt) return
+    const heldMs = Date.now() - talkStartedAt
+    talkStartedAt = 0
+
+    if (heldMs < MIN_TALK_MS) {
+      log(`[mic] hold of ${heldMs}ms is too short to be speech, discarded`)
+      send({ type: 'input_audio_buffer.clear' })
+      return
+    }
+
+    send({ type: 'input_audio_buffer.commit' })
+    // In supervisor "always" mode the realtime model is deliberately held
+    // silent and `supervisorRespond` injects the answer once the transcript
+    // arrives, so asking for a response here would talk over it.
+    if (currentUseSupervisor && currentSupervisorMode === 'always') {
+      log(`[mic] committed ${heldMs}ms; the supervisor answers this turn`)
+      return
+    }
+    log(`[mic] committed ${heldMs}ms and asked for a response`)
+    requestResponse()
+  }
+
   /** Open the microphone for as long as the key or button is held. */
   function startTalking() {
     if (!connected || micMode !== 'ptt') return
+    // Barge-in. With server VAD off, `interrupt_response` no longer applies, so
+    // reaching for the key while the assistant is talking has to cut it off
+    // here or push-to-talk would be the one mode you cannot interrupt.
+    if (responseActive) {
+      send({ type: 'response.cancel' })
+      log('[mic] cancelled the response in progress')
+    }
+    talkStartedAt = Date.now()
     // Pause the user's music for the length of the hold. Fire and forget: a
     // media session that will not answer must not delay the microphone.
     invoke<boolean>('media_hold', { reason: 'assistant' })
@@ -738,6 +869,9 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     talkTimeout = setTimeout(() => {
       log(`[mic] hold exceeded ${Math.round(MAX_TALK_MS / 1000)}s, closing the microphone`)
       setMicEnabled(false)
+      // Hitting the cap still ends a turn. Without this the speech captured up
+      // to the cap was left uncommitted and simply discarded.
+      commitPttTurn()
     }, MAX_TALK_MS)
     if (!micEnabled.value) setMicEnabled(true)
   }
@@ -751,6 +885,7 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     }
     if (micMode !== 'ptt') return
     if (micEnabled.value) setMicEnabled(false)
+    commitPttTurn()
   }
 
   function attachAudioElement(el: HTMLAudioElement) {

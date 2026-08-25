@@ -3,6 +3,7 @@ import { computed, onMounted, onBeforeUnmount, reactive, ref, watch, nextTick } 
 import { invoke } from '@tauri-apps/api/core'
 import { useAssistantRealtime } from '../../composables/useAssistantRealtime'
 import { useSettings } from '../../composables/useSettings'
+import { useCallTones } from '../../composables/useCallTones'
 import CollapsibleCard from '../ui/CollapsibleCard.vue'
 import { listen } from '@tauri-apps/api/event'
 import type { UnlistenFn } from '@tauri-apps/api/event'
@@ -70,11 +71,12 @@ const armed = ref(false)
 let armTimer: any = 0
 
 /** Push the current call state to the floating pill. */
-function syncPill(state: 'hidden' | 'armed' | 'live') {
+function syncPill(state: 'hidden' | 'armed' | 'calling' | 'live') {
   void invoke('assistant_pill_set', {
     state,
     micOpen: state === 'live' ? micEnabled.value : false,
     hotkey: appSettings.push_to_talk_hotkey || '',
+    ptt: session.micMode === 'ptt',
   }).catch(() => {})
 }
 
@@ -144,6 +146,23 @@ async function copyTranscript() {
   try {
     await invoke('copy_text_to_clipboard', { text: transcriptText.value })
     props.notify?.('Transcript copied', 'success')
+  } catch (e: any) {
+    props.notify?.(e?.message || 'Copy failed', 'error')
+  }
+}
+
+/**
+ * Copy the whole realtime event log.
+ *
+ * The log is where a rejected `session.update` shows up, and it is the only
+ * place the accepted tool list is visible - but it renders as a scrolling list
+ * of divs that is painful to select by hand, which made "paste me the log" a
+ * bigger ask than it should be.
+ */
+async function copyDebugLog() {
+  try {
+    await invoke('copy_text_to_clipboard', { text: debugLines.value.join('\n') })
+    props.notify?.(`Copied ${debugLines.value.length} log lines`, 'success')
   } catch (e: any) {
     props.notify?.(e?.message || 'Copy failed', 'error')
   }
@@ -271,6 +290,10 @@ const session = reactive({
   // A live session bills per minute with an open microphone, so a forgotten
   // window closes itself rather than running until somebody notices.
   autoCloseMinutes: 2,
+  // Ringback while connecting and a beep when the call is up. On by default:
+  // the connect happens from a global hotkey with the window usually hidden, so
+  // sound is the only feedback that reaches the user.
+  callTones: true,
 })
 
 /**
@@ -303,8 +326,14 @@ async function syncSession() {
 
 watch(() => session.supervisorMode, syncSession)
 
+// The pill shows its hold-to-talk button only in push-to-talk, so a mode change
+// mid-call has to reach it or the button lingers or stays missing.
+watch(() => session.micMode, () => { if (ui.connected) syncPill('live') })
+
 // Load Prompt section settings (temperature, etc.) for supervisor alignment
 const { settings: appSettings, loadSettings } = useSettings()
+
+const tones = useCallTones()
 
 const realtime = useAssistantRealtime({
   getEphemeralToken: async () => {
@@ -319,11 +348,16 @@ const realtime = useAssistantRealtime({
       throw new Error('Could not mint a realtime token: ' + msg)
     }
   },
-  onConnected: () => { ui.connected = true; ui.connecting = false; ui.error = null; statusText.value = 'Connected'; startElapsed(); syncPill('live') },
-  onDisconnected: () => { ui.connected = false; ui.connecting = false; statusText.value = 'Idle'; stopElapsed(); syncPill('hidden') },
-  onError: (err: string) => { ui.error = err; props.notify?.(err, 'error'); ui.connecting = false; ui.connected = false; statusText.value = 'Error'; try { debugLines.value.push(`[error] ${err}`) } catch {} },
+  onConnected: () => { ui.connected = true; ui.connecting = false; ui.error = null; statusText.value = 'Connected'; startElapsed(); syncPill('live'); tones.stopRingback(); if (session.callTones) tones.readyBeep() },
+  onDisconnected: () => { ui.connected = false; ui.connecting = false; statusText.value = 'Idle'; stopElapsed(); syncPill('hidden'); tones.stopRingback() },
+  // Ringing on past a failed connect would be a phone that never stops, so the
+  // tone is stopped here as well as on the two success paths.
+  onError: (err: string) => { ui.error = err; props.notify?.(err, 'error'); ui.connecting = false; ui.connected = false; statusText.value = 'Error'; tones.stopRingback(); syncPill('hidden'); try { debugLines.value.push(`[error] ${err}`) } catch {} },
   // Surfaced but does not change connection state: the call is still up.
-  onWarn: (msg: string) => { props.notify?.(msg, 'error'); try { debugLines.value.push(`[warn] ${msg}`) } catch {} },
+  // A rejected session.update leaves the audio call up but discards every
+  // setting in it, tools included. Surfacing that only as a transient toast
+  // made it look like nothing had happened, so it also stays on the panel.
+  onWarn: (msg: string) => { ui.error = msg; props.notify?.(msg, 'error'); try { debugLines.value.push(`[warn] ${msg}`) } catch {} },
   onLog: (msg: string) => {
     try {
       debugLines.value.push(msg)
@@ -352,6 +386,12 @@ async function activate() {
   } catch {}
   ui.connecting = true
   statusText.value = 'Connecting…'
+  // Before the await, not after: a token, an SDP exchange and ICE take a second
+  // or two, and the pill used to appear only once all of that had succeeded -
+  // so the wait, which is exactly when the user needs to be told something is
+  // happening, was the one moment nothing was shown.
+  syncPill('calling')
+  if (session.callTones) tones.startRingback()
   await realtime.connect({
     enableTools: ui.enableTools,
     useSupervisor: ui.useSupervisor,
@@ -400,7 +440,12 @@ onMounted(async () => {
       if (ar.reasoning_effort === null || REASONING_EFFORTS.includes(ar.reasoning_effort)) session.reasoningEffort = ar.reasoning_effort ?? null
       if (typeof ar.auto_close_minutes === 'number' && ar.auto_close_minutes >= 0) session.autoCloseMinutes = ar.auto_close_minutes
       if (ar.mic_mode === 'open' || ar.mic_mode === 'ptt') session.micMode = ar.mic_mode
+      if (typeof ar.call_tones === 'boolean') session.callTones = ar.call_tones
       if (typeof ar.show_debug === 'boolean') ui.showDebug = ar.show_debug
+      // Without these the voice session came up with an empty tool list on every
+      // app start, and the only symptom was the model saying it had no tools.
+      if (typeof ar.enable_tools === 'boolean') ui.enableTools = ar.enable_tools
+      if (typeof ar.use_supervisor === 'boolean') ui.useSupervisor = ar.use_supervisor
     }
   } catch (e) {
     debugLines.value.push('[warn] failed to load assistant_realtime settings')
@@ -415,12 +460,20 @@ watch(() => debugLines.value.length, async () => {
   await scrollDebugToBottomIfEnabled()
 })
 
-watch(session, async () => {
+// `session` holds most controls, but the tools and supervisor switches live in
+// `ui` - and a `watch(session)` never fires for them. They were therefore never
+// written, and reset to false on every app start, which presented as the voice
+// model insisting it had no tools. `show_debug` was in the saved payload with
+// the same problem: it only reached disk when some unrelated `session` field
+// happened to change. Watch all three explicitly.
+watch([session, () => ui.enableTools, () => ui.useSupervisor, () => ui.showDebug], async () => {
   // Persist assistant_realtime settings immediately on change
   try {
     await invoke('save_settings', {
       map: {
         assistant_realtime: {
+          enable_tools: ui.enableTools,
+          use_supervisor: ui.useSupervisor,
           model: session.model,
           voice: session.voice,
           supervisor_mode: session.supervisorMode,
@@ -431,6 +484,7 @@ watch(session, async () => {
           reasoning_effort: session.reasoningEffort,
           auto_close_minutes: session.autoCloseMinutes,
           mic_mode: session.micMode,
+          call_tones: session.callTones,
           show_debug: ui.showDebug,
         }
       }
@@ -446,6 +500,8 @@ watch(() => props.autostart, (n, old) => {
 })
 
 let unlistenHangup: UnlistenFn | null = null
+let unlistenPttDown: UnlistenFn | null = null
+let unlistenPttUp: UnlistenFn | null = null
 
 onMounted(async () => {
   window.addEventListener(HOTKEY_EVENT_PTT_DOWN, onPttDown)
@@ -455,6 +511,14 @@ onMounted(async () => {
   try {
     unlistenHangup = await listen('assistant:hangup', () => { void deactivate() })
   } catch {}
+  // Hold-to-talk from the pill's button. It runs in its own window and cannot
+  // reach the session, so it asks; these route to the same handlers the global
+  // hotkey uses, and the pill is non-activating so holding it never takes focus
+  // from whatever the user is working in.
+  try {
+    unlistenPttDown = await listen('assistant:ptt-down', () => onPttDown())
+    unlistenPttUp = await listen('assistant:ptt-up', () => onPttUp())
+  } catch {}
 })
 
 onBeforeUnmount(() => {
@@ -462,6 +526,9 @@ onBeforeUnmount(() => {
   window.removeEventListener(HOTKEY_EVENT_PTT_UP, onPttUp)
   if (armTimer) { clearTimeout(armTimer); armTimer = 0 }
   try { unlistenHangup?.() } catch {}
+  try { unlistenPttDown?.() } catch {}
+  try { unlistenPttUp?.() } catch {}
+  tones.dispose()
   stopElapsed()
   try { realtime.disconnect() } catch {}
 })
@@ -587,6 +654,19 @@ onBeforeUnmount(() => {
             Hold the button above. Set a hotkey in Settings &rsaquo; General to hold from any application.
           </template>
         </p>
+      </div>
+
+      <div class="field">
+        <label class="switch row">
+          <input type="checkbox" v-model="session.callTones" />
+          <span class="switch-text">
+            <span class="switch-label">Call tones</span>
+            <span class="switch-hint">
+              Rings while the call connects and beeps once when it is ready, so a call started
+              from the hotkey tells you where it is without the window being visible.
+            </span>
+          </span>
+        </label>
       </div>
 
       <div class="field">
@@ -725,6 +805,12 @@ onBeforeUnmount(() => {
     >
       <div v-for="(l, i) in debugLines" :key="i" class="log-line">{{ l }}</div>
       <div ref="debugLogBottomRef" style="height: 1px;"></div>
+    </div>
+
+    <div class="actions" v-if="ui.showDebug">
+      <button class="btn ghost" type="button" :disabled="!debugLines.length" @click="copyDebugLog">
+        Copy event log
+      </button>
     </div>
   </CollapsibleCard>
 </template>
