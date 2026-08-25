@@ -39,6 +39,29 @@ const transcript = computed<Array<{ role: string, content: string }>>(
 
 const micEnabled = computed(() => (realtime as any).micEnabled?.value !== false)
 
+// Token totals for the session, and what they are worth. Kept after the call
+// ends: the cost is what people look at once it is over.
+const usage = computed(() => (realtime as any).usage?.totals?.value ?? null)
+const usageCost = computed<string | null>(() => {
+  const u: any = (realtime as any).usage
+  if (!u) return null
+  return u.formatUsd(u.estimatedUsd.value)
+})
+const usageTooltip = computed(() => {
+  const u = usage.value
+  if (!u) return ''
+  const rounded = (n: number) => n.toLocaleString()
+  return [
+    `Audio in ${rounded(u.audioIn)} (+${rounded(u.audioInCached)} cached)`,
+    `Audio out ${rounded(u.audioOut)}`,
+    `Text in ${rounded(u.textIn)} (+${rounded(u.textInCached)} cached)`,
+    `Text out ${rounded(u.textOut)}`,
+    `${u.responses} responses`,
+    '',
+    `Estimate only, from rates checked ${(realtime as any).usage?.ratesChecked}. Tokens are exact.`,
+  ].join('\n')
+})
+
 function toggleMic() {
   ;(realtime as any).setMicEnabled?.(!micEnabled.value)
 }
@@ -112,8 +135,9 @@ function onPttDown() {
 
 function onPttUp() { if (ui.connected && session.micMode === 'ptt') stopTalking() }
 
-// Realtime audio is billed by the minute, so how long a session has been open
-// is the number worth putting on screen.
+// Realtime audio is billed per audio token - roughly one per 100ms heard and
+// one per 50ms spoken - so time on the call is the closest thing to a running
+// meter, and the number worth putting on screen.
 const elapsedSeconds = ref(0)
 let elapsedTimer: any = 0
 
@@ -287,8 +311,8 @@ const session = reactive({
   // 'open' is the previous behaviour and stays the default; push-to-talk is
   // opt-in because it needs a hotkey or a held button to be usable.
   micMode: 'open' as 'open' | 'ptt',
-  // A live session bills per minute with an open microphone, so a forgotten
-  // window closes itself rather than running until somebody notices.
+  // An open microphone keeps feeding billable audio to the model, so a
+  // forgotten window closes itself rather than running until somebody notices.
   autoCloseMinutes: 2,
   // Ringback while connecting and a beep when the call is up. On by default:
   // the connect happens from a global hotkey with the window usually hidden, so
@@ -571,9 +595,14 @@ onBeforeUnmount(() => {
         </span>
         <span v-if="ui.connected && !micEnabled" class="badge warn">Mic muted</span>
         <span v-else-if="ui.connected && session.micMode === 'ptt'" class="badge ok">Mic open</span>
-        <span v-if="ui.connected" class="badge" title="Session length - realtime audio is billed per minute">
+        <span v-if="ui.connected" class="badge" title="Session length. Realtime audio is billed per audio token, so a longer call costs more - though a muted microphone sends nothing and costs nothing.">
           {{ elapsedLabel }}
         </span>
+        <span
+          v-if="usage && usage.responses > 0"
+          class="badge"
+          :title="usageTooltip"
+        >~{{ usageCost ?? 'n/a' }}</span>
         <span class="spacer"></span>
         <span class="badge">Tools {{ (realtime as any)?.status?.value?.toolsCount ?? 0 }}</span>
         <span class="badge" v-if="ui.useSupervisor">
@@ -654,6 +683,10 @@ onBeforeUnmount(() => {
             Hold the button above. Set a hotkey in Settings &rsaquo; General to hold from any application.
           </template>
         </p>
+        <p class="field-hint">
+          The microphone is captured for the whole session either way, so Windows shows its
+          recording indicator until you hang up. Nothing is sent while muted or between holds.
+        </p>
       </div>
 
       <div class="field">
@@ -718,7 +751,7 @@ onBeforeUnmount(() => {
       <div class="field">
         <label class="field-label">Close session after</label>
         <input class="input" type="number" min="0" step="1" v-model.number="session.autoCloseMinutes" @change="syncSession" />
-        <p class="field-hint">Minutes of silence before the session disconnects. 0 never closes - but an open session holds a live microphone and bills per minute.</p>
+        <p class="field-hint">Minutes of silence before the session disconnects. 0 never closes - but an open microphone keeps sending billable audio for as long as the session lasts.</p>
       </div>
     </div>
 

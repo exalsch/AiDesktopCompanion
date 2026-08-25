@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useRealtimeUsage } from './useRealtimeUsage'
 
 // Where the SDP offer is exchanged for an answer. The beta endpoint this used
 // to post to, `POST /v1/realtime?model=...`, was removed with the rest of the
@@ -106,6 +107,10 @@ export interface HistoryTurn { role: 'user' | 'assistant' | 'tool', content: str
 export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
   const pcRef = ref<RTCPeerConnection | null>(null)
   const micStreamRef = ref<MediaStream | null>(null)
+  // The sender carrying the microphone, and the track to put back on it. Muting
+  // detaches the track from the sender rather than merely disabling it.
+  let micSender: RTCRtpSender | null = null
+  let micTrack: MediaStreamTrack | null = null
   const statusRef = ref<{ toolsCount: number, supervisor: boolean, voice?: string, silenceMs?: number, idleMs?: number }>({ toolsCount: 0, supervisor: false })
   let remoteAudioEl: HTMLAudioElement | null = document.createElement('audio')
   let currentUseSupervisor = false
@@ -151,6 +156,14 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
   // readable rather than something you had to be listening to.
   const history = ref<HistoryTurn[]>([])
 
+  // Token and cost accounting. The numbers arrive on every response.done and
+  // were previously thrown away, so the most expensive thing this app does was
+  // also the only thing that reported nothing about what it cost.
+  const usage = useRealtimeUsage()
+  // Logged once per session rather than per response: if the usage shape ever
+  // changes, one line says so instead of several hundred.
+  let warnedAboutUsageShape = false
+
   function log(msg: string) {
     try { opts.onLog?.(msg) } catch {}
   }
@@ -159,7 +172,8 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
    * Restart the inactivity countdown.
    *
    * Called whenever either side says something. An open realtime session holds
-   * a live microphone and bills by the minute, so walking away from the window
+   * a live microphone and bills for the audio flowing through it, so walking
+   * away from the window
    * should not keep costing money.
    */
   function resetAutoClose() {
@@ -437,6 +451,12 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
         send(queued)
       }
 
+      const counted = usage.addResponse(parsed?.response?.usage)
+      if (!counted && !warnedAboutUsageShape) {
+        warnedAboutUsageShape = true
+        log('[usage] response.done carried no recognisable usage block; totals will read low')
+      }
+
       const output = Array.isArray(parsed?.response?.output) ? parsed.response.output : []
       const calls = output.filter((o: any) => o?.type === 'function_call')
       if (calls.length) {
@@ -462,6 +482,10 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       pendingResponse = null
       toolRounds = 0
       connected = false
+      // Rates depend on the model, so the totals are told which one before the
+      // first response arrives.
+      usage.reset(params.model)
+      warnedAboutUsageShape = false
 
       const pc = new RTCPeerConnection({
         iceServers: [
@@ -501,7 +525,12 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
 
       // Capture microphone and add as sendonly track
       const mic = await navigator.mediaDevices.getUserMedia({ audio: true })
-      mic.getAudioTracks().forEach((t) => pc.addTrack(t, mic))
+      // Keep the sender: muting detaches the track from it, which is what
+      // actually stops audio leaving. See `setMicEnabled`.
+      mic.getAudioTracks().forEach((t) => {
+        const sender = pc.addTrack(t, mic)
+        if (!micSender) { micSender = sender; micTrack = t }
+      })
       // In push-to-talk the microphone must be closed the instant it exists,
       // not once the first session.update lands.
       const startMuted = params.micMode === 'ptt'
@@ -784,6 +813,8 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       micStreamRef.value?.getTracks().forEach(t => t.stop())
     } catch {}
     micStreamRef.value = null
+    micSender = null
+    micTrack = null
     try {
       const pc = pcRef.value
       if (pc) {
@@ -807,16 +838,34 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
   /**
    * Mute or unmute the microphone for the rest of the session.
    *
-   * Disables the track rather than stopping it: a stopped track cannot be
-   * restarted on the same connection, and re-negotiating just to unmute would
-   * drop the conversation.
+   * Two things happen, and both are needed.
+   *
+   * `track.enabled = false` takes effect immediately but does not stop the
+   * sender: WebRTC keeps transmitting, just silence. The Realtime API bills
+   * audio input at a token per 100ms, so a muted microphone left attached is
+   * paying for its own silence - which in push-to-talk is most of the call.
+   * Detaching the track from the sender with `replaceTrack(null)` is what
+   * actually stops audio leaving, and it needs no renegotiation, so the call
+   * survives it.
+   *
+   * The track itself is deliberately left running. Stopping it would clear the
+   * OS microphone indicator, but re-acquiring on the next key press costs a
+   * few hundred milliseconds of `getUserMedia` and would clip the start of
+   * whatever the user was already saying. Push-to-talk is judged on exactly
+   * that responsiveness, so the indicator stays lit for the session and the UI
+   * says so rather than pretending otherwise.
    */
   function setMicEnabled(enabled: boolean) {
     micEnabled.value = enabled
     try {
       micStreamRef.value?.getAudioTracks().forEach((t) => { t.enabled = enabled })
     } catch {}
-    log(enabled ? '[mic] unmuted' : '[mic] muted')
+    try {
+      // Best-effort: a failure here means silence is still being sent, which is
+      // a billing annoyance, never a reason to break the call.
+      void micSender?.replaceTrack(enabled ? micTrack : null)?.catch?.(() => {})
+    } catch {}
+    log(enabled ? '[mic] unmuted' : '[mic] muted, no longer transmitting')
   }
 
   /**
@@ -904,5 +953,7 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
 
   // The transcript deliberately survives disconnect, so the last conversation
   // is still readable after the session ends; `connect` clears it.
-  return { connect, disconnect, attachAudioElement, updateSession, setMicEnabled, startTalking, stopTalking, micEnabled, status: statusRef, transcript: history }
+  // The totals deliberately survive disconnect, like the transcript: what the
+  // call cost is worth reading after it ends, which is when anyone looks.
+  return { connect, disconnect, attachAudioElement, updateSession, setMicEnabled, startTalking, stopTalking, micEnabled, status: statusRef, transcript: history, usage }
 }
