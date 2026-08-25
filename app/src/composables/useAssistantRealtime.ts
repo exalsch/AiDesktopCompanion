@@ -163,6 +163,33 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     }, autoCloseMs)
   }
 
+  // The API allows exactly one response at a time. A tool call that takes tens
+  // of seconds leaves the microphone live with `create_response: true`, so the
+  // server can commit a turn and open its own response while we are still
+  // waiting on the tool - and the `response.create` we send with the result is
+  // then rejected with "Conversation already has an active response in
+  // progress". Losing that one event costs the user the answer entirely: the
+  // tool ran, the result is in the conversation, and nothing ever speaks it.
+  let responseActive = false
+  let pendingResponse: any | null = null
+
+  /**
+   * Ask for a spoken response, waiting for the current one if there is one.
+   *
+   * Only the most recent deferred request is kept. Two queued responses would
+   * be spoken back to back with the second answering a turn the user has
+   * already moved past.
+   */
+  function requestResponse(response?: any) {
+    const event = response ? { type: 'response.create', response } : { type: 'response.create' }
+    if (responseActive) {
+      pendingResponse = event
+      log('[response] one already in progress, deferred until it finishes')
+      return
+    }
+    send(event)
+  }
+
   function send(payload: any): boolean {
     if (!eventsDc || eventsDc.readyState !== 'open') {
       log('[warn] data channel not open, dropped: ' + (payload?.type || 'event'))
@@ -235,21 +262,15 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     try {
       const spoken = (await askSupervisor(userText)) || 'Sorry, I did not get a result for that.'
       history.value.push({ role: 'assistant', content: spoken })
-      const ok = send({
-        type: 'response.create',
-        response: {
-          instructions: `Say the following out loud, word for word, in the language it is written in. Do not summarise it, translate it, add to it, or comment on it:\n\n${spoken}`
-        }
+      requestResponse({
+        instructions: `Say the following out loud, word for word, in the language it is written in. Do not summarise it, translate it, add to it, or comment on it:\n\n${spoken}`
       })
-      if (ok) log('[supervisor] injected response (' + spoken.length + ' chars)')
+      log('[supervisor] injected response (' + spoken.length + ' chars)')
     } catch (e) {
       const msg = (e as any)?.message || String(e)
       log('[supervisor] failed: ' + msg)
       // Say something rather than leaving the user in silence.
-      send({
-        type: 'response.create',
-        response: { instructions: 'Tell the user briefly that the supervisor could not answer that, then stop.' }
-      })
+      requestResponse({ instructions: 'Tell the user briefly that the supervisor could not answer that, then stop.' })
     }
   }
 
@@ -275,7 +296,7 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
           }
         })
       }
-      send({ type: 'response.create' })
+      requestResponse()
       return
     }
     toolRounds += 1
@@ -312,7 +333,7 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       })
     }
     // One response for the whole batch: the model now has every result.
-    send({ type: 'response.create' })
+    requestResponse()
   }
 
   function handleServerEvent(raw: string) {
@@ -392,7 +413,22 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       return
     }
 
+    if (type === 'response.created') {
+      responseActive = true
+      return
+    }
+
     if (type === 'response.done') {
+      // Clear the flag before anything below can ask for a new response, and
+      // flush whatever was deferred while this one was speaking.
+      responseActive = false
+      if (pendingResponse) {
+        const queued = pendingResponse
+        pendingResponse = null
+        log('[response] sending the deferred response')
+        send(queued)
+      }
+
       const output = Array.isArray(parsed?.response?.output) ? parsed.response.output : []
       const calls = output.filter((o: any) => o?.type === 'function_call')
       if (calls.length) {
@@ -414,6 +450,8 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       handledUserItems.clear()
       history.value = []
       voiceSent = false
+      responseActive = false
+      pendingResponse = null
       toolRounds = 0
       connected = false
 
@@ -739,6 +777,8 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     if (talkTimeout) { clearTimeout(talkTimeout); talkTimeout = 0 }
     handledUserItems.clear()
     voiceSent = false
+    responseActive = false
+    pendingResponse = null
     toolRounds = 0
     connected = false
     try { opts.onDisconnected?.() } catch {}
