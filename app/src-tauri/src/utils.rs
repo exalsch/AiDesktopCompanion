@@ -85,7 +85,24 @@ pub fn play_wav_blocking_windows(_app: &tauri::AppHandle, _wav_path: &str) -> Re
 /// ignored: if input simulation is unavailable the calling flow would silently
 /// read a stale clipboard and act on the wrong text.
 pub fn send_ctrl_key(ch: char) -> Result<(), String> {
-  send_chord(enigo::Key::Unicode(ch), false, &format!("Ctrl+{ch}"))
+  send_chord(enigo::Key::Unicode(ch), true, false, &format!("Ctrl+{ch}"))
+}
+
+/// Synthesize `Ctrl`+`Shift`+`ch`.
+///
+/// The paste combo for terminals and consoles, where plain Ctrl+V is either a
+/// control character or bound to something else entirely.
+pub fn send_ctrl_shift_key(ch: char) -> Result<(), String> {
+  send_chord(enigo::Key::Unicode(ch), true, true, &format!("Ctrl+Shift+{ch}"))
+}
+
+/// Synthesize `Shift`+`Insert`.
+///
+/// The X11-era paste combo, still honoured by Windows consoles and most
+/// terminal emulators, and the one application that ignores both other combos
+/// usually answers to this.
+pub fn send_shift_insert() -> Result<(), String> {
+  send_chord(enigo::Key::Insert, false, true, "Shift+Insert")
 }
 
 /// Send Ctrl+Shift+Home, extending the selection from the caret back to the
@@ -95,23 +112,28 @@ pub fn send_ctrl_key(ch: char) -> Result<(), String> {
 /// box or comment field it grabs exactly the text the user just typed, without
 /// swallowing the conversation history that Ctrl+A would also select.
 pub fn send_ctrl_shift_home() -> Result<(), String> {
-  send_chord(enigo::Key::Home, true, "Ctrl+Shift+Home")
+  send_chord(enigo::Key::Home, true, true, "Ctrl+Shift+Home")
 }
 
-/// Click `key` while Control - and optionally Shift - are held.
+/// Click `key` while Control and/or Shift are held.
 ///
-/// The modifiers are always released, even when the key itself fails, so a
-/// failed simulation never leaves the user with a stuck Ctrl or Shift.
-fn send_chord(key: enigo::Key, shift: bool, label: &str) -> Result<(), String> {
+/// Every modifier that was pressed is released, even when the key itself
+/// fails, so a failed simulation never leaves the user with a stuck Ctrl or
+/// Shift.
+fn send_chord(key: enigo::Key, ctrl: bool, shift: bool, label: &str) -> Result<(), String> {
   use enigo::{Direction, Enigo, Key, Keyboard, Settings};
   let mut enigo = Enigo::new(&Settings::default())
     .map_err(|e| format!("input simulation unavailable: {e}"))?;
-  enigo
-    .key(Key::Control, Direction::Press)
-    .map_err(|e| format!("ctrl press failed: {e}"))?;
+  if ctrl {
+    enigo
+      .key(Key::Control, Direction::Press)
+      .map_err(|e| format!("ctrl press failed: {e}"))?;
+  }
   if shift {
     if let Err(e) = enigo.key(Key::Shift, Direction::Press) {
-      let _ = enigo.key(Key::Control, Direction::Release);
+      if ctrl {
+        let _ = enigo.key(Key::Control, Direction::Release);
+      }
       return Err(format!("shift press failed: {e}"));
     }
   }
@@ -125,9 +147,13 @@ fn send_chord(key: enigo::Key, shift: bool, label: &str) -> Result<(), String> {
   } else {
     Ok(())
   };
-  let ctrl_release = enigo
-    .key(Key::Control, Direction::Release)
-    .map_err(|e| format!("ctrl release failed: {e}"));
+  let ctrl_release = if ctrl {
+    enigo
+      .key(Key::Control, Direction::Release)
+      .map_err(|e| format!("ctrl release failed: {e}"))
+  } else {
+    Ok(())
+  };
   click.and(shift_release).and(ctrl_release)
 }
 

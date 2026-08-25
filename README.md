@@ -203,8 +203,10 @@ Release notes:
   - Speech-to-Text push‑to‑talk (hold S / mouse, release to transcribe)
   - Image capture overlay
 - MCP server connections (tool discovery + tool calls from chat)
-- Aggressive clipboard copy‑restore for reliable text insertion, or an opt‑in keystroke mode
-  (Settings → General → Text insertion) that types the result and leaves the clipboard untouched
+- Five text-insertion methods (Settings → General → Text insertion): Ctrl + V, Ctrl + Shift + V and
+  Shift + Insert paste through an aggressive clipboard copy‑restore with a tunable delay, keystroke
+  mode types the result without touching the clipboard, and "do not insert" only puts it there.
+  A separate setting decides whether the clipboard is restored afterwards or keeps the result
 - Auto‑sizing popup and robust window focus management
 
 

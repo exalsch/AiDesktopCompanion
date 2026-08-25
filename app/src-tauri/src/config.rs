@@ -128,23 +128,77 @@ pub fn get_select_all_capture_mode() -> String {
   normalize_select_all_capture_mode(raw).to_string()
 }
 
-/// Normalize an `insert_mode` value to one of the two supported modes,
-/// defaulting to `"clipboard"`.
+/// Longest paste delay we will honour. Past a couple of seconds the user is
+/// staring at a frozen popup and would rather see the paste fail.
+pub const MAX_PASTE_DELAY_MS: u64 = 2000;
+
+/// Default wait between sending the paste combo and restoring the clipboard.
+/// Long enough for the target application to have read the clipboard; short
+/// enough not to be noticeable.
+pub const DEFAULT_PASTE_DELAY_MS: u64 = 120;
+
+/// Normalize an `insert_mode` value to one of the five supported modes,
+/// defaulting to `"ctrl_v"`.
+///
+/// `"clipboard"` is accepted as an alias for `"ctrl_v"`: it was the value of
+/// the two-way toggle this setting replaced.
 pub fn normalize_insert_mode(value: &str) -> &'static str {
   match value.trim() {
+    "ctrl_shift_v" => "ctrl_shift_v",
+    "shift_insert" => "shift_insert",
     "keystrokes" => "keystrokes",
-    _ => "clipboard",
+    "none" => "none",
+    _ => "ctrl_v",
   }
 }
 
-/// How results are put back into the focused application: `"clipboard"` (set
-/// the clipboard, send Ctrl+V, then restore the previous contents - the
-/// default) or `"keystrokes"` (simulate key presses and never touch the
-/// clipboard).
+/// How results are put back into the focused application.
+///
+/// `"ctrl_v"` (the default), `"ctrl_shift_v"` and `"shift_insert"` all go
+/// through the clipboard and differ only in the combo they send - the latter
+/// two are what terminals and consoles answer to. `"keystrokes"` types the
+/// text and never opens the clipboard. `"none"` inserts nothing, which is only
+/// useful together with `clipboard_handling = "copy_to_clipboard"`.
 pub fn get_insert_mode() -> String {
   let v = load_settings_json();
   let raw = v.get("insert_mode").and_then(|x| x.as_str()).unwrap_or("");
   normalize_insert_mode(raw).to_string()
+}
+
+/// Normalize a `clipboard_handling` value, defaulting to `"dont_modify"`.
+pub fn normalize_clipboard_handling(value: &str) -> &'static str {
+  match value.trim() {
+    "copy_to_clipboard" => "copy_to_clipboard",
+    _ => "dont_modify",
+  }
+}
+
+/// What the clipboard looks like once an insertion has finished:
+/// `"dont_modify"` (the default) puts back whatever was there before, and
+/// `"copy_to_clipboard"` deliberately leaves the inserted text on it.
+pub fn get_clipboard_handling() -> String {
+  let v = load_settings_json();
+  let raw = v
+    .get("clipboard_handling")
+    .and_then(|x| x.as_str())
+    .unwrap_or("");
+  normalize_clipboard_handling(raw).to_string()
+}
+
+/// Clamp a paste delay to something a human would want to sit through.
+pub fn normalize_paste_delay_ms(value: u64) -> u64 {
+  value.min(MAX_PASTE_DELAY_MS)
+}
+
+/// Milliseconds to wait after sending the paste combo before restoring the
+/// clipboard. Too short and the target application reads the restored contents
+/// instead of the result, pasting the wrong text.
+pub fn get_paste_delay_ms() -> u64 {
+  let v = load_settings_json();
+  match v.get("paste_delay_ms").and_then(|x| x.as_u64()) {
+    Some(ms) => normalize_paste_delay_ms(ms),
+    None => DEFAULT_PASTE_DELAY_MS,
+  }
 }
 
 // Speech-To-Text engine selection: "openai" (default) or "local"
@@ -295,6 +349,14 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
     let normalized = normalize_insert_mode(mode);
     obj.insert("insert_mode".to_string(), serde_json::Value::String(normalized.to_string()));
   }
+  if let Some(mode) = map.get("clipboard_handling").and_then(|x| x.as_str()) {
+    let normalized = normalize_clipboard_handling(mode);
+    obj.insert("clipboard_handling".to_string(), serde_json::Value::String(normalized.to_string()));
+  }
+  if let Some(ms) = map.get("paste_delay_ms").and_then(|x| x.as_u64()) {
+    let clamped = normalize_paste_delay_ms(ms);
+    obj.insert("paste_delay_ms".to_string(), serde_json::Value::Number(serde_json::Number::from(clamped)));
+  }
   // Persist the floating busy indicator toggle
   if let Some(flag) = map.get("show_busy_indicator").and_then(|x| x.as_bool()) { obj.insert("show_busy_indicator".to_string(), serde_json::Value::Bool(flag)); }
   // Persist global system prompt
@@ -444,5 +506,50 @@ pub fn clear_conversations() -> Result<String, String> {
     Ok(path.to_string_lossy().to_string())
   } else {
     Err("Unsupported platform for config path".into())
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn insert_mode_accepts_every_supported_value() {
+    for mode in ["ctrl_v", "ctrl_shift_v", "shift_insert", "keystrokes", "none"] {
+      assert_eq!(normalize_insert_mode(mode), mode);
+    }
+  }
+
+  #[test]
+  fn insert_mode_tolerates_surrounding_whitespace() {
+    assert_eq!(normalize_insert_mode("  keystrokes \n"), "keystrokes");
+  }
+
+  #[test]
+  fn insert_mode_falls_back_to_ctrl_v() {
+    assert_eq!(normalize_insert_mode(""), "ctrl_v");
+    assert_eq!(normalize_insert_mode("nonsense"), "ctrl_v");
+    assert_eq!(normalize_insert_mode("Keystrokes"), "ctrl_v");
+  }
+
+  #[test]
+  fn insert_mode_maps_the_retired_clipboard_value_to_ctrl_v() {
+    assert_eq!(normalize_insert_mode("clipboard"), "ctrl_v");
+  }
+
+  #[test]
+  fn clipboard_handling_defaults_to_leaving_the_clipboard_alone() {
+    assert_eq!(normalize_clipboard_handling("copy_to_clipboard"), "copy_to_clipboard");
+    assert_eq!(normalize_clipboard_handling("dont_modify"), "dont_modify");
+    assert_eq!(normalize_clipboard_handling(""), "dont_modify");
+    assert_eq!(normalize_clipboard_handling("whatever"), "dont_modify");
+  }
+
+  #[test]
+  fn paste_delay_is_clamped_to_the_ceiling() {
+    assert_eq!(normalize_paste_delay_ms(0), 0);
+    assert_eq!(normalize_paste_delay_ms(120), 120);
+    assert_eq!(normalize_paste_delay_ms(MAX_PASTE_DELAY_MS), MAX_PASTE_DELAY_MS);
+    assert_eq!(normalize_paste_delay_ms(60_000), MAX_PASTE_DELAY_MS);
   }
 }
