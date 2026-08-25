@@ -59,7 +59,7 @@
         "label": "assistant-pill",
         "title": "Assistant call",
         "url": "/?window=assistant-pill",
-        "width": 320,
+        "width": 380,
         "height": 60,
         "resizable": false,
         "decorations": false,

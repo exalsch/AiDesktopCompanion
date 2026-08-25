@@ -75,6 +75,7 @@ function syncPill(state: 'hidden' | 'armed' | 'live') {
     state,
     micOpen: state === 'live' ? micEnabled.value : false,
     hotkey: appSettings.push_to_talk_hotkey || '',
+    ptt: session.micMode === 'ptt',
   }).catch(() => {})
 }
 
@@ -320,6 +321,10 @@ async function syncSession() {
 
 watch(() => session.supervisorMode, syncSession)
 
+// The pill shows its hold-to-talk button only in push-to-talk, so a mode change
+// mid-call has to reach it or the button lingers or stays missing.
+watch(() => session.micMode, () => { if (ui.connected) syncPill('live') })
+
 // Load Prompt section settings (temperature, etc.) for supervisor alignment
 const { settings: appSettings, loadSettings } = useSettings()
 
@@ -478,6 +483,8 @@ watch(() => props.autostart, (n, old) => {
 })
 
 let unlistenHangup: UnlistenFn | null = null
+let unlistenPttDown: UnlistenFn | null = null
+let unlistenPttUp: UnlistenFn | null = null
 
 onMounted(async () => {
   window.addEventListener(HOTKEY_EVENT_PTT_DOWN, onPttDown)
@@ -487,6 +494,14 @@ onMounted(async () => {
   try {
     unlistenHangup = await listen('assistant:hangup', () => { void deactivate() })
   } catch {}
+  // Hold-to-talk from the pill's button. It runs in its own window and cannot
+  // reach the session, so it asks; these route to the same handlers the global
+  // hotkey uses, and the pill is non-activating so holding it never takes focus
+  // from whatever the user is working in.
+  try {
+    unlistenPttDown = await listen('assistant:ptt-down', () => onPttDown())
+    unlistenPttUp = await listen('assistant:ptt-up', () => onPttUp())
+  } catch {}
 })
 
 onBeforeUnmount(() => {
@@ -494,6 +509,8 @@ onBeforeUnmount(() => {
   window.removeEventListener(HOTKEY_EVENT_PTT_UP, onPttUp)
   if (armTimer) { clearTimeout(armTimer); armTimer = 0 }
   try { unlistenHangup?.() } catch {}
+  try { unlistenPttDown?.() } catch {}
+  try { unlistenPttUp?.() } catch {}
   stopElapsed()
   try { realtime.disconnect() } catch {}
 })

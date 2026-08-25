@@ -21,9 +21,11 @@ type PillState = {
   started_ms: number
   mic_open: boolean
   hotkey: string
+  ptt: boolean
 }
 
-const state = ref<PillState>({ state: 'hidden', started_ms: 0, mic_open: false, hotkey: '' })
+const state = ref<PillState>({ state: 'hidden', started_ms: 0, mic_open: false, hotkey: '', ptt: false })
+const holding = ref(false)
 const nowMs = ref<number>(Date.now())
 
 let ticker: number | null = null
@@ -53,6 +55,32 @@ function apply(next: PillState) {
 function hangUp() {
   // The session lives in the main window; this only asks for it to end.
   void emit('assistant:hangup')
+}
+
+/**
+ * Hold-to-talk, for when the keyboard shortcut is not to hand.
+ *
+ * The pointer is captured so that releasing anywhere - having slid off the
+ * button, or off the window entirely - still ends the turn. A hold that never
+ * gets its release would leave the microphone open, which is the one failure
+ * push-to-talk exists to prevent.
+ *
+ * `preventDefault` on pointerdown stops the button taking focus. The window is
+ * already non-activating, and a call is meant to be used while working in
+ * another application.
+ */
+function pttDown(e: PointerEvent) {
+  if (holding.value) return
+  e.preventDefault()
+  holding.value = true
+  try { (e.currentTarget as HTMLElement)?.setPointerCapture?.(e.pointerId) } catch {}
+  void emit('assistant:ptt-down')
+}
+
+function pttUp() {
+  if (!holding.value) return
+  holding.value = false
+  void emit('assistant:ptt-up')
 }
 
 onMounted(async () => {
@@ -92,6 +120,17 @@ onBeforeUnmount(() => {
         <strong>{{ state.mic_open ? 'Listening' : 'On call' }}</strong>
         <span class="time">{{ elapsed }}</span>
       </span>
+      <button
+        v-if="state.ptt"
+        class="talk"
+        :class="{ holding }"
+        type="button"
+        title="Hold to talk"
+        @pointerdown="pttDown"
+        @pointerup="pttUp"
+        @pointercancel="pttUp"
+        @lostpointercapture="pttUp"
+      >{{ holding ? 'Release' : 'Hold' }}</button>
       <button class="hangup" type="button" title="End the call" @click="hangUp">End</button>
     </template>
   </div>
@@ -156,6 +195,26 @@ code {
 .dot.open {
   background: #4ade80;
   box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.2);
+}
+
+/* Green while held, matching the mic dot, so the state is readable from the
+   corner of the eye without reading the label. */
+.talk {
+  flex: 0 0 auto;
+  border: 1px solid rgba(120, 200, 150, 0.45);
+  background: rgba(60, 180, 110, 0.18);
+  color: #b6f0cd;
+  border-radius: 999px;
+  padding: 3px 12px;
+  font-size: 11.5px;
+  cursor: pointer;
+  touch-action: none;
+}
+.talk:hover { background: rgba(60, 180, 110, 0.3); }
+.talk.holding {
+  background: rgba(74, 222, 128, 0.55);
+  border-color: rgba(74, 222, 128, 0.8);
+  color: #06210f;
 }
 
 .hangup {

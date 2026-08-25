@@ -37,11 +37,15 @@ pub struct PillState {
   /// Configured push-to-talk shortcut, shown in the armed prompt so the user is
   /// told which key to press again rather than having to remember.
   pub hotkey: String,
+  /// Whether the session is in push-to-talk. The pill offers a hold-to-talk
+  /// button only when it would do something - in open-mic mode the microphone
+  /// is already live and the button would be dead.
+  pub ptt: bool,
 }
 
 impl Default for PillState {
   fn default() -> Self {
-    Self { state: "hidden".into(), started_ms: 0, mic_open: false, hotkey: String::new() }
+    Self { state: "hidden".into(), started_ms: 0, mic_open: false, hotkey: String::new(), ptt: false }
   }
 }
 
@@ -111,6 +115,7 @@ pub fn assistant_pill_set(
   state: String,
   mic_open: Option<bool>,
   hotkey: Option<String>,
+  ptt: Option<bool>,
 ) -> Result<(), String> {
   let wanted = match state.as_str() {
     "armed" => "armed",
@@ -132,6 +137,7 @@ pub fn assistant_pill_set(
       started_ms,
       mic_open: mic_open.unwrap_or(false),
       hotkey: hotkey.unwrap_or_default(),
+      ptt: ptt.unwrap_or(false),
     };
     cur.clone()
   };
