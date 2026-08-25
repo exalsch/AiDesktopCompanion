@@ -68,6 +68,53 @@ conversation history. Anything that can answer a string can be the brain of Alex
 call. That is the integration point, and everything below is really about the cheapest way
 to put Claude Code behind it.
 
+#### 1.2.1 Which tools the realtime model actually receives
+
+This gate is easy to get wrong and it decides whether an MCP server is visible to the voice
+at all. From `useAssistantRealtime.ts:563-566`:
+
+```js
+const supervisorNeeded = params.useSupervisor === true && currentSupervisorMode === 'needed'
+const includeTools     = params.enableTools === true && params.useSupervisor !== true
+let toolsToSend        = includeTools ? tools : []
+if (supervisorNeeded) toolsToSend = [SUPERVISOR_TOOL]
+```
+
+| "Enable MCP tools" | "Use supervisor agent" | `supervisor_mode` | Realtime model receives |
+|---|---|---|---|
+| off | off | - | **nothing** (this is the default state) |
+| **on** | **off** | - | **all MCP tools**, named `mcp__<server_id>__<tool>` |
+| any | on | `always` | nothing - it is only a voice; the supervisor answers every turn |
+| any | on | `needed` | **only** `consult_supervisor` |
+
+The consequence that matters: **MCP tools and the supervisor are mutually exclusive for the
+realtime model.** Turning the supervisor on does not give the voice model MCP tools plus an
+escalation path - it *replaces* the MCP tools with a single `consult_supervisor` tool. The
+MCP tools are still reachable, but one layer down, because the supervisor itself runs through
+`chat_complete_with_mcp`, which builds its tool list from every connected MCP client.
+
+So there are two distinct ways to reach a Claude Code shim, and they are not the same thing:
+
+- **Direct:** "Enable MCP tools" on, supervisor off. The realtime model calls
+  `mcp__Rob__ask_claude` itself. Fewer hops, lower latency, but the realtime model is the one
+  deciding when and with what arguments - and it is the weakest model in the chain.
+- **Via the supervisor:** supervisor on, mode `needed`. The realtime model can only call
+  `consult_supervisor`; GPT then decides whether to call `mcp__Rob__ask_claude`. One extra
+  hop and one extra model's latency, but a much better tool-caller, and it sees the last 20
+  turns of transcript.
+
+Two further gotchas, both of which will present as "the assistant says it has no such tool":
+
+- **Neither toggle is persisted.** `AssistantMode.vue:22-23` default both to `false`, and the
+  `assistant_realtime` save block writes 11 fields but not these two. They reset on every app
+  start. (Worth fixing; see §7.14.)
+- **Tools are fixed at `session.update` time.** Only `enableTools`, `useSupervisor` and
+  `supervisorMode` have watchers that call `syncSession`. Connecting an MCP server *during* a
+  live call does not re-push the tool list; the call has to be restarted, or a toggle flipped.
+
+The header badge **"Tools N"** in the Assistant Mode panel renders `statusRef.toolsCount` and
+is the correct diagnostic for all of the above.
+
 ### 1.3 What was missed: an in-process loopback HTTP server already exists
 
 `app/src-tauri/src/tts_streaming_server.rs` runs a **hyper 1.x HTTP/1 server bound to
@@ -197,8 +244,11 @@ Servers -> stdio, `command: node`, `args: [C:\Rob\...\claude-bridge.mjs]`. Nothi
 repository changes.
 
 And because `realtime_build_tools` flattens every connected MCP server's tools into the
-realtime session, **the tool immediately appears to the live voice call as well as to the
-Prompt panel.** One shim lights up both surfaces.
+realtime session, **the tool appears to the live voice call as well as to the Prompt panel**
+- one shim lights up both surfaces. But only under the conditions in §1.2.1: "Enable MCP
+tools" on, "Use supervisor agent" off, the server showing `connected`, and the call started
+after the server connected. With the default toggles the realtime model receives an empty
+tool list and will simply say it has no such tool.
 
 - **Effort here: zero.** All of it lands on the Rob side, roughly half a day.
 - **Risk: latency inside a synchronous tool call.** A `claude -p` that takes 40 s blocks the
@@ -210,11 +260,20 @@ Prompt panel.** One shim lights up both surfaces.
 - **Risk: transcription quality.** `DEFAULT_TRANSCRIPTION_MODEL = 'gpt-4o-transcribe'` feeds
   the tool arguments. Project names and file paths spoken aloud will arrive mangled.
 
-**A2 - same shim, used as the escalation path.** Set `supervisor_mode: 'needed'`, drop the
-built-in `consult_supervisor` in favour of `ask_claude` (or keep both), and write Assistant
-Mode `instructions` telling the model to route anything about Alex's files, mail, tasks or
-projects to Claude Code. The realtime model then handles only turn-taking and chit-chat.
-This *is* the "ongoing call with Claude Code", assembled from parts that already exist.
+**A2 - same shim, reached through the supervisor instead.** Note that `consult_supervisor`
+cannot be swapped for `ask_claude`: in `needed` mode `toolsToSend` is hardcoded to
+`[SUPERVISOR_TOOL]` (§1.2.1). The escalation path is therefore two hops, not one - the
+realtime model calls `consult_supervisor`, and GPT (running `chat_complete_with_mcp`, which
+sees every connected MCP server) decides whether to call `mcp__Rob__ask_claude`. Steer that
+decision from the **Prompt-section system prompt**, not from the Assistant Mode instructions,
+since it is GPT making the call.
+
+Both A1-direct and A2-via-supervisor produce "an ongoing call with Claude Code" out of parts
+that already exist. A2 costs one extra model round-trip but gets a far better tool-caller,
+and the supervisor already receives the last 20 turns of transcript. Try A1-direct first
+because it is one less moving part, and fall back to A2 if the realtime model calls the tool
+badly - which, given it is the weakest model in the chain and its arguments come from
+speech-to-text, is likely.
 
 ### B. Companion exposes an MCP server that Claude Code connects to
 
@@ -336,11 +395,11 @@ Notes that matter:
 
 Given §1.2, this is the shortest line between here and what Alex asked for.
 
-**F1 - configuration only, zero code.** Register the A1 shim as an MCP server, set
-`supervisor_mode: 'needed'`, and write Assistant Mode instructions that route anything real
-to `ask_claude`. The realtime model keeps the call alive and handles turn-taking; Claude Code
-answers; the realtime voice reads the answer back. **This is A1+A2 and it is the
-recommendation.**
+**F1 - configuration only, zero code.** Register the A1 shim as an MCP server and pick one of
+the two routings in §1.2.1: either "Enable MCP tools" on with the supervisor off, so the
+realtime model calls `mcp__Rob__ask_claude` directly, or the supervisor on in `needed` mode,
+so GPT calls it on the realtime model's behalf. Either way the realtime voice reads the
+answer back and the call keeps running. **This is A1+A2 and it is the recommendation.**
 
 **F2 - a settings-driven supervisor base URL.** Add `prompt_base_url` to settings, following
 the `*_from_settings_or_env` pattern that STT and TTS already use, and let
@@ -406,11 +465,16 @@ like inside a live voice call?* - in front of Alex before anyone writes Rust.
 
 1. Rob side: a stdio MCP server exposing exactly two tools - `ask_claude(question)`
    (routed to a named `claude --bg` session, returns text) and `claude_status()`.
-2. Companion: Settings -> MCP Servers -> add it as a stdio server. No code change.
-3. Assistant Mode: `supervisor_mode: 'needed'`; instructions telling the model to call
-   `ask_claude` for anything about Alex's files, mail, tasks or projects.
-4. Hold the push-to-talk key, say *"ask Claude what is on my calendar tomorrow"*, and hear
-   the answer in the realtime voice.
+2. Companion: Settings -> MCP Servers -> add it as a stdio server, and **connect it** (the
+   chip must read `connected`; the tool list is built from live clients only).
+3. Assistant Mode: tick **"Enable MCP tools"** and leave **"Use supervisor agent"** off.
+   Confirm the header badge reads **"Tools N"** with N greater than zero *before* testing -
+   both toggles default off and are not persisted, so this is step zero on every app start
+   (§1.2.1).
+4. Hold the push-to-talk key, say *"use ask_claude to tell me what is on my calendar
+   tomorrow"*, and hear the answer in the realtime voice. Refer to the tool by its function,
+   not by the server name: it is registered as `mcp__Rob__ask_claude`, and there is no tool
+   called "Rob".
 
 **Effort: about half a day, all of it on the Rob side.**
 
@@ -492,3 +556,10 @@ Flagged bluntly, because they will each cost an afternoon if discovered late.
 13. **Transcription quality feeds tool arguments.** Spoken project names, file paths and
     ticket ids will arrive mangled from `gpt-4o-transcribe`. Any tool taking an identifier
     needs fuzzy resolution on the Claude Code side.
+14. **"Enable MCP tools" and "Use supervisor agent" are not persisted.** Every other Assistant
+    Mode control is written to `assistant_realtime` on change; these two are not, so they
+    reset to `false` on every app start and the voice session silently comes up with no tools.
+    This is a small, self-contained fix (two fields in the save block at
+    `AssistantMode.vue:421-437` and two in the load block above it) and it should be done
+    before any of this is used in anger - otherwise the first symptom of every session is
+    "the assistant says it has no such tool".
