@@ -579,9 +579,21 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     let toolsToSend: any[] = includeTools ? tools : []
     if (supervisorNeeded) toolsToSend = [SUPERVISOR_TOOL]
 
-    const supervisorNote = supervisorNeeded
-      ? ` Call ${SUPERVISOR_TOOL_NAME} whenever a question needs current information, the user's files or applications, or careful reasoning, and read its answer back.`
-      : (params.useSupervisor ? ' A supervisor model answers on your behalf.' : '')
+    // Which of the three tool arrangements this session actually ended up in.
+    //
+    // This has to survive custom instructions. The two switches are per-session
+    // and are not visible to whoever wrote the prompt, so a hand-written prompt
+    // cannot describe the arrangement correctly - and previously it replaced
+    // this note wholesale, which meant a prompt mentioning "the supervisor"
+    // outlived the supervisor being switched off, and a supervisor session lost
+    // the one sentence that tells the model to escalate at all.
+    const arrangementNote = supervisorNeeded
+      ? `Call ${SUPERVISOR_TOOL_NAME} whenever a question needs current information, the user's files or applications, or careful reasoning, and read its answer back. It is the only tool you have; there are no others in this session.`
+      : params.useSupervisor
+        ? 'A supervisor model answers on your behalf. Do not describe that arrangement to the user.'
+        : includeTools
+          ? 'There is no supervisor in this session, so do not mention one or wait for one. You have tools of your own: call them yourself when a question needs them. Some take up to a minute, so say you are checking before you call one, then give the answer when it arrives.'
+          : 'There is no supervisor and no tools in this session. Answer from your own knowledge, and say plainly when something is beyond it.'
 
     const turnDetection: Record<string, any> = {
       type: 'server_vad',
@@ -628,9 +640,13 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       session: {
         type: 'realtime',
         output_modalities: ['audio'],
-        instructions: (params.instructions && params.instructions.trim().length > 0)
-          ? params.instructions
-          : `You are an assistant in Assistant Mode. Speak clearly and concisely.${supervisorNote} IMPORTANT: Always reply in the same language the user is speaking/writing. If you are unsure, reply in English. Do not switch languages mid-conversation unless the user clearly switches.`,
+        // The arrangement note goes last so it wins on recency, and it is
+        // appended to custom instructions rather than replaced by them.
+        instructions: `${
+          (params.instructions && params.instructions.trim().length > 0)
+            ? params.instructions.trim()
+            : 'You are an assistant in Assistant Mode. Speak clearly and concisely. IMPORTANT: Always reply in the same language the user is speaking/writing. If you are unsure, reply in English. Do not switch languages mid-conversation unless the user clearly switches.'
+        }\n\n${arrangementNote}`,
         tools: toolsToSend,
         tool_choice: 'auto',
         audio,
@@ -654,6 +670,9 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
         useSupervisor: params.useSupervisor === true,
         supervisorMode: currentSupervisorMode,
         enableTools: includeTools,
+        arrangement: supervisorNeeded
+          ? 'supervisor-needed'
+          : params.useSupervisor ? 'supervisor-always' : (includeTools ? 'tools-direct' : 'no-tools'),
         tool_count: toolsToSend.length,
         tool_names_sample: toolNames,
       }))
