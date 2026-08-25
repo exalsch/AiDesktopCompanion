@@ -150,6 +150,23 @@ async function copyTranscript() {
 }
 
 /**
+ * Copy the whole realtime event log.
+ *
+ * The log is where a rejected `session.update` shows up, and it is the only
+ * place the accepted tool list is visible - but it renders as a scrolling list
+ * of divs that is painful to select by hand, which made "paste me the log" a
+ * bigger ask than it should be.
+ */
+async function copyDebugLog() {
+  try {
+    await invoke('copy_text_to_clipboard', { text: debugLines.value.join('\n') })
+    props.notify?.(`Copied ${debugLines.value.length} log lines`, 'success')
+  } catch (e: any) {
+    props.notify?.(e?.message || 'Copy failed', 'error')
+  }
+}
+
+/**
  * Paste the transcript into whatever the user was last working in.
  *
  * The main window has focus while this button is being clicked, so the previous
@@ -740,6 +757,12 @@ onBeforeUnmount(() => {
     >
       <div v-for="(l, i) in debugLines" :key="i" class="log-line">{{ l }}</div>
       <div ref="debugLogBottomRef" style="height: 1px;"></div>
+    </div>
+
+    <div class="actions" v-if="ui.showDebug">
+      <button class="btn ghost" type="button" :disabled="!debugLines.length" @click="copyDebugLog">
+        Copy event log
+      </button>
     </div>
   </CollapsibleCard>
 </template>
