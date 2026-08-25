@@ -29,6 +29,11 @@ const MAX_IDLE_TIMEOUT_MS = 30000
 // Longest a single push-to-talk hold may keep the microphone open.
 const MAX_TALK_MS = 60000
 
+// Shortest hold that is treated as speech. `input_audio_buffer.commit` is
+// rejected when the buffer holds less than 100ms of audio, so a stray tap of
+// the key would otherwise raise an API error instead of being ignored.
+const MIN_TALK_MS = 200
+
 // Escalation to the supervisor, expressed as something the model can choose to
 // do. This replaces a keyword list that only recognised English - the model
 // knows when a question is beyond it regardless of the language it is asked in.
@@ -119,6 +124,9 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
   // which is the exact thing push-to-talk exists to prevent. Global shortcuts
   // can miss a release when focus changes mid-press, so the hold is bounded.
   let talkTimeout: any = 0
+  // When the current push-to-talk hold began, or 0 when no turn is open. Both
+  // the length check and the idempotence of `commitPttTurn` hang off this.
+  let talkStartedAt = 0
   // Whether this session's push-to-talk paused the user's music.
   let mediaHeld = false
   // Whether the SDP exchange has completed. Server-side errors before that
@@ -654,7 +662,18 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     }
 
     const audioInput: Record<string, any> = {
-      turn_detection: turnDetection,
+      // Push-to-talk already knows where the turn ends: the key coming up is
+      // the end of it. Leaving server VAD switched on made every release wait
+      // out silence_duration_ms before the model would answer - a disabled
+      // WebRTC track keeps transmitting silence, so the server sat listening
+      // for an end of speech it had already been given. That was dead air on
+      // every single turn, and at the configured 4200ms it dominated the
+      // conversation. `stopTalking` commits the buffer explicitly instead.
+      //
+      // null rather than omitted: session.update merges, so leaving the field
+      // out would preserve the previous value and switching back to open mic
+      // would never restore VAD.
+      turn_detection: micMode === 'ptt' ? null : turnDetection,
       // Always on. The transcript is what the debug log, the conversation
       // history and the supervisor all read; without it the session is a black
       // box even when it is working.
@@ -700,8 +719,9 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       const toolNames = toolsToSend.map((t: any) => t?.name || t?.function?.name || '').filter(Boolean).slice(0, 8)
       log('[session.update] ' + JSON.stringify({
         voice: audio.output?.voice ?? '(unchanged)',
-        silence_ms: turnDetection.silence_duration_ms,
-        idle_timeout_ms: turnDetection.idle_timeout_ms ?? null,
+        turn_detection: micMode === 'ptt' ? 'manual (push-to-talk)' : 'server_vad',
+        silence_ms: micMode === 'ptt' ? null : turnDetection.silence_duration_ms,
+        idle_timeout_ms: micMode === 'ptt' ? null : (turnDetection.idle_timeout_ms ?? null),
         noise_reduction: audioInput.noise_reduction ?? null,
         transcription: audioInput.transcription.model,
         reasoning_effort: (params.reasoningEffort && modelSupportsReasoning(params.model)) ? params.reasoningEffort : null,
@@ -799,9 +819,47 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     log(enabled ? '[mic] unmuted' : '[mic] muted')
   }
 
+  /**
+   * End a push-to-talk turn: commit what was captured and ask for an answer.
+   *
+   * This is what replaces server VAD in push-to-talk. It is idempotent - the
+   * hold cap and the key release both route through here, and whichever runs
+   * first clears the marker.
+   */
+  function commitPttTurn() {
+    if (!talkStartedAt) return
+    const heldMs = Date.now() - talkStartedAt
+    talkStartedAt = 0
+
+    if (heldMs < MIN_TALK_MS) {
+      log(`[mic] hold of ${heldMs}ms is too short to be speech, discarded`)
+      send({ type: 'input_audio_buffer.clear' })
+      return
+    }
+
+    send({ type: 'input_audio_buffer.commit' })
+    // In supervisor "always" mode the realtime model is deliberately held
+    // silent and `supervisorRespond` injects the answer once the transcript
+    // arrives, so asking for a response here would talk over it.
+    if (currentUseSupervisor && currentSupervisorMode === 'always') {
+      log(`[mic] committed ${heldMs}ms; the supervisor answers this turn`)
+      return
+    }
+    log(`[mic] committed ${heldMs}ms and asked for a response`)
+    requestResponse()
+  }
+
   /** Open the microphone for as long as the key or button is held. */
   function startTalking() {
     if (!connected || micMode !== 'ptt') return
+    // Barge-in. With server VAD off, `interrupt_response` no longer applies, so
+    // reaching for the key while the assistant is talking has to cut it off
+    // here or push-to-talk would be the one mode you cannot interrupt.
+    if (responseActive) {
+      send({ type: 'response.cancel' })
+      log('[mic] cancelled the response in progress')
+    }
+    talkStartedAt = Date.now()
     // Pause the user's music for the length of the hold. Fire and forget: a
     // media session that will not answer must not delay the microphone.
     invoke<boolean>('media_hold', { reason: 'assistant' })
@@ -811,6 +869,9 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     talkTimeout = setTimeout(() => {
       log(`[mic] hold exceeded ${Math.round(MAX_TALK_MS / 1000)}s, closing the microphone`)
       setMicEnabled(false)
+      // Hitting the cap still ends a turn. Without this the speech captured up
+      // to the cap was left uncommitted and simply discarded.
+      commitPttTurn()
     }, MAX_TALK_MS)
     if (!micEnabled.value) setMicEnabled(true)
   }
@@ -824,6 +885,7 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     }
     if (micMode !== 'ptt') return
     if (micEnabled.value) setMicEnabled(false)
+    commitPttTurn()
   }
 
   function attachAudioElement(el: HTMLAudioElement) {
