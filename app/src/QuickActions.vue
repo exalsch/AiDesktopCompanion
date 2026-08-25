@@ -756,19 +756,29 @@ async function stopSTTAndTranscribe(): Promise<void> {
       return
     }
     // Only paste non-empty transcription into the previously focused application.
-    // Put result in clipboard first as safety net, then try auto-paste.
-    // insert_text_into_focused_app does its own clipboard save/restore cycle,
-    // so the text survives either way.
+    // In clipboard mode the result goes on the clipboard first as a safety net:
+    // insert_text_into_focused_app does its own clipboard save/restore cycle, so
+    // the text survives either way. Keystroke mode deliberately skips that net -
+    // its whole point is to leave the clipboard alone - which means a failed
+    // insertion there loses the transcript.
     if (text && text.trim().length > 0) {
-      // Safety: always put text on clipboard first
-      try { await invoke('copy_text_to_clipboard', { text }) } catch {}
-      // Try auto-paste into the previously focused app
+      let insertMode = 'clipboard'
+      try {
+        const cfg = await invoke<any>('get_settings')
+        if (String(cfg?.insert_mode || '') === 'keystrokes') insertMode = 'keystrokes'
+      } catch {}
+      if (insertMode === 'clipboard') {
+        try { await invoke('copy_text_to_clipboard', { text }) } catch {}
+      }
+      // Try auto-insert into the previously focused app
       try {
         await invoke('refocus_previous_app')
         await new Promise((r) => setTimeout(r, 80))
         await invoke('insert_text_into_focused_app', { text, safe_mode: false })
-      } catch {
-        // Auto-paste failed — text is already on clipboard from above
+      } catch (err) {
+        // In clipboard mode the text is already on the clipboard from above; in
+        // keystroke mode nothing caught it, so at least say so.
+        if (insertMode === 'keystrokes') console.error('[stt] insert failed, transcript not recovered', err)
       }
     }
   } finally {

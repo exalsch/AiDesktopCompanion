@@ -187,8 +187,21 @@ pub fn insert_prompt_text(app: tauri::AppHandle, text: String) -> Result<(), Str
   Ok(())
 }
 
+/// Put `text` into the application that had focus before the popup appeared.
+///
+/// Two routes, chosen by the `insert_mode` setting:
+///
+/// - `"clipboard"` (default) - save the clipboard, set it to `text`, send
+///   Ctrl+V, then put the old contents back. Fast and exact for any length of
+///   text, but it briefly owns the clipboard and shows up in clipboard history.
+/// - `"keystrokes"` - type `text` as synthetic key presses and never open the
+///   clipboard. `safe_mode` has nothing to guard in this route, so it is
+///   ignored: there is no copy-restore cycle to skip.
 #[tauri::command]
 pub fn insert_text_into_focused_app(text: String, safe_mode: Option<bool>) -> Result<(), String> {
+  if crate::config::get_insert_mode() == "keystrokes" {
+    return crate::utils::type_text(&text);
+  }
   let safe = safe_mode.unwrap_or(false);
   let mut clipboard = Clipboard::new().map_err(|e| format!("clipboard init failed: {e}"))?;
   let previous_text = if !safe { clipboard.get_text().ok() } else { None };

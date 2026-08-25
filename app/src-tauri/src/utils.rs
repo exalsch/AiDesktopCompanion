@@ -130,3 +130,162 @@ fn send_chord(key: enigo::Key, shift: bool, label: &str) -> Result<(), String> {
     .map_err(|e| format!("ctrl release failed: {e}"));
   click.and(shift_release).and(ctrl_release)
 }
+
+/// One step of a keystroke-mode insertion: a run of literal text, or a
+/// structural key that has no Unicode keystroke of its own.
+///
+/// Synthetic Unicode input has no way to express a line break - sending U+000A
+/// as a character event is silently dropped by most applications, so a
+/// multi-line result would arrive as a single run-on line. Newlines and tabs
+/// therefore have to be lifted out of the text and sent as real key presses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypedSegment {
+  Text(String),
+  Newline,
+  Tab,
+}
+
+/// Split `text` into the segments `type_text` sends, folding `\r\n` and a lone
+/// `\r` into a single newline so Windows-style input does not press Return
+/// twice per line.
+pub fn split_typed_segments(text: &str) -> Vec<TypedSegment> {
+  let mut segments: Vec<TypedSegment> = Vec::new();
+  let mut buf = String::new();
+  let mut chars = text.chars().peekable();
+  while let Some(ch) = chars.next() {
+    match ch {
+      '\r' | '\n' => {
+        // Swallow the '\n' of a "\r\n" pair so it counts as one line break.
+        if ch == '\r' && chars.peek() == Some(&'\n') {
+          chars.next();
+        }
+        if !buf.is_empty() {
+          segments.push(TypedSegment::Text(std::mem::take(&mut buf)));
+        }
+        segments.push(TypedSegment::Newline);
+      }
+      '\t' => {
+        if !buf.is_empty() {
+          segments.push(TypedSegment::Text(std::mem::take(&mut buf)));
+        }
+        segments.push(TypedSegment::Tab);
+      }
+      _ => buf.push(ch),
+    }
+  }
+  if !buf.is_empty() {
+    segments.push(TypedSegment::Text(buf));
+  }
+  segments
+}
+
+/// Type `text` into whatever window currently has focus by simulating key
+/// presses, leaving the clipboard untouched.
+///
+/// The alternative to the clipboard/Ctrl+V insertion path: it costs the user
+/// nothing in clipboard contents or clipboard history, but every newline is a
+/// real Return press, which submits the message in chat-style inputs. That
+/// trade-off is why clipboard insertion stays the default.
+pub fn type_text(text: &str) -> Result<(), String> {
+  use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+  let segments = split_typed_segments(text);
+  if segments.is_empty() {
+    return Ok(());
+  }
+  let mut enigo = Enigo::new(&Settings::default())
+    .map_err(|e| format!("input simulation unavailable: {e}"))?;
+  for segment in segments {
+    match segment {
+      TypedSegment::Text(s) => enigo
+        .text(&s)
+        .map_err(|e| format!("typing text failed: {e}"))?,
+      TypedSegment::Newline => enigo
+        .key(Key::Return, Direction::Click)
+        .map_err(|e| format!("Return failed: {e}"))?,
+      TypedSegment::Tab => enigo
+        .key(Key::Tab, Direction::Click)
+        .map_err(|e| format!("Tab failed: {e}"))?,
+    }
+  }
+  Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{split_typed_segments, TypedSegment};
+
+  fn text(s: &str) -> TypedSegment {
+    TypedSegment::Text(s.to_string())
+  }
+
+  #[test]
+  fn plain_text_is_one_segment() {
+    assert_eq!(split_typed_segments("hello world"), vec![text("hello world")]);
+  }
+
+  #[test]
+  fn empty_text_produces_no_segments() {
+    assert!(split_typed_segments("").is_empty());
+  }
+
+  #[test]
+  fn newlines_become_return_presses() {
+    assert_eq!(
+      split_typed_segments("a\nb"),
+      vec![text("a"), TypedSegment::Newline, text("b")]
+    );
+  }
+
+  #[test]
+  fn crlf_counts_as_a_single_newline() {
+    assert_eq!(
+      split_typed_segments("a\r\nb"),
+      vec![text("a"), TypedSegment::Newline, text("b")]
+    );
+  }
+
+  #[test]
+  fn lone_carriage_return_counts_as_a_newline() {
+    assert_eq!(
+      split_typed_segments("a\rb"),
+      vec![text("a"), TypedSegment::Newline, text("b")]
+    );
+  }
+
+  #[test]
+  fn blank_lines_are_preserved() {
+    assert_eq!(
+      split_typed_segments("a\n\nb"),
+      vec![
+        text("a"),
+        TypedSegment::Newline,
+        TypedSegment::Newline,
+        text("b")
+      ]
+    );
+  }
+
+  #[test]
+  fn leading_and_trailing_newlines_are_preserved() {
+    assert_eq!(
+      split_typed_segments("\na\n"),
+      vec![TypedSegment::Newline, text("a"), TypedSegment::Newline]
+    );
+  }
+
+  #[test]
+  fn tabs_become_tab_presses() {
+    assert_eq!(
+      split_typed_segments("a\tb"),
+      vec![text("a"), TypedSegment::Tab, text("b")]
+    );
+  }
+
+  #[test]
+  fn non_ascii_text_survives_intact() {
+    assert_eq!(
+      split_typed_segments("naive - \u{65e5}\u{672c}\u{8a9e} \u{1f642}"),
+      vec![text("naive - \u{65e5}\u{672c}\u{8a9e} \u{1f642}")]
+    );
+  }
+}

@@ -124,6 +124,32 @@ onMounted(async () => {
   </CollapsibleCard>
 
   <CollapsibleCard
+    id="settings.general.insertion"
+    title="Text insertion"
+    desc="How results are put back into the application you were working in."
+  >
+    <div class="field">
+      <label class="field-label">Insert results using</label>
+      <select v-model="props.settings.insert_mode" class="input w-md">
+        <option value="clipboard">Clipboard + Ctrl + V (default)</option>
+        <option value="keystrokes">Simulated keystrokes (leaves the clipboard alone)</option>
+      </select>
+      <p class="field-hint">
+        Applies to every result that goes back into the focused app: quick prompts, the Quick Actions popup,
+        transcriptions and Assistant Mode.
+      </p>
+    </div>
+
+    <p class="field-hint">
+      <em>Clipboard</em> briefly replaces what you had copied, pastes, then puts it back - exact and instant at any
+      length, but it shows up in clipboard-history tools and cannot carry a copied image through untouched.
+      <em>Simulated keystrokes</em> never open the clipboard, at two costs: long results type visibly rather than
+      appearing at once, and each line break is a real <em>Enter</em> press, which <strong>sends the message</strong>
+      in Teams, Slack and most web chat boxes. Prefer it for editors, terminals and single-line fields.
+    </p>
+  </CollapsibleCard>
+
+  <CollapsibleCard
     id="settings.general.provider"
     title="AI Provider"
     desc="Credentials and the model used for chat and quick prompts."

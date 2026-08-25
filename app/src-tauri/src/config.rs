@@ -128,6 +128,25 @@ pub fn get_select_all_capture_mode() -> String {
   normalize_select_all_capture_mode(raw).to_string()
 }
 
+/// Normalize an `insert_mode` value to one of the two supported modes,
+/// defaulting to `"clipboard"`.
+pub fn normalize_insert_mode(value: &str) -> &'static str {
+  match value.trim() {
+    "keystrokes" => "keystrokes",
+    _ => "clipboard",
+  }
+}
+
+/// How results are put back into the focused application: `"clipboard"` (set
+/// the clipboard, send Ctrl+V, then restore the previous contents - the
+/// default) or `"keystrokes"` (simulate key presses and never touch the
+/// clipboard).
+pub fn get_insert_mode() -> String {
+  let v = load_settings_json();
+  let raw = v.get("insert_mode").and_then(|x| x.as_str()).unwrap_or("");
+  normalize_insert_mode(raw).to_string()
+}
+
 // Speech-To-Text engine selection: "openai" (default) or "local"
 pub fn get_stt_engine_from_settings_or_env() -> String {
   let v = load_settings_json();
@@ -270,6 +289,11 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   if let Some(mode) = map.get("select_all_capture_mode").and_then(|x| x.as_str()) {
     let normalized = normalize_select_all_capture_mode(mode);
     obj.insert("select_all_capture_mode".to_string(), serde_json::Value::String(normalized.to_string()));
+  }
+  // Persist how results are inserted into the focused app
+  if let Some(mode) = map.get("insert_mode").and_then(|x| x.as_str()) {
+    let normalized = normalize_insert_mode(mode);
+    obj.insert("insert_mode".to_string(), serde_json::Value::String(normalized.to_string()));
   }
   // Persist the floating busy indicator toggle
   if let Some(flag) = map.get("show_busy_indicator").and_then(|x| x.as_bool()) { obj.insert("show_busy_indicator".to_string(), serde_json::Value::Bool(flag)); }

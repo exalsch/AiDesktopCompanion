@@ -203,7 +203,8 @@ Release notes:
   - Speech-to-Text push‑to‑talk (hold S / mouse, release to transcribe)
   - Image capture overlay
 - MCP server connections (tool discovery + tool calls from chat)
-- Aggressive clipboard copy‑restore for reliable text insertion
+- Aggressive clipboard copy‑restore for reliable text insertion, or an opt‑in keystroke mode
+  (Settings → General → Text insertion) that types the result and leaves the clipboard untouched
 - Auto‑sizing popup and robust window focus management
 
 

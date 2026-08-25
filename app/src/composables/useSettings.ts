@@ -10,6 +10,12 @@ export type UIStyle = 'sidebar-dark' | 'sidebar-light'
 export const SELECT_ALL_CAPTURE_MODES = ['none', 'ctrl_a', 'ctrl_shift_home'] as const
 export type SelectAllCaptureMode = (typeof SELECT_ALL_CAPTURE_MODES)[number]
 
+/// How a result is put back into the focused application: through the
+/// clipboard (set it, send Ctrl+V, restore the old contents) or as simulated
+/// keystrokes that never touch the clipboard.
+export const INSERT_MODES = ['clipboard', 'keystrokes'] as const
+export type InsertMode = (typeof INSERT_MODES)[number]
+
 // Module-singleton state to ensure all components share the same settings instance
 const DEFAULT_SYSTEM_PROMPT = (
   'For every user prompt, follow these steps internally before responding:\n' +
@@ -43,6 +49,9 @@ const settings = reactive({
   pause_media_on_assistant: false as boolean,
   select_all_quick_prompt: 1 as number,
   select_all_capture_mode: 'ctrl_shift_home' as SelectAllCaptureMode,
+  // How results reach the focused app. Clipboard is the default because
+  // keystroke mode turns every newline into a real Return press.
+  insert_mode: 'clipboard' as InsertMode,
   // Floating status pill for background operations (quick prompts, TTS, STT)
   show_busy_indicator: true as boolean,
   mcp_servers: [] as Array<any>,
@@ -95,6 +104,10 @@ export function useSettings() {
       {
         const mode = (v as any).select_all_capture_mode
         settings.select_all_capture_mode = SELECT_ALL_CAPTURE_MODES.includes(mode) ? mode : 'ctrl_shift_home'
+      }
+      {
+        const mode = (v as any).insert_mode
+        settings.insert_mode = INSERT_MODES.includes(mode) ? mode : 'clipboard'
       }
       {
         const idx = Number((v as any).select_all_quick_prompt)
