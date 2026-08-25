@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useRealtimeUsage } from './useRealtimeUsage'
 
 // Where the SDP offer is exchanged for an answer. The beta endpoint this used
 // to post to, `POST /v1/realtime?model=...`, was removed with the rest of the
@@ -154,6 +155,14 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
   // each utterance in isolation, and the panel renders it so a session is
   // readable rather than something you had to be listening to.
   const history = ref<HistoryTurn[]>([])
+
+  // Token and cost accounting. The numbers arrive on every response.done and
+  // were previously thrown away, so the most expensive thing this app does was
+  // also the only thing that reported nothing about what it cost.
+  const usage = useRealtimeUsage()
+  // Logged once per session rather than per response: if the usage shape ever
+  // changes, one line says so instead of several hundred.
+  let warnedAboutUsageShape = false
 
   function log(msg: string) {
     try { opts.onLog?.(msg) } catch {}
@@ -442,6 +451,12 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
         send(queued)
       }
 
+      const counted = usage.addResponse(parsed?.response?.usage)
+      if (!counted && !warnedAboutUsageShape) {
+        warnedAboutUsageShape = true
+        log('[usage] response.done carried no recognisable usage block; totals will read low')
+      }
+
       const output = Array.isArray(parsed?.response?.output) ? parsed.response.output : []
       const calls = output.filter((o: any) => o?.type === 'function_call')
       if (calls.length) {
@@ -467,6 +482,10 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       pendingResponse = null
       toolRounds = 0
       connected = false
+      // Rates depend on the model, so the totals are told which one before the
+      // first response arrives.
+      usage.reset(params.model)
+      warnedAboutUsageShape = false
 
       const pc = new RTCPeerConnection({
         iceServers: [
@@ -934,5 +953,7 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
 
   // The transcript deliberately survives disconnect, so the last conversation
   // is still readable after the session ends; `connect` clears it.
-  return { connect, disconnect, attachAudioElement, updateSession, setMicEnabled, startTalking, stopTalking, micEnabled, status: statusRef, transcript: history }
+  // The totals deliberately survive disconnect, like the transcript: what the
+  // call cost is worth reading after it ends, which is when anyone looks.
+  return { connect, disconnect, attachAudioElement, updateSession, setMicEnabled, startTalking, stopTalking, micEnabled, status: statusRef, transcript: history, usage }
 }

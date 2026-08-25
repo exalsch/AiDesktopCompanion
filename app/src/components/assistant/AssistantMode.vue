@@ -39,6 +39,29 @@ const transcript = computed<Array<{ role: string, content: string }>>(
 
 const micEnabled = computed(() => (realtime as any).micEnabled?.value !== false)
 
+// Token totals for the session, and what they are worth. Kept after the call
+// ends: the cost is what people look at once it is over.
+const usage = computed(() => (realtime as any).usage?.totals?.value ?? null)
+const usageCost = computed<string | null>(() => {
+  const u: any = (realtime as any).usage
+  if (!u) return null
+  return u.formatUsd(u.estimatedUsd.value)
+})
+const usageTooltip = computed(() => {
+  const u = usage.value
+  if (!u) return ''
+  const rounded = (n: number) => n.toLocaleString()
+  return [
+    `Audio in ${rounded(u.audioIn)} (+${rounded(u.audioInCached)} cached)`,
+    `Audio out ${rounded(u.audioOut)}`,
+    `Text in ${rounded(u.textIn)} (+${rounded(u.textInCached)} cached)`,
+    `Text out ${rounded(u.textOut)}`,
+    `${u.responses} responses`,
+    '',
+    `Estimate only, from rates checked ${(realtime as any).usage?.ratesChecked}. Tokens are exact.`,
+  ].join('\n')
+})
+
 function toggleMic() {
   ;(realtime as any).setMicEnabled?.(!micEnabled.value)
 }
@@ -575,6 +598,11 @@ onBeforeUnmount(() => {
         <span v-if="ui.connected" class="badge" title="Session length. Realtime audio is billed per audio token, so a longer call costs more - though a muted microphone sends nothing and costs nothing.">
           {{ elapsedLabel }}
         </span>
+        <span
+          v-if="usage && usage.responses > 0"
+          class="badge"
+          :title="usageTooltip"
+        >~{{ usageCost ?? 'n/a' }}</span>
         <span class="spacer"></span>
         <span class="badge">Tools {{ (realtime as any)?.status?.value?.toolsCount ?? 0 }}</span>
         <span class="badge" v-if="ui.useSupervisor">
