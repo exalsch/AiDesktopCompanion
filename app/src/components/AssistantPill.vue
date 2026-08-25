@@ -17,7 +17,7 @@ import { emit, listen } from '@tauri-apps/api/event'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 
 type PillState = {
-  state: 'hidden' | 'armed' | 'live'
+  state: 'hidden' | 'armed' | 'calling' | 'live'
   started_ms: number
   mic_open: boolean
   hotkey: string
@@ -25,7 +25,17 @@ type PillState = {
 }
 
 const state = ref<PillState>({ state: 'hidden', started_ms: 0, mic_open: false, hotkey: '', ptt: false })
+/** Whether this window's own pointer is down on the button. */
 const holding = ref(false)
+
+/**
+ * Whether the microphone is open, however it was opened.
+ *
+ * The button is not the only way to talk - the global hotkey is the main one -
+ * so its appearance follows `mic_open` from the backend rather than this
+ * window's own pointer state. Holding the hotkey now lights the button too.
+ */
+const talking = computed(() => state.value.mic_open || holding.value)
 const nowMs = ref<number>(Date.now())
 
 let ticker: number | null = null
@@ -114,6 +124,15 @@ onBeforeUnmount(() => {
       </span>
     </template>
 
+    <template v-else-if="state.state === 'calling'">
+      <span class="ring" aria-hidden="true"></span>
+      <span class="text">
+        <strong>Calling</strong>
+        <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+      </span>
+      <button class="btn hangup" type="button" title="Cancel the call" @click="hangUp">Cancel</button>
+    </template>
+
     <template v-else-if="state.state === 'live'">
       <span class="dot" :class="{ open: state.mic_open }" aria-hidden="true"></span>
       <span class="text">
@@ -122,16 +141,16 @@ onBeforeUnmount(() => {
       </span>
       <button
         v-if="state.ptt"
-        class="talk"
-        :class="{ holding }"
+        class="btn talk"
+        :class="{ talking }"
         type="button"
-        title="Hold to talk"
+        :title="state.hotkey ? `Hold to talk (or hold ${state.hotkey})` : 'Hold to talk'"
         @pointerdown="pttDown"
         @pointerup="pttUp"
         @pointercancel="pttUp"
         @lostpointercapture="pttUp"
-      >{{ holding ? 'Release' : 'Hold' }}</button>
-      <button class="hangup" type="button" title="End the call" @click="hangUp">End</button>
+      >{{ talking ? 'Talking' : 'Talk' }}</button>
+      <button class="btn hangup" type="button" title="End the call" @click="hangUp">End</button>
     </template>
   </div>
 </template>
@@ -158,6 +177,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 .pill.armed { border-color: rgba(122, 162, 255, 0.5); }
+.pill.calling { border-color: rgba(122, 162, 255, 0.5); }
 .pill.live { border-color: rgba(90, 200, 130, 0.45); }
 
 .glyph { font-size: 14px; flex: 0 0 auto; }
@@ -197,35 +217,78 @@ code {
   box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.2);
 }
 
-/* Green while held, matching the mic dot, so the state is readable from the
-   corner of the eye without reading the label. */
-.talk {
+/* One button shape for the pill, so Talk and End read as a pair rather than as
+   two unrelated controls. Only the accent colour differs. */
+.btn {
   flex: 0 0 auto;
-  border: 1px solid rgba(120, 200, 150, 0.45);
-  background: rgba(60, 180, 110, 0.18);
-  color: #b6f0cd;
   border-radius: 999px;
   padding: 3px 12px;
   font-size: 11.5px;
+  line-height: 1.4;
   cursor: pointer;
-  touch-action: none;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: #e8eaf0;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
-.talk:hover { background: rgba(60, 180, 110, 0.3); }
-.talk.holding {
-  background: rgba(74, 222, 128, 0.55);
-  border-color: rgba(74, 222, 128, 0.8);
-  color: #06210f;
+.btn:hover { background: rgba(255, 255, 255, 0.14); }
+
+/* Neutral at rest so it sits with the rest of the pill, and only takes the
+   microphone's green while actually talking - the one moment it matters. */
+.talk { touch-action: none; }
+.talk.talking {
+  background: rgba(74, 222, 128, 0.22);
+  border-color: rgba(74, 222, 128, 0.55);
+  color: #a7f3c4;
 }
 
-.hangup {
-  flex: 0 0 auto;
-  border: 1px solid rgba(255, 120, 120, 0.45);
-  background: rgba(220, 60, 60, 0.22);
-  color: #ffb4b4;
-  border-radius: 999px;
-  padding: 3px 12px;
-  font-size: 11.5px;
-  cursor: pointer;
+.hangup { color: #f0b8b8; border-color: rgba(255, 255, 255, 0.16); }
+.hangup:hover {
+  background: rgba(220, 60, 60, 0.32);
+  border-color: rgba(255, 120, 120, 0.5);
+  color: #fff;
 }
-.hangup:hover { background: rgba(220, 60, 60, 0.38); color: #fff; }
+
+/* Calling: a ring that pulses outward, and three dots that cycle. Motion is the
+   point - it says "working on it" without the pill having to say so. */
+.ring {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #7aa2ff;
+  flex: 0 0 auto;
+}
+.ring::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 1px solid rgba(122, 162, 255, 0.7);
+  animation: ring-pulse 1.4s ease-out infinite;
+}
+@keyframes ring-pulse {
+  0% { transform: scale(0.6); opacity: 0.9; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+.dots { display: inline-flex; gap: 3px; align-items: center; }
+.dots i {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #9aa3b2;
+  animation: dot-fade 1.2s ease-in-out infinite;
+}
+.dots i:nth-child(2) { animation-delay: 0.15s; }
+.dots i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes dot-fade {
+  0%, 60%, 100% { opacity: 0.25; }
+  30% { opacity: 1; }
+}
+
+/* Motion is decoration here; the words already carry the state. */
+@media (prefers-reduced-motion: reduce) {
+  .ring::after, .dots i { animation: none; }
+}
 </style>

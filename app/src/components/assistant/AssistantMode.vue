@@ -3,6 +3,7 @@ import { computed, onMounted, onBeforeUnmount, reactive, ref, watch, nextTick } 
 import { invoke } from '@tauri-apps/api/core'
 import { useAssistantRealtime } from '../../composables/useAssistantRealtime'
 import { useSettings } from '../../composables/useSettings'
+import { useCallTones } from '../../composables/useCallTones'
 import CollapsibleCard from '../ui/CollapsibleCard.vue'
 import { listen } from '@tauri-apps/api/event'
 import type { UnlistenFn } from '@tauri-apps/api/event'
@@ -70,7 +71,7 @@ const armed = ref(false)
 let armTimer: any = 0
 
 /** Push the current call state to the floating pill. */
-function syncPill(state: 'hidden' | 'armed' | 'live') {
+function syncPill(state: 'hidden' | 'armed' | 'calling' | 'live') {
   void invoke('assistant_pill_set', {
     state,
     micOpen: state === 'live' ? micEnabled.value : false,
@@ -289,6 +290,10 @@ const session = reactive({
   // A live session bills per minute with an open microphone, so a forgotten
   // window closes itself rather than running until somebody notices.
   autoCloseMinutes: 2,
+  // Ringback while connecting and a beep when the call is up. On by default:
+  // the connect happens from a global hotkey with the window usually hidden, so
+  // sound is the only feedback that reaches the user.
+  callTones: true,
 })
 
 /**
@@ -328,6 +333,8 @@ watch(() => session.micMode, () => { if (ui.connected) syncPill('live') })
 // Load Prompt section settings (temperature, etc.) for supervisor alignment
 const { settings: appSettings, loadSettings } = useSettings()
 
+const tones = useCallTones()
+
 const realtime = useAssistantRealtime({
   getEphemeralToken: async () => {
     try {
@@ -341,9 +348,11 @@ const realtime = useAssistantRealtime({
       throw new Error('Could not mint a realtime token: ' + msg)
     }
   },
-  onConnected: () => { ui.connected = true; ui.connecting = false; ui.error = null; statusText.value = 'Connected'; startElapsed(); syncPill('live') },
-  onDisconnected: () => { ui.connected = false; ui.connecting = false; statusText.value = 'Idle'; stopElapsed(); syncPill('hidden') },
-  onError: (err: string) => { ui.error = err; props.notify?.(err, 'error'); ui.connecting = false; ui.connected = false; statusText.value = 'Error'; try { debugLines.value.push(`[error] ${err}`) } catch {} },
+  onConnected: () => { ui.connected = true; ui.connecting = false; ui.error = null; statusText.value = 'Connected'; startElapsed(); syncPill('live'); tones.stopRingback(); if (session.callTones) tones.readyBeep() },
+  onDisconnected: () => { ui.connected = false; ui.connecting = false; statusText.value = 'Idle'; stopElapsed(); syncPill('hidden'); tones.stopRingback() },
+  // Ringing on past a failed connect would be a phone that never stops, so the
+  // tone is stopped here as well as on the two success paths.
+  onError: (err: string) => { ui.error = err; props.notify?.(err, 'error'); ui.connecting = false; ui.connected = false; statusText.value = 'Error'; tones.stopRingback(); syncPill('hidden'); try { debugLines.value.push(`[error] ${err}`) } catch {} },
   // Surfaced but does not change connection state: the call is still up.
   // A rejected session.update leaves the audio call up but discards every
   // setting in it, tools included. Surfacing that only as a transient toast
@@ -377,6 +386,12 @@ async function activate() {
   } catch {}
   ui.connecting = true
   statusText.value = 'Connecting…'
+  // Before the await, not after: a token, an SDP exchange and ICE take a second
+  // or two, and the pill used to appear only once all of that had succeeded -
+  // so the wait, which is exactly when the user needs to be told something is
+  // happening, was the one moment nothing was shown.
+  syncPill('calling')
+  if (session.callTones) tones.startRingback()
   await realtime.connect({
     enableTools: ui.enableTools,
     useSupervisor: ui.useSupervisor,
@@ -425,6 +440,7 @@ onMounted(async () => {
       if (ar.reasoning_effort === null || REASONING_EFFORTS.includes(ar.reasoning_effort)) session.reasoningEffort = ar.reasoning_effort ?? null
       if (typeof ar.auto_close_minutes === 'number' && ar.auto_close_minutes >= 0) session.autoCloseMinutes = ar.auto_close_minutes
       if (ar.mic_mode === 'open' || ar.mic_mode === 'ptt') session.micMode = ar.mic_mode
+      if (typeof ar.call_tones === 'boolean') session.callTones = ar.call_tones
       if (typeof ar.show_debug === 'boolean') ui.showDebug = ar.show_debug
       // Without these the voice session came up with an empty tool list on every
       // app start, and the only symptom was the model saying it had no tools.
@@ -468,6 +484,7 @@ watch([session, () => ui.enableTools, () => ui.useSupervisor, () => ui.showDebug
           reasoning_effort: session.reasoningEffort,
           auto_close_minutes: session.autoCloseMinutes,
           mic_mode: session.micMode,
+          call_tones: session.callTones,
           show_debug: ui.showDebug,
         }
       }
@@ -511,6 +528,7 @@ onBeforeUnmount(() => {
   try { unlistenHangup?.() } catch {}
   try { unlistenPttDown?.() } catch {}
   try { unlistenPttUp?.() } catch {}
+  tones.dispose()
   stopElapsed()
   try { realtime.disconnect() } catch {}
 })
@@ -636,6 +654,19 @@ onBeforeUnmount(() => {
             Hold the button above. Set a hotkey in Settings &rsaquo; General to hold from any application.
           </template>
         </p>
+      </div>
+
+      <div class="field">
+        <label class="switch row">
+          <input type="checkbox" v-model="session.callTones" />
+          <span class="switch-text">
+            <span class="switch-label">Call tones</span>
+            <span class="switch-hint">
+              Rings while the call connects and beeps once when it is ready, so a call started
+              from the hotkey tells you where it is without the window being visible.
+            </span>
+          </span>
+        </label>
       </div>
 
       <div class="field">
