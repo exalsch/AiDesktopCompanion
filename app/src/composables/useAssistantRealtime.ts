@@ -106,6 +106,10 @@ export interface HistoryTurn { role: 'user' | 'assistant' | 'tool', content: str
 export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
   const pcRef = ref<RTCPeerConnection | null>(null)
   const micStreamRef = ref<MediaStream | null>(null)
+  // The sender carrying the microphone, and the track to put back on it. Muting
+  // detaches the track from the sender rather than merely disabling it.
+  let micSender: RTCRtpSender | null = null
+  let micTrack: MediaStreamTrack | null = null
   const statusRef = ref<{ toolsCount: number, supervisor: boolean, voice?: string, silenceMs?: number, idleMs?: number }>({ toolsCount: 0, supervisor: false })
   let remoteAudioEl: HTMLAudioElement | null = document.createElement('audio')
   let currentUseSupervisor = false
@@ -159,7 +163,8 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
    * Restart the inactivity countdown.
    *
    * Called whenever either side says something. An open realtime session holds
-   * a live microphone and bills by the minute, so walking away from the window
+   * a live microphone and bills for the audio flowing through it, so walking
+   * away from the window
    * should not keep costing money.
    */
   function resetAutoClose() {
@@ -501,7 +506,12 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
 
       // Capture microphone and add as sendonly track
       const mic = await navigator.mediaDevices.getUserMedia({ audio: true })
-      mic.getAudioTracks().forEach((t) => pc.addTrack(t, mic))
+      // Keep the sender: muting detaches the track from it, which is what
+      // actually stops audio leaving. See `setMicEnabled`.
+      mic.getAudioTracks().forEach((t) => {
+        const sender = pc.addTrack(t, mic)
+        if (!micSender) { micSender = sender; micTrack = t }
+      })
       // In push-to-talk the microphone must be closed the instant it exists,
       // not once the first session.update lands.
       const startMuted = params.micMode === 'ptt'
@@ -784,6 +794,8 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       micStreamRef.value?.getTracks().forEach(t => t.stop())
     } catch {}
     micStreamRef.value = null
+    micSender = null
+    micTrack = null
     try {
       const pc = pcRef.value
       if (pc) {
@@ -807,16 +819,34 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
   /**
    * Mute or unmute the microphone for the rest of the session.
    *
-   * Disables the track rather than stopping it: a stopped track cannot be
-   * restarted on the same connection, and re-negotiating just to unmute would
-   * drop the conversation.
+   * Two things happen, and both are needed.
+   *
+   * `track.enabled = false` takes effect immediately but does not stop the
+   * sender: WebRTC keeps transmitting, just silence. The Realtime API bills
+   * audio input at a token per 100ms, so a muted microphone left attached is
+   * paying for its own silence - which in push-to-talk is most of the call.
+   * Detaching the track from the sender with `replaceTrack(null)` is what
+   * actually stops audio leaving, and it needs no renegotiation, so the call
+   * survives it.
+   *
+   * The track itself is deliberately left running. Stopping it would clear the
+   * OS microphone indicator, but re-acquiring on the next key press costs a
+   * few hundred milliseconds of `getUserMedia` and would clip the start of
+   * whatever the user was already saying. Push-to-talk is judged on exactly
+   * that responsiveness, so the indicator stays lit for the session and the UI
+   * says so rather than pretending otherwise.
    */
   function setMicEnabled(enabled: boolean) {
     micEnabled.value = enabled
     try {
       micStreamRef.value?.getAudioTracks().forEach((t) => { t.enabled = enabled })
     } catch {}
-    log(enabled ? '[mic] unmuted' : '[mic] muted')
+    try {
+      // Best-effort: a failure here means silence is still being sent, which is
+      // a billing annoyance, never a reason to break the call.
+      void micSender?.replaceTrack(enabled ? micTrack : null)?.catch?.(() => {})
+    } catch {}
+    log(enabled ? '[mic] unmuted' : '[mic] muted, no longer transmitting')
   }
 
   /**

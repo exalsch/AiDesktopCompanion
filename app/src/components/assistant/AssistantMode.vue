@@ -112,8 +112,9 @@ function onPttDown() {
 
 function onPttUp() { if (ui.connected && session.micMode === 'ptt') stopTalking() }
 
-// Realtime audio is billed by the minute, so how long a session has been open
-// is the number worth putting on screen.
+// Realtime audio is billed per audio token - roughly one per 100ms heard and
+// one per 50ms spoken - so time on the call is the closest thing to a running
+// meter, and the number worth putting on screen.
 const elapsedSeconds = ref(0)
 let elapsedTimer: any = 0
 
@@ -287,8 +288,8 @@ const session = reactive({
   // 'open' is the previous behaviour and stays the default; push-to-talk is
   // opt-in because it needs a hotkey or a held button to be usable.
   micMode: 'open' as 'open' | 'ptt',
-  // A live session bills per minute with an open microphone, so a forgotten
-  // window closes itself rather than running until somebody notices.
+  // An open microphone keeps feeding billable audio to the model, so a
+  // forgotten window closes itself rather than running until somebody notices.
   autoCloseMinutes: 2,
   // Ringback while connecting and a beep when the call is up. On by default:
   // the connect happens from a global hotkey with the window usually hidden, so
@@ -571,7 +572,7 @@ onBeforeUnmount(() => {
         </span>
         <span v-if="ui.connected && !micEnabled" class="badge warn">Mic muted</span>
         <span v-else-if="ui.connected && session.micMode === 'ptt'" class="badge ok">Mic open</span>
-        <span v-if="ui.connected" class="badge" title="Session length - realtime audio is billed per minute">
+        <span v-if="ui.connected" class="badge" title="Session length. Realtime audio is billed per audio token, so a longer call costs more - though a muted microphone sends nothing and costs nothing.">
           {{ elapsedLabel }}
         </span>
         <span class="spacer"></span>
@@ -654,6 +655,10 @@ onBeforeUnmount(() => {
             Hold the button above. Set a hotkey in Settings &rsaquo; General to hold from any application.
           </template>
         </p>
+        <p class="field-hint">
+          The microphone is captured for the whole session either way, so Windows shows its
+          recording indicator until you hang up. Nothing is sent while muted or between holds.
+        </p>
       </div>
 
       <div class="field">
@@ -718,7 +723,7 @@ onBeforeUnmount(() => {
       <div class="field">
         <label class="field-label">Close session after</label>
         <input class="input" type="number" min="0" step="1" v-model.number="session.autoCloseMinutes" @change="syncSession" />
-        <p class="field-hint">Minutes of silence before the session disconnects. 0 never closes - but an open session holds a live microphone and bills per minute.</p>
+        <p class="field-hint">Minutes of silence before the session disconnects. 0 never closes - but an open microphone keeps sending billable audio for as long as the session lasts.</p>
       </div>
     </div>
 
