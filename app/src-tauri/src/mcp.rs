@@ -40,6 +40,35 @@ pub fn resolve_windows_program(prog: &str, cwd: Option<&str>) -> Option<String> 
   None
 }
 
+/// Publish a freshly-connected client, yielding to a concurrent connect rather
+/// than displacing it.
+///
+/// The "already connected" check at the top of `connect` releases the map lock
+/// before the child is spawned, so two calls for the same server can both get
+/// past it - which happens in practice, and was observed spawning two copies of
+/// a stdio server 23ms apart. Whoever arrived second used to overwrite the first
+/// entry, and because dropping a `RunningService` does not stop it (`disconnect`
+/// cancels explicitly for exactly that reason) the displaced client stayed alive
+/// as an orphan process nothing could reach or shut down. For a server that
+/// fronts stateful work - a session, a queue, a lane - two of them is worse than
+/// none.
+///
+/// Returns false when another client won the race and this one was cancelled.
+async fn publish_or_yield(
+  clients: &AsyncMutex<ClientMap>,
+  server_id: &str,
+  service: Arc<RunningService<RoleClient, ()>>,
+) -> bool {
+  let mut map = clients.lock().await;
+  if map.contains_key(server_id) {
+    drop(map);
+    service.cancellation_token().cancel();
+    return false;
+  }
+  map.insert(server_id.to_string(), service);
+  true
+}
+
 pub async fn connect(
   app: &tauri::AppHandle,
   clients: &AsyncMutex<ClientMap>,
@@ -69,9 +98,8 @@ pub async fn connect(
       msg
     })?;
     let service = Arc::new(service);
-    {
-      let mut map = clients.lock().await;
-      map.insert(server_id.clone(), service.clone());
+    if !publish_or_yield(clients, &server_id, service).await {
+      return Ok("already connected".into());
     }
     let _ = app.emit("mcp:connected", serde_json::json!({ "serverId": server_id }));
     return Ok("connected".into());
@@ -113,9 +141,8 @@ pub async fn connect(
     msg
   })?;
   let service = Arc::new(service);
-  {
-    let mut map = clients.lock().await;
-    map.insert(server_id.clone(), service.clone());
+  if !publish_or_yield(clients, &server_id, service).await {
+    return Ok("already connected".into());
   }
   let _ = app.emit("mcp:connected", serde_json::json!({ "serverId": server_id }));
   Ok("connected".into())
