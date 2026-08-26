@@ -86,6 +86,17 @@ pub fn run() {
       if let Some(win) = app.get_webview_window(busy::BUSY_WINDOW_LABEL) {
         busy::make_non_activating(&win);
       }
+      // Expire old calls once per launch, on a worker so a large sweep - or a
+      // first run that has to create and migrate the database - never delays
+      // the window appearing. A failure here is not worth blocking startup for:
+      // the sweep also runs after every call.
+      std::thread::spawn(|| {
+        match call_history::call_history_cleanup() {
+          Ok(0) => {}
+          Ok(n) => log::info!("call history: expired {n} calls"),
+          Err(e) => log::warn!("call history: retention sweep failed: {e}"),
+        }
+      });
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
@@ -168,7 +179,15 @@ pub fn run() {
       updater::check_for_update,
       updater::open_release_page,
       busy::busy_get_state,
-      busy::busy_hide
+      busy::busy_hide,
+      call_history::call_history_save,
+      call_history::call_history_list,
+      call_history::call_history_get,
+      call_history::call_history_set_saved,
+      call_history::call_history_delete,
+      call_history::call_history_clear,
+      call_history::call_history_stats,
+      call_history::call_history_cleanup
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
@@ -207,6 +226,7 @@ mod command_hook;
 mod busy;
 mod updater;
 mod assistant_pill;
+mod call_history;
 mod media;
 mod webview_health;
 

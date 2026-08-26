@@ -78,6 +78,13 @@ http-body-util = "0.1"
 bytes = "1"
 uuid = { version = "1.0", features = ["v4"] }
 tokio-stream = "0.1"
+# Call history. `bundled` compiles SQLite from source rather than looking for a
+# system library, which Windows does not ship - it costs a one-off build of the
+# amalgamation and removes the runtime dependency entirely.
+rusqlite = { version = "0.37", features = ["bundled"] }
+# Schema versioning via SQLite's `user_version` pragma, so migrations are a
+# static list in the source instead of files that have to ship alongside it.
+rusqlite_migration = "2.3"
 whisper-rs = { version = "0.16", optional = true }
 # Parakeet V3 only; the V2 backend and its git fork are gone.
 #
