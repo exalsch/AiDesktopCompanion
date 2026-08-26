@@ -259,9 +259,32 @@ export function useTtsPlayback(notify?: NotifyFn) {
     }
     a.onended = () => {
       speaking.value = false
-      if (streamSessionId) { invoke('tts_stop_stream_session', { session_id: streamSessionId }).catch(() => {}) }
-      streamSessionId = null
+      void releaseStreamSession()
       streamSessionUrl.value = ''
+    }
+  }
+
+  /**
+   * Release the streaming session held by the backend.
+   *
+   * Never throws: this is cleanup, and a failure must not break playback or
+   * leave the player stuck. It does log, which it did not before - the two
+   * callers each discarded the error, so the fact that this call had never once
+   * succeeded was invisible. The argument was `session_id`, and Tauri looks a
+   * command argument up in its camelCase form, so `sessionId` never arrived and
+   * every call failed on a missing required parameter.
+   *
+   * Clears the id before the call, so a second stop cannot race the first into
+   * trying to release the same session twice.
+   */
+  async function releaseStreamSession() {
+    const id = streamSessionId
+    streamSessionId = null
+    if (!id) return
+    try {
+      await invoke('tts_stop_stream_session', { sessionId: id })
+    } catch (e) {
+      console.warn('[tts] could not stop stream session', id, e)
     }
   }
 
@@ -274,8 +297,7 @@ export function useTtsPlayback(notify?: NotifyFn) {
       try { (a as any).onended = null } catch {}
       if (streamSessionUrl.value && a.src === streamSessionUrl.value) { a.src = '' }
     }
-    if (streamSessionId) { try { await invoke('tts_stop_stream_session', { session_id: streamSessionId }) } catch {} }
-    streamSessionId = null
+    await releaseStreamSession()
     streamSessionUrl.value = ''
     speaking.value = false
     busy.value = false
