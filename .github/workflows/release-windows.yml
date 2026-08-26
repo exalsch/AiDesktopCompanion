@@ -38,12 +38,15 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
+      # Off for the same reason as in `build-windows.yml` - see the note there.
+      # A failed run must not hand its build state to the next one; this job
+      # escaped that outage only by having a separate cache key, not by being
+      # configured any more safely.
       - name: Cache Rust (Cargo + target)
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             app/src-tauri
-          cache-on-failure: true
 
       - name: Install WiX Toolset (for MSI bundling)
         run: choco install wixtoolset -y --no-progress
