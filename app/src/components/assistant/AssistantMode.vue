@@ -4,7 +4,9 @@ import { invoke } from '@tauri-apps/api/core'
 import { useAssistantRealtime } from '../../composables/useAssistantRealtime'
 import { useSettings } from '../../composables/useSettings'
 import { useCallTones } from '../../composables/useCallTones'
+import { useCallHistory, titleFor, type CallDraft } from '../../composables/useCallHistory'
 import CollapsibleCard from '../ui/CollapsibleCard.vue'
+import CallHistory from './CallHistory.vue'
 import { listen } from '@tauri-apps/api/event'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { HOTKEY_EVENT_PTT_DOWN, HOTKEY_EVENT_PTT_UP } from '../../hotkeys'
@@ -318,6 +320,11 @@ const session = reactive({
   // the connect happens from a global hotkey with the window usually hidden, so
   // sound is the only feedback that reaches the user.
   callTones: true,
+  // Record finished calls to calls.db. On by default: what a voice call cost is
+  // the thing people most want to look back at, and it is unrecoverable once
+  // the session is gone.
+  historyEnabled: true,
+  historyRetention: 'days_30',
 })
 
 /**
@@ -359,6 +366,74 @@ const { settings: appSettings, loadSettings } = useSettings()
 
 const tones = useCallTones()
 
+// Used only to write finished calls. The list itself is owned by the
+// CallHistory card, which loads and pages its own copy.
+const recorder = useCallHistory()
+const historyRef = ref<any>(null)
+
+/**
+ * Epoch milliseconds the current call connected, and whether it has been
+ * written yet.
+ *
+ * `onDisconnected` is not fired once per call: an ICE state change to
+ * `disconnected` or `failed` raises it, and the explicit hang-up that follows
+ * raises it again. Without the guard a single call would be recorded twice.
+ */
+let callStartedMs = 0
+let callRecorded = true
+
+/**
+ * Write the call that has just ended.
+ *
+ * Deliberately does nothing for a session that connected but produced neither
+ * speech nor a billable response - a mis-press that was hung up immediately is
+ * not a call worth keeping, and a list full of empty ten-second rows makes the
+ * real ones hard to find.
+ */
+async function recordCall() {
+  if (callRecorded || !callStartedMs) return
+  callRecorded = true
+  const startedMs = callStartedMs
+  callStartedMs = 0
+
+  const turns = transcript.value.map((t) => ({ role: t.role, content: t.content }))
+  const spoken = turns.filter((t) => t.role !== 'tool')
+  const totals: any = usage.value
+  const responses = totals?.responses ?? 0
+  if (!spoken.length && responses === 0) return
+
+  const draft: CallDraft = {
+    started_at: Math.floor(startedMs / 1000),
+    duration_ms: Math.max(0, Date.now() - startedMs),
+    model: session.model,
+    voice: session.voice,
+    title: titleFor(turns),
+    transcript: JSON.stringify(turns),
+    turns: spoken.length,
+    responses,
+    audio_in: totals?.audioIn ?? 0,
+    audio_in_cached: totals?.audioInCached ?? 0,
+    audio_out: totals?.audioOut ?? 0,
+    text_in: totals?.textIn ?? 0,
+    text_in_cached: totals?.textInCached ?? 0,
+    text_out: totals?.textOut ?? 0,
+    // null, not zero, when the model has no known rates: "we do not know" and
+    // "it was free" must not read the same in the history.
+    cost_usd: (realtime as any).usage?.estimatedUsd?.value ?? null,
+    tools_enabled: ui.enableTools,
+    supervisor: ui.useSupervisor ? session.supervisorMode : null,
+  }
+
+  const id = await recorder.save(draft)
+  if (recorder.error.value) {
+    props.notify?.(recorder.error.value, 'error')
+    recorder.error.value = null
+    return
+  }
+  // null means recording is switched off, which is not a failure.
+  if (id !== null) void historyRef.value?.reload?.()
+}
+
 const realtime = useAssistantRealtime({
   getEphemeralToken: async () => {
     try {
@@ -372,8 +447,10 @@ const realtime = useAssistantRealtime({
       throw new Error('Could not mint a realtime token: ' + msg)
     }
   },
-  onConnected: () => { ui.connected = true; ui.connecting = false; ui.error = null; statusText.value = 'Connected'; startElapsed(); syncPill('live'); tones.stopRingback(); if (session.callTones) tones.readyBeep() },
-  onDisconnected: () => { ui.connected = false; ui.connecting = false; statusText.value = 'Idle'; stopElapsed(); syncPill('hidden'); tones.stopRingback() },
+  // The clock the history records starts here rather than at `activate`, so a
+  // slow token mint or ICE negotiation is not billed to the call's duration.
+  onConnected: () => { ui.connected = true; ui.connecting = false; ui.error = null; statusText.value = 'Connected'; startElapsed(); syncPill('live'); tones.stopRingback(); if (session.callTones) tones.readyBeep(); callStartedMs = Date.now(); callRecorded = false },
+  onDisconnected: () => { ui.connected = false; ui.connecting = false; statusText.value = 'Idle'; stopElapsed(); syncPill('hidden'); tones.stopRingback(); void recordCall() },
   // Ringing on past a failed connect would be a phone that never stops, so the
   // tone is stopped here as well as on the two success paths.
   onError: (err: string) => { ui.error = err; props.notify?.(err, 'error'); ui.connecting = false; ui.connected = false; statusText.value = 'Error'; tones.stopRingback(); syncPill('hidden'); try { debugLines.value.push(`[error] ${err}`) } catch {} },
@@ -465,6 +542,12 @@ onMounted(async () => {
       if (typeof ar.auto_close_minutes === 'number' && ar.auto_close_minutes >= 0) session.autoCloseMinutes = ar.auto_close_minutes
       if (ar.mic_mode === 'open' || ar.mic_mode === 'ptt') session.micMode = ar.mic_mode
       if (typeof ar.call_tones === 'boolean') session.callTones = ar.call_tones
+      if (typeof ar.history_enabled === 'boolean') session.historyEnabled = ar.history_enabled
+      // Kept in step with `normalize_retention` in call_history.rs; anything
+      // else falls back to the same default Rust would pick.
+      if (['keep_all', 'days_7', 'days_30', 'months_3', 'last_50'].includes(ar.history_retention)) {
+        session.historyRetention = ar.history_retention
+      }
       if (typeof ar.show_debug === 'boolean') ui.showDebug = ar.show_debug
       // Without these the voice session came up with an empty tool list on every
       // app start, and the only symptom was the model saying it had no tools.
@@ -509,6 +592,11 @@ watch([session, () => ui.enableTools, () => ui.useSupervisor, () => ui.showDebug
           auto_close_minutes: session.autoCloseMinutes,
           mic_mode: session.micMode,
           call_tones: session.callTones,
+          // Read back in Rust by call_history.rs, which is why they live in
+          // this blob rather than in a key of their own: `assistant_realtime`
+          // is persisted wholesale and needs no allowlist entry.
+          history_enabled: session.historyEnabled,
+          history_retention: session.historyRetention,
           show_debug: ui.showDebug,
         }
       }
@@ -810,6 +898,13 @@ onBeforeUnmount(() => {
       </button>
     </div>
   </CollapsibleCard>
+
+  <CallHistory
+    ref="historyRef"
+    :notify="props.notify"
+    v-model:recording="session.historyEnabled"
+    v-model:retention="session.historyRetention"
+  />
 
   <CollapsibleCard
     id="assistant.debug"
