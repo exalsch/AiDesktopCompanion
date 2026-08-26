@@ -27,12 +27,24 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
+      # `cache-on-failure` is deliberately off. With it on, a run that failed
+      # still saved its `app/src-tauri/target`, so one broken build state was
+      # handed to every run after it and the job could never heal itself.
+      #
+      # That is not hypothetical: this workflow failed on every merge from
+      # 4df7261 (21 Aug, the ort rc.13 -> rc.10 downgrade) until 26 Aug, always
+      # in the WiX `light.exe` step. The same commit went green the moment the
+      # cache was deleted, with no code change. `release-windows.yml` kept
+      # working throughout only because rust-cache puts the job id in its key,
+      # so it had a separate lineage that never took the bad state.
+      #
+      # Off, a failed run simply saves nothing and the next one restores the
+      # last cache that came from a build that actually worked.
       - name: Cache Rust (Cargo + target)
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             app/src-tauri
-          cache-on-failure: true
 
       - name: Install WiX Toolset (for MSI bundling)
         run: choco install wixtoolset -y --no-progress
@@ -55,9 +67,14 @@ jobs:
       #     [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
       #     echo "CERT_PATH=$certPath" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+      # `npm ci`, matching `release-windows.yml`. `npm install` is free to
+      # resolve something the lockfile does not name, so what this job built was
+      # not necessarily what the release job would build. The two jobs quietly
+      # differing is what made the failure above so confusing: the same command
+      # was green in one and red in the other.
       - name: Install frontend dependencies
         working-directory: app
-        run: npm install
+        run: npm ci
 
       - name: Build Tauri app (Windows release)
         working-directory: app
