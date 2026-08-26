@@ -10,6 +10,20 @@ export type UIStyle = 'sidebar-dark' | 'sidebar-light'
 export const SELECT_ALL_CAPTURE_MODES = ['none', 'ctrl_a', 'ctrl_shift_home'] as const
 export type SelectAllCaptureMode = (typeof SELECT_ALL_CAPTURE_MODES)[number]
 
+/// How a result is put back into the focused application. The first three go
+/// through the clipboard and differ only in the combo they send; `keystrokes`
+/// types the text and never touches the clipboard; `none` inserts nothing.
+export const INSERT_MODES = ['ctrl_v', 'ctrl_shift_v', 'shift_insert', 'keystrokes', 'none'] as const
+export type InsertMode = (typeof INSERT_MODES)[number]
+
+/// What the clipboard holds once an insertion has finished: whatever was there
+/// before, or the text that was just inserted.
+export const CLIPBOARD_HANDLINGS = ['dont_modify', 'copy_to_clipboard'] as const
+export type ClipboardHandling = (typeof CLIPBOARD_HANDLINGS)[number]
+
+/// Ceiling for `paste_delay_ms`, matching MAX_PASTE_DELAY_MS in config.rs.
+export const MAX_PASTE_DELAY_MS = 2000
+
 // Module-singleton state to ensure all components share the same settings instance
 const DEFAULT_SYSTEM_PROMPT = (
   'For every user prompt, follow these steps internally before responding:\n' +
@@ -43,6 +57,11 @@ const settings = reactive({
   pause_media_on_assistant: false as boolean,
   select_all_quick_prompt: 1 as number,
   select_all_capture_mode: 'ctrl_shift_home' as SelectAllCaptureMode,
+  // How results reach the focused app. Ctrl+V is the default because keystroke
+  // mode turns every newline into a real Return press.
+  insert_mode: 'ctrl_v' as InsertMode,
+  clipboard_handling: 'dont_modify' as ClipboardHandling,
+  paste_delay_ms: 120 as number,
   // Floating status pill for background operations (quick prompts, TTS, STT)
   show_busy_indicator: true as boolean,
   mcp_servers: [] as Array<any>,
@@ -95,6 +114,21 @@ export function useSettings() {
       {
         const mode = (v as any).select_all_capture_mode
         settings.select_all_capture_mode = SELECT_ALL_CAPTURE_MODES.includes(mode) ? mode : 'ctrl_shift_home'
+      }
+      {
+        // "clipboard" was the value of the two-way toggle this setting replaced.
+        const mode = (v as any).insert_mode === 'clipboard' ? 'ctrl_v' : (v as any).insert_mode
+        settings.insert_mode = INSERT_MODES.includes(mode) ? mode : 'ctrl_v'
+      }
+      {
+        const mode = (v as any).clipboard_handling
+        settings.clipboard_handling = CLIPBOARD_HANDLINGS.includes(mode) ? mode : 'dont_modify'
+      }
+      {
+        const ms = Number((v as any).paste_delay_ms)
+        settings.paste_delay_ms = Number.isFinite(ms)
+          ? Math.min(MAX_PASTE_DELAY_MS, Math.max(0, Math.trunc(ms)))
+          : 120
       }
       {
         const idx = Number((v as any).select_all_quick_prompt)

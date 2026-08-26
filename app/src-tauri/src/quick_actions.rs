@@ -187,17 +187,59 @@ pub fn insert_prompt_text(app: tauri::AppHandle, text: String) -> Result<(), Str
   Ok(())
 }
 
+/// Put `text` into the application that had focus before the popup appeared.
+///
+/// The route is the `insert_mode` setting, and what the clipboard looks like
+/// afterwards is the separate `clipboard_handling` setting:
+///
+/// - `"ctrl_v"` (default), `"ctrl_shift_v"`, `"shift_insert"` - set the
+///   clipboard to `text` and send that combo. Exact and instant at any length.
+///   The two non-default combos exist for terminals and consoles, where
+///   Ctrl+V is a control character or bound to something else.
+/// - `"keystrokes"` - type `text` as synthetic key presses. The only route
+///   that never opens the clipboard, so `safe_mode` has no copy-restore cycle
+///   to skip and is ignored.
+/// - `"none"` - insert nothing. Only useful with `"copy_to_clipboard"`, where
+///   together they mean "just put the result on my clipboard".
 #[tauri::command]
 pub fn insert_text_into_focused_app(text: String, safe_mode: Option<bool>) -> Result<(), String> {
+  let mode = crate::config::get_insert_mode();
+  // When the user wants the result left on the clipboard, the clipboard routes
+  // get there by simply not restoring; the other two have to put it there.
+  let keep_result = crate::config::get_clipboard_handling() == "copy_to_clipboard";
+
+  if mode == "keystrokes" {
+    crate::utils::type_text(&text)?;
+    if keep_result {
+      return copy_text_to_clipboard(text);
+    }
+    return Ok(());
+  }
+
+  if mode == "none" {
+    if keep_result {
+      return copy_text_to_clipboard(text);
+    }
+    return Ok(());
+  }
+
   let safe = safe_mode.unwrap_or(false);
   let mut clipboard = Clipboard::new().map_err(|e| format!("clipboard init failed: {e}"))?;
-  let previous_text = if !safe { clipboard.get_text().ok() } else { None };
+  // Nothing to put back if the caller opted out of the copy-restore cycle, or
+  // if the user asked for the result to stay on the clipboard.
+  let previous_text = if safe || keep_result { None } else { clipboard.get_text().ok() };
   let _ = clipboard.set_text(text);
-  {
-    crate::utils::send_ctrl_key('v')?;
+  match mode.as_str() {
+    "ctrl_shift_v" => crate::utils::send_ctrl_shift_key('v')?,
+    "shift_insert" => crate::utils::send_shift_insert()?,
+    _ => crate::utils::send_ctrl_key('v')?,
   }
-  thread::sleep(Duration::from_millis(120));
-  if !safe { if let Some(prev) = previous_text { let _ = clipboard.set_text(prev); } }
+  // Give the target application time to actually read the clipboard. Restore
+  // too early and it pastes the previous contents instead of the result.
+  thread::sleep(Duration::from_millis(crate::config::get_paste_delay_ms()));
+  if let Some(prev) = previous_text {
+    let _ = clipboard.set_text(prev);
+  }
   Ok(())
 }
 

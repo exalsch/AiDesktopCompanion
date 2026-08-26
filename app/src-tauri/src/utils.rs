@@ -85,7 +85,24 @@ pub fn play_wav_blocking_windows(_app: &tauri::AppHandle, _wav_path: &str) -> Re
 /// ignored: if input simulation is unavailable the calling flow would silently
 /// read a stale clipboard and act on the wrong text.
 pub fn send_ctrl_key(ch: char) -> Result<(), String> {
-  send_chord(enigo::Key::Unicode(ch), false, &format!("Ctrl+{ch}"))
+  send_chord(enigo::Key::Unicode(ch), true, false, &format!("Ctrl+{ch}"))
+}
+
+/// Synthesize `Ctrl`+`Shift`+`ch`.
+///
+/// The paste combo for terminals and consoles, where plain Ctrl+V is either a
+/// control character or bound to something else entirely.
+pub fn send_ctrl_shift_key(ch: char) -> Result<(), String> {
+  send_chord(enigo::Key::Unicode(ch), true, true, &format!("Ctrl+Shift+{ch}"))
+}
+
+/// Synthesize `Shift`+`Insert`.
+///
+/// The X11-era paste combo, still honoured by Windows consoles and most
+/// terminal emulators, and the one application that ignores both other combos
+/// usually answers to this.
+pub fn send_shift_insert() -> Result<(), String> {
+  send_chord(enigo::Key::Insert, false, true, "Shift+Insert")
 }
 
 /// Send Ctrl+Shift+Home, extending the selection from the caret back to the
@@ -95,23 +112,28 @@ pub fn send_ctrl_key(ch: char) -> Result<(), String> {
 /// box or comment field it grabs exactly the text the user just typed, without
 /// swallowing the conversation history that Ctrl+A would also select.
 pub fn send_ctrl_shift_home() -> Result<(), String> {
-  send_chord(enigo::Key::Home, true, "Ctrl+Shift+Home")
+  send_chord(enigo::Key::Home, true, true, "Ctrl+Shift+Home")
 }
 
-/// Click `key` while Control - and optionally Shift - are held.
+/// Click `key` while Control and/or Shift are held.
 ///
-/// The modifiers are always released, even when the key itself fails, so a
-/// failed simulation never leaves the user with a stuck Ctrl or Shift.
-fn send_chord(key: enigo::Key, shift: bool, label: &str) -> Result<(), String> {
+/// Every modifier that was pressed is released, even when the key itself
+/// fails, so a failed simulation never leaves the user with a stuck Ctrl or
+/// Shift.
+fn send_chord(key: enigo::Key, ctrl: bool, shift: bool, label: &str) -> Result<(), String> {
   use enigo::{Direction, Enigo, Key, Keyboard, Settings};
   let mut enigo = Enigo::new(&Settings::default())
     .map_err(|e| format!("input simulation unavailable: {e}"))?;
-  enigo
-    .key(Key::Control, Direction::Press)
-    .map_err(|e| format!("ctrl press failed: {e}"))?;
+  if ctrl {
+    enigo
+      .key(Key::Control, Direction::Press)
+      .map_err(|e| format!("ctrl press failed: {e}"))?;
+  }
   if shift {
     if let Err(e) = enigo.key(Key::Shift, Direction::Press) {
-      let _ = enigo.key(Key::Control, Direction::Release);
+      if ctrl {
+        let _ = enigo.key(Key::Control, Direction::Release);
+      }
       return Err(format!("shift press failed: {e}"));
     }
   }
@@ -125,8 +147,171 @@ fn send_chord(key: enigo::Key, shift: bool, label: &str) -> Result<(), String> {
   } else {
     Ok(())
   };
-  let ctrl_release = enigo
-    .key(Key::Control, Direction::Release)
-    .map_err(|e| format!("ctrl release failed: {e}"));
+  let ctrl_release = if ctrl {
+    enigo
+      .key(Key::Control, Direction::Release)
+      .map_err(|e| format!("ctrl release failed: {e}"))
+  } else {
+    Ok(())
+  };
   click.and(shift_release).and(ctrl_release)
+}
+
+/// One step of a keystroke-mode insertion: a run of literal text, or a
+/// structural key that has no Unicode keystroke of its own.
+///
+/// Synthetic Unicode input has no way to express a line break - sending U+000A
+/// as a character event is silently dropped by most applications, so a
+/// multi-line result would arrive as a single run-on line. Newlines and tabs
+/// therefore have to be lifted out of the text and sent as real key presses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypedSegment {
+  Text(String),
+  Newline,
+  Tab,
+}
+
+/// Split `text` into the segments `type_text` sends, folding `\r\n` and a lone
+/// `\r` into a single newline so Windows-style input does not press Return
+/// twice per line.
+pub fn split_typed_segments(text: &str) -> Vec<TypedSegment> {
+  let mut segments: Vec<TypedSegment> = Vec::new();
+  let mut buf = String::new();
+  let mut chars = text.chars().peekable();
+  while let Some(ch) = chars.next() {
+    match ch {
+      '\r' | '\n' => {
+        // Swallow the '\n' of a "\r\n" pair so it counts as one line break.
+        if ch == '\r' && chars.peek() == Some(&'\n') {
+          chars.next();
+        }
+        if !buf.is_empty() {
+          segments.push(TypedSegment::Text(std::mem::take(&mut buf)));
+        }
+        segments.push(TypedSegment::Newline);
+      }
+      '\t' => {
+        if !buf.is_empty() {
+          segments.push(TypedSegment::Text(std::mem::take(&mut buf)));
+        }
+        segments.push(TypedSegment::Tab);
+      }
+      _ => buf.push(ch),
+    }
+  }
+  if !buf.is_empty() {
+    segments.push(TypedSegment::Text(buf));
+  }
+  segments
+}
+
+/// Type `text` into whatever window currently has focus by simulating key
+/// presses, leaving the clipboard untouched.
+///
+/// The alternative to the clipboard/Ctrl+V insertion path: it costs the user
+/// nothing in clipboard contents or clipboard history, but every newline is a
+/// real Return press, which submits the message in chat-style inputs. That
+/// trade-off is why clipboard insertion stays the default.
+pub fn type_text(text: &str) -> Result<(), String> {
+  use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+  let segments = split_typed_segments(text);
+  if segments.is_empty() {
+    return Ok(());
+  }
+  let mut enigo = Enigo::new(&Settings::default())
+    .map_err(|e| format!("input simulation unavailable: {e}"))?;
+  for segment in segments {
+    match segment {
+      TypedSegment::Text(s) => enigo
+        .text(&s)
+        .map_err(|e| format!("typing text failed: {e}"))?,
+      TypedSegment::Newline => enigo
+        .key(Key::Return, Direction::Click)
+        .map_err(|e| format!("Return failed: {e}"))?,
+      TypedSegment::Tab => enigo
+        .key(Key::Tab, Direction::Click)
+        .map_err(|e| format!("Tab failed: {e}"))?,
+    }
+  }
+  Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{split_typed_segments, TypedSegment};
+
+  fn text(s: &str) -> TypedSegment {
+    TypedSegment::Text(s.to_string())
+  }
+
+  #[test]
+  fn plain_text_is_one_segment() {
+    assert_eq!(split_typed_segments("hello world"), vec![text("hello world")]);
+  }
+
+  #[test]
+  fn empty_text_produces_no_segments() {
+    assert!(split_typed_segments("").is_empty());
+  }
+
+  #[test]
+  fn newlines_become_return_presses() {
+    assert_eq!(
+      split_typed_segments("a\nb"),
+      vec![text("a"), TypedSegment::Newline, text("b")]
+    );
+  }
+
+  #[test]
+  fn crlf_counts_as_a_single_newline() {
+    assert_eq!(
+      split_typed_segments("a\r\nb"),
+      vec![text("a"), TypedSegment::Newline, text("b")]
+    );
+  }
+
+  #[test]
+  fn lone_carriage_return_counts_as_a_newline() {
+    assert_eq!(
+      split_typed_segments("a\rb"),
+      vec![text("a"), TypedSegment::Newline, text("b")]
+    );
+  }
+
+  #[test]
+  fn blank_lines_are_preserved() {
+    assert_eq!(
+      split_typed_segments("a\n\nb"),
+      vec![
+        text("a"),
+        TypedSegment::Newline,
+        TypedSegment::Newline,
+        text("b")
+      ]
+    );
+  }
+
+  #[test]
+  fn leading_and_trailing_newlines_are_preserved() {
+    assert_eq!(
+      split_typed_segments("\na\n"),
+      vec![TypedSegment::Newline, text("a"), TypedSegment::Newline]
+    );
+  }
+
+  #[test]
+  fn tabs_become_tab_presses() {
+    assert_eq!(
+      split_typed_segments("a\tb"),
+      vec![text("a"), TypedSegment::Tab, text("b")]
+    );
+  }
+
+  #[test]
+  fn non_ascii_text_survives_intact() {
+    assert_eq!(
+      split_typed_segments("naive - \u{65e5}\u{672c}\u{8a9e} \u{1f642}"),
+      vec![text("naive - \u{65e5}\u{672c}\u{8a9e} \u{1f642}")]
+    );
+  }
 }

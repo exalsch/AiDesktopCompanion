@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import HotkeyPicker from './HotkeyPicker.vue'
 import CollapsibleCard from '../ui/CollapsibleCard.vue'
+import { MAX_PASTE_DELAY_MS } from '../../composables/useSettings'
 
 const props = defineProps<{
   settings: any
@@ -34,6 +35,12 @@ function duplicateHotkey(): string {
 }
 
 const hotkeysCollide = computed(() => !!duplicateHotkey())
+
+// Only the three combo-sending modes go through the clipboard, so only they
+// have a paste delay to tune or a clipboard to restore.
+const usesClipboardPaste = computed(
+  () => ['ctrl_v', 'ctrl_shift_v', 'shift_insert'].includes(String(props.settings.insert_mode))
+)
 
 function shorten(text: string): string {
   const t = (text || '').replace(/\s+/g, ' ').trim()
@@ -120,6 +127,66 @@ onMounted(async () => {
 
     <p v-if="hotkeysCollide" class="field-hint error">
       <code>{{ duplicateHotkey() }}</code> is assigned to more than one action - only one of them will work.
+    </p>
+  </CollapsibleCard>
+
+  <CollapsibleCard
+    id="settings.general.insertion"
+    title="Text insertion"
+    desc="How results are put back into the application you were working in."
+  >
+    <div class="field">
+      <label class="field-label">Insert results using</label>
+      <select v-model="props.settings.insert_mode" class="input w-md">
+        <option value="ctrl_v">Ctrl + V (default)</option>
+        <option value="ctrl_shift_v">Ctrl + Shift + V - for terminals</option>
+        <option value="shift_insert">Shift + Insert - for terminals</option>
+        <option value="keystrokes">Simulated keystrokes - never touches the clipboard</option>
+        <option value="none">Do not insert</option>
+      </select>
+      <p class="field-hint">
+        Applies to every result that goes back into the focused app: quick prompts, the Quick Actions popup,
+        transcriptions and Assistant Mode.
+      </p>
+    </div>
+
+    <div class="field">
+      <label class="field-label">Afterwards, the clipboard holds</label>
+      <select v-model="props.settings.clipboard_handling" class="input w-md">
+        <option value="dont_modify">What it held before (default)</option>
+        <option value="copy_to_clipboard">The inserted result</option>
+      </select>
+      <p class="field-hint">
+        Pair <em>The inserted result</em> with <em>Do not insert</em> above when you want the result put on your
+        clipboard and nothing else - nothing is typed or pasted anywhere.
+      </p>
+    </div>
+
+    <div class="field">
+      <label class="field-label">Paste delay</label>
+      <input
+        type="number"
+        class="input w-sm"
+        v-model.number="props.settings.paste_delay_ms"
+        min="0"
+        :max="MAX_PASTE_DELAY_MS"
+        step="10"
+        :disabled="!usesClipboardPaste"
+      />
+      <p class="field-hint">
+        Milliseconds to wait after pasting before the clipboard is put back. Raise it if an application sometimes
+        pastes your <em>previous</em> clipboard contents instead of the result - it read the clipboard more slowly
+        than we restored it. Only applies to the three combo methods.
+      </p>
+    </div>
+
+    <p class="field-hint">
+      The three combo methods briefly replace what you had copied, paste, then put it back - exact and instant at any
+      length, but they show up in clipboard-history tools and cannot carry a copied image through untouched. Reach for
+      <em>Ctrl + Shift + V</em> or <em>Shift + Insert</em> when a terminal ignores plain Ctrl + V.
+      <em>Simulated keystrokes</em> never open the clipboard, at two costs: long results type visibly rather than
+      appearing at once, and each line break is a real <em>Enter</em> press, which <strong>sends the message</strong>
+      in Teams, Slack and most web chat boxes.
     </p>
   </CollapsibleCard>
 
