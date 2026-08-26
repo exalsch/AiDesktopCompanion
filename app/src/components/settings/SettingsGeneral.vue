@@ -42,6 +42,15 @@ const usesClipboardPaste = computed(
   () => ['ctrl_v', 'ctrl_shift_v', 'shift_insert'].includes(String(props.settings.insert_mode))
 )
 
+// Inserting nothing while also restoring the clipboard leaves the result with
+// nowhere to go: the request still runs and is still billed, and the answer is
+// dropped on the floor. The one defensible reason to want it is reading results
+// in the popup preview, so this warns rather than forbidding the combination.
+const insertionDiscardsResult = computed(
+  () => String(props.settings.insert_mode) === 'none'
+    && String(props.settings.clipboard_handling) === 'dont_modify'
+)
+
 function shorten(text: string): string {
   const t = (text || '').replace(/\s+/g, ' ').trim()
   if (!t) return '(empty)'
@@ -147,6 +156,12 @@ onMounted(async () => {
       <p class="field-hint">
         Applies to every result that goes back into the focused app: quick prompts, the Quick Actions popup,
         transcriptions and Assistant Mode.
+      </p>
+      <p v-if="insertionDiscardsResult" class="field-hint error">
+        <strong>The result is being thrown away.</strong> Nothing is inserted, and the clipboard is restored to what
+        it held before, so the answer goes nowhere - the request still runs and is still billed. Set
+        <em>Afterwards, the clipboard holds</em> to <em>The inserted result</em> to get copy-without-pasting. Ignore
+        this if you read results in the Quick Actions popup preview instead.
       </p>
     </div>
 
