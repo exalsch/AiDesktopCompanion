@@ -195,6 +195,24 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
   let responseActive = false
   let pendingResponse: any | null = null
 
+  // Whether the server still has audio queued for playback. Over WebRTC the
+  // model's audio is pushed ahead of the speaker, so `response.cancel` stops
+  // generation while the user keeps hearing sentences that are already in
+  // flight. This flag tracks the `output_audio_buffer.*` events so barge-in can
+  // clear that buffer, and only when there is one - clearing an empty buffer
+  // comes back as an API error and would surface as a toast mid-call. It also
+  // covers the gap after `response.done`, where `responseActive` is already
+  // false but the assistant is audibly still talking.
+  let audioBufferActive = false
+  // Set when the user barged in, so the partial transcript of the cancelled
+  // response can be marked rather than read as a sentence the model chose to
+  // stop halfway through.
+  let interruptedResponse = false
+  // Bumped on every barge-in. A supervisor call captures it before its await
+  // and drops its answer if the value moved on, otherwise the reply to the turn
+  // the user just interrupted is spoken a few seconds later.
+  let supervisorEpoch = 0
+
   /**
    * Ask for a spoken response, waiting for the current one if there is one.
    *
@@ -224,6 +242,35 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       log('[error] send failed (' + (payload?.type || 'event') + '): ' + (e?.message || e))
       return false
     }
+  }
+
+  /**
+   * Barge-in: stop the assistant mid-reply.
+   *
+   * Cancelling the response is only half of it. The audio already handed to the
+   * client keeps playing, a deferred `response.create` would answer the turn
+   * that was just cut off, and a supervisor call still in flight would speak
+   * its answer whenever it came back. All four have to go together, or the
+   * interrupt is one the user can still hear.
+   */
+  function interruptResponse() {
+    let cut = false
+    if (responseActive) {
+      send({ type: 'response.cancel' })
+      interruptedResponse = true
+      cut = true
+    }
+    if (audioBufferActive) {
+      send({ type: 'output_audio_buffer.clear' })
+      audioBufferActive = false
+      cut = true
+    }
+    if (pendingResponse) {
+      pendingResponse = null
+      log('[response] dropped the deferred response, the user interrupted')
+    }
+    supervisorEpoch += 1
+    if (cut) log('[response] interrupted by the user')
   }
 
   /**
@@ -281,8 +328,16 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
    * its own words, which is what it did when this was phrased as a prompt.
    */
   async function supervisorRespond(userText: string) {
+    // A supervisor round trip takes seconds, and the user can barge in during
+    // any of them. Both branches below speak, so both have to check that the
+    // turn they are answering is still the turn in front of the user.
+    const epoch = supervisorEpoch
     try {
       const spoken = (await askSupervisor(userText)) || 'Sorry, I did not get a result for that.'
+      if (epoch !== supervisorEpoch) {
+        log('[supervisor] answer discarded, the user interrupted that turn')
+        return
+      }
       history.value.push({ role: 'assistant', content: spoken })
       requestResponse({
         instructions: `Say the following out loud, word for word, in the language it is written in. Do not summarise it, translate it, add to it, or comment on it:\n\n${spoken}`
@@ -291,6 +346,10 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     } catch (e) {
       const msg = (e as any)?.message || String(e)
       log('[supervisor] failed: ' + msg)
+      if (epoch !== supervisorEpoch) {
+        log('[supervisor] failure not announced, the user interrupted that turn')
+        return
+      }
       // Say something rather than leaving the user in silence.
       requestResponse({ instructions: 'Tell the user briefly that the supervisor could not answer that, then stop.' })
     }
@@ -422,16 +481,38 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
 
     // What the model said, once its audio turn is transcribed.
     if (type === 'response.output_audio_transcript.done' || type === 'response.audio_transcript.done') {
-      const text = String(parsed?.transcript || '').trim()
-      if (text) {
+      const raw = String(parsed?.transcript || '').trim()
+      if (raw) {
+        // A cancelled turn is recorded as what the model generated before the
+        // cancel, which can run a little past what the user actually heard: the
+        // audio still buffered when they barged in was cleared unplayed. The
+        // marker says the turn was cut off; matching the two exactly would need
+        // the played-audio offset, which nothing here tracks.
+        const text = interruptedResponse ? `${raw} (interrupted)` : raw
         // The supervisor already recorded its own text; do not double-count it.
+        // That entry is written before the turn is spoken, so it is the raw
+        // transcript it matches, and marking it means editing it in place.
         const last = history.value[history.value.length - 1]
-        if (!(last && last.role === 'assistant' && last.content === text)) {
+        if (last && last.role === 'assistant' && last.content === raw) {
+          last.content = text
+        } else if (!(last && last.role === 'assistant' && last.content === text)) {
           history.value.push({ role: 'assistant', content: text })
         }
         log(`[assistant] ${text}`)
       }
       resetAutoClose()
+      return
+    }
+
+    // Playback bookkeeping for barge-in. These fire only over WebRTC, and they
+    // are the only signal for whether the user can still hear the assistant.
+    if (type === 'output_audio_buffer.started') {
+      audioBufferActive = true
+      return
+    }
+
+    if (type === 'output_audio_buffer.stopped' || type === 'output_audio_buffer.cleared') {
+      audioBufferActive = false
       return
     }
 
@@ -441,9 +522,12 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     }
 
     if (type === 'response.done') {
-      // Clear the flag before anything below can ask for a new response, and
-      // flush whatever was deferred while this one was speaking.
+      // Clear the flags before anything below can ask for a new response, and
+      // flush whatever was deferred while this one was speaking. The transcript
+      // of a cancelled response arrives before this event, so the interrupt
+      // marker has already been applied by the time it is cleared here.
       responseActive = false
+      interruptedResponse = false
       if (pendingResponse) {
         const queued = pendingResponse
         pendingResponse = null
@@ -480,6 +564,8 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       voiceSent = false
       responseActive = false
       pendingResponse = null
+      audioBufferActive = false
+      interruptedResponse = false
       toolRounds = 0
       connected = false
       // Rates depend on the model, so the totals are told which one before the
@@ -830,6 +916,11 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     voiceSent = false
     responseActive = false
     pendingResponse = null
+    audioBufferActive = false
+    interruptedResponse = false
+    // A supervisor call can outlive the session it belongs to; bumping the
+    // epoch stops it speaking into the next one.
+    supervisorEpoch += 1
     toolRounds = 0
     connected = false
     try { opts.onDisconnected?.() } catch {}
@@ -904,10 +995,7 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     // Barge-in. With server VAD off, `interrupt_response` no longer applies, so
     // reaching for the key while the assistant is talking has to cut it off
     // here or push-to-talk would be the one mode you cannot interrupt.
-    if (responseActive) {
-      send({ type: 'response.cancel' })
-      log('[mic] cancelled the response in progress')
-    }
+    interruptResponse()
     talkStartedAt = Date.now()
     // Pause the user's music for the length of the hold. Fire and forget: a
     // media session that will not answer must not delay the microphone.
