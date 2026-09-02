@@ -128,6 +128,19 @@ const sttTextTokens = computed(() => {
 })
 const sttTokenHint = computed(() => formatTokenInfo([{ label: 'text', tokens: sttTextTokens.value }]))
 const showOriginalTranscript = computed(() => settings.stt_post_process_enabled && !!state.originalTranscript)
+/**
+ * Whether the vocabulary can reach the engine at all.
+ *
+ * Cloud and Whisper both take a vocabulary hint at decode time, so the list
+ * works there whatever else is set. Parakeet takes none, which leaves the
+ * post-processing pass as its only route - and that route is off by default.
+ * Saying so beats letting the setting look broken.
+ */
+const vocabularyInert = computed(() =>
+  !settings.stt_post_process_enabled
+  && settings.stt_engine === 'local'
+  && String(settings.stt_local_model || '').includes('parakeet')
+)
 const postProcessStatusHint = computed(() => {
   if (!settings.stt_post_process_enabled || !state.transcript) return ''
   if (state.postProcessError) return `Post-processing error: ${state.postProcessError}`
@@ -179,6 +192,24 @@ const postProcessStatusHint = computed(() => {
           placeholder="You are an STT post-processor..."
         />
         <p class="field-hint">Which model does this is set under Settings → Speech To Text.</p>
+      </div>
+
+      <div class="field">
+        <label class="field-label">Vocabulary</label>
+        <textarea
+          v-model="settings.stt_vocabulary"
+          class="input mono"
+          rows="4"
+          placeholder="One name or term per line, spelled the way you want it&#10;Alex Schick&#10;Infor M3"
+        />
+        <p class="field-hint">
+          Names and terms speech recognition keeps getting wrong. Cloud and Whisper take these
+          as a decoding hint; Parakeet has no such hook, so there they are corrected afterwards.
+        </p>
+        <p v-if="vocabularyInert" class="field-hint error">
+          Parakeet cannot use this list on its own. Turn on “Improve transcribed text with AI”
+          above, or it has no effect.
+        </p>
       </div>
     </div>
   </section>

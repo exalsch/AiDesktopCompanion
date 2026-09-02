@@ -29,9 +29,17 @@ pub async fn transcribe(key: Option<String>, base_url: String, model: String, au
     .mime_str(&mime)
     .map_err(|e| format!("mime error: {e}"))?;
 
-  let form = reqwest::multipart::Form::new()
+  let mut form = reqwest::multipart::Form::new()
     .text("model", model)
     .part("file", part);
+
+  // `prompt` is the API's own vocabulary hint: a sample of the expected text
+  // that biases the decoder toward these spellings. Sent only when there is
+  // something to say, so an empty setting does not add a field to every call.
+  let vocabulary = crate::config::get_stt_vocabulary_hint();
+  if !vocabulary.is_empty() {
+    form = form.text("prompt", vocabulary);
+  }
 
   let client = &*CLIENT;
   let url = build_transcriptions_url(&base_url);

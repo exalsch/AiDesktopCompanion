@@ -288,6 +288,43 @@ pub fn get_stt_post_process_model_from_settings_or_env() -> String {
   std::env::var("AIDC_STT_POST_PROCESS_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string())
 }
 
+/// Proper nouns and terms the recogniser keeps getting wrong, one per line.
+///
+/// Names outside the model's training distribution - foreign surnames, product
+/// names - are where speech recognition drifts most, and the local Parakeet
+/// engine has no decode-time hook to bias it. So the list is applied where it
+/// can be: as a hint field for the engines that take one, and otherwise through
+/// the post-processing pass.
+pub fn get_stt_vocabulary_from_settings_or_env() -> String {
+  let v = load_settings_json();
+  if let Some(s) = v.get("stt_vocabulary").and_then(|x| x.as_str()) {
+    if !s.trim().is_empty() {
+      return s.trim().to_string();
+    }
+  }
+  std::env::var("AIDC_STT_VOCABULARY")
+    .ok()
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty())
+    .unwrap_or_default()
+}
+
+/// The vocabulary as a single comma-separated line.
+///
+/// What the OpenAI `prompt` field and whisper's `initial_prompt` both want: a
+/// sample of the expected text, not a bulleted list.
+pub fn get_stt_vocabulary_hint() -> String {
+  let raw = get_stt_vocabulary_from_settings_or_env();
+  if raw.is_empty() { return String::new(); }
+  let terms: Vec<&str> = raw
+    .lines()
+    .map(|l| l.trim())
+    .filter(|l| !l.is_empty())
+    .collect();
+  if terms.is_empty() { return String::new(); }
+  terms.join(", ")
+}
+
 pub fn get_stt_post_process_prompt_from_settings_or_env() -> String {
   let default_prompt = "You are an STT post-processor. Rewrite the given transcript to improve readability only: fix punctuation, casing, spacing, and obvious recognition artifacts including repeating words. Preserve original meaning, language, and details while improving clarity. Return only the cleaned transcript text.".to_string();
   let v = load_settings_json();
@@ -402,6 +439,7 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   if let Some(pp) = map.get("stt_post_process_enabled").and_then(|x| x.as_bool()) { obj.insert("stt_post_process_enabled".to_string(), serde_json::Value::Bool(pp)); }
   if let Some(pm) = map.get("stt_post_process_model").and_then(|x| x.as_str()) { obj.insert("stt_post_process_model".to_string(), serde_json::Value::String(pm.to_string())); }
   if let Some(ppp) = map.get("stt_post_process_prompt").and_then(|x| x.as_str()) { obj.insert("stt_post_process_prompt".to_string(), serde_json::Value::String(ppp.to_string())); }
+  if let Some(vocab) = map.get("stt_vocabulary").and_then(|x| x.as_str()) { obj.insert("stt_vocabulary".to_string(), serde_json::Value::String(vocab.to_string())); }
   // Whisper (local STT) model selection
   if let Some(u) = map.get("stt_whisper_model_url").and_then(|x| x.as_str()) { obj.insert("stt_whisper_model_url".to_string(), serde_json::Value::String(u.to_string())); }
   if let Some(preset) = map.get("stt_whisper_model_preset").and_then(|x| x.as_str()) { obj.insert("stt_whisper_model_preset".to_string(), serde_json::Value::String(preset.to_string())); }
