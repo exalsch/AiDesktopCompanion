@@ -545,6 +545,22 @@ async fn maybe_post_process_stt_text(text: String, prompt_override: Option<Strin
     .filter(|s| !s.is_empty())
     .unwrap_or_else(|| config::get_stt_post_process_prompt_from_settings_or_env());
 
+  // The vocabulary rides on whichever prompt is in play, the override included:
+  // an override replaces the instructions for one call, it does not mean the
+  // user stopped wanting their own names spelled correctly.
+  //
+  // The closing sentence is load-bearing. Given a bare list, the model starts
+  // reaching for these words in transcripts that never contained them, which is
+  // a worse failure than the mishearing it was meant to fix.
+  let vocabulary = config::get_stt_vocabulary_from_settings_or_env();
+  let prompt = if vocabulary.is_empty() {
+    prompt
+  } else {
+    format!(
+      "{prompt}\n\nKnown proper nouns and terms that may appear, spelled correctly:\n{vocabulary}\n\nIf a word in the transcript is clearly one of these misheard, replace it with the spelling above. Do not force a match, and never introduce one of these terms where the transcript does not call for it."
+    )
+  };
+
   let body = serde_json::json!({
     "model": model,
     "messages": [

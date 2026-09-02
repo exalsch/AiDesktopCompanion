@@ -250,6 +250,13 @@ pub async fn transcribe_local(audio: Vec<u8>, mime: String) -> Result<String, St
   params.set_print_progress(false);
   params.set_print_special(false);
   params.set_print_realtime(false);
+  // Bias decoding toward the user's own proper nouns. `set_initial_prompt`
+  // panics on an embedded null byte, so strip those rather than let a stray
+  // character in a settings file take down transcription.
+  let vocabulary = crate::config::get_stt_vocabulary_hint().replace('\0', "");
+  if !vocabulary.is_empty() {
+    params.set_initial_prompt(&vocabulary);
+  }
 
   let mut state = ctx.create_state().map_err(|e| format!("whisper state create failed: {e}"))?;
   state.full(params, &pcm).map_err(|e| format!("whisper full failed: {e}"))?;

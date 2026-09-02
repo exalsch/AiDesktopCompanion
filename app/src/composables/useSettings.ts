@@ -79,6 +79,8 @@ const settings = reactive({
   stt_post_process_enabled: false as boolean,
   stt_post_process_model: 'gpt-4o-mini' as string,
   stt_post_process_prompt: DEFAULT_STT_POST_PROCESS_PROMPT as string,
+  // Proper nouns the recogniser keeps mangling, one per line.
+  stt_vocabulary: '' as string,
   // Local Whisper (STT) model config
   stt_whisper_model_preset: 'base' as string,
   stt_whisper_model_url: '' as string,
@@ -273,6 +275,9 @@ export function useSettings() {
         settings.stt_post_process_prompt = String((v as any).stt_post_process_prompt)
       } else {
         settings.stt_post_process_prompt = DEFAULT_STT_POST_PROCESS_PROMPT
+      }
+      if (typeof (v as any).stt_vocabulary === 'string') {
+        settings.stt_vocabulary = String((v as any).stt_vocabulary)
       }
       // Whisper model selection (optional)
       if (typeof (v as any).stt_whisper_model_preset === 'string') {
