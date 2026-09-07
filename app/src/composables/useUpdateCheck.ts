@@ -117,11 +117,42 @@ async function openRelease() {
   }
 }
 
+/**
+ * Re-check whenever the window comes back to the front.
+ *
+ * Without this the verdict is frozen at startup, so anyone who leaves the app
+ * running for days never learns about a release. `check` still honours the
+ * cache, so refocusing repeatedly costs nothing until the TTL is up.
+ */
+function watchForFocus() {
+  // The OS window regaining focus - the case that matters for an app that lives
+  // in the tray and is only occasionally brought forward.
+  void (async () => {
+    try {
+      const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow')
+      getCurrentWebviewWindow()
+        .listen('tauri://focus', () => { void check() })
+        .catch(() => {})
+    } catch {
+      // Not running under Tauri (plain `npm run dev`); the DOM listener below
+      // still covers it.
+    }
+  })()
+
+  // Fallback for the browser dev server, and for a restore from the tray that
+  // makes the WebView visible again.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') void check()
+  })
+}
+
 export function useUpdateCheck() {
-  // First caller kicks the check off; later ones reuse the result.
+  // First caller kicks the check off and arms the refresh; later ones reuse the
+  // result.
   if (!started) {
     started = true
     void check()
+    watchForFocus()
   }
   return { info, checking, check, openRelease }
 }
