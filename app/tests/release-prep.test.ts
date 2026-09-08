@@ -28,10 +28,56 @@ test('isNewerVersion refuses anything that is not a step forward', () => {
   assert.equal(isNewerVersion('0.1.22', '0.1.23'), false)
 })
 
+test('isNewerVersion lets a final version promote its own prerelease', () => {
+  assert.equal(isNewerVersion('0.1.24', '0.1.24-rc.1'), true)
+})
+
+test('isNewerVersion still refuses a prerelease against the matching final version', () => {
+  assert.equal(isNewerVersion('0.1.24-rc.1', '0.1.24'), false)
+})
+
+test('isNewerVersion compares two prereleases of the same version by suffix', () => {
+  assert.equal(isNewerVersion('0.1.24-rc.2', '0.1.24-rc.1'), true)
+  assert.equal(isNewerVersion('0.1.24-rc.1', '0.1.24-rc.2'), false)
+  assert.equal(isNewerVersion('0.1.24-rc.1', '0.1.24-rc.1'), false)
+  // Numeric comparison per identifier, not string comparison of the whole
+  // suffix: 'rc.10' must beat 'rc.9' even though '1' sorts before '9'.
+  assert.equal(isNewerVersion('0.1.24-rc.10', '0.1.24-rc.9'), true)
+})
+
 test('unreleasedEntries lists the pending titles and stops at the next version', () => {
   const md = '## Unreleased\n\n### One\n\nDetail.\n\n### Two\n\n## 0.1.23 - 2026-09-07\n\n### Already released\n'
   assert.deepEqual(unreleasedEntries(md), ['One', 'Two'])
   assert.deepEqual(unreleasedEntries('## 0.1.23 - 2026-09-07\n\n### Released\n'), [])
+})
+
+test('unreleasedEntries recognises "##  Unreleased" with extra spaces', () => {
+  const md = '##  Unreleased\n\n### One\n\n## 0.1.23 - 2026-09-07\n\n### Already released\n'
+  assert.deepEqual(unreleasedEntries(md), ['One'])
+})
+
+test('unreleasedEntries does not count a ### line inside a fenced example', () => {
+  const md = [
+    '## Unreleased',
+    '',
+    '### A real entry',
+    '',
+    'kind: feat',
+    '',
+    'Example:',
+    '',
+    '```md',
+    '### Not a real entry',
+    '```',
+    '',
+    '### Another real entry',
+    '',
+    '## 0.1.23 - 2026-09-07',
+    '',
+    '### Already released',
+    '',
+  ].join('\n')
+  assert.deepEqual(unreleasedEntries(md), ['A real entry', 'Another real entry'])
 })
 
 test('rollChangelog dates the Unreleased section and opens a fresh one', () => {
@@ -61,6 +107,14 @@ Detail.
 
 test('rollChangelog throws when there is no Unreleased section', () => {
   assert.throws(() => rollChangelog('# Changelog\n\n## 0.1.23 - 2026-09-07\n', '0.1.24', '2026-09-08'), /Unreleased/)
+})
+
+test('rollChangelog recognises "##  Unreleased" with extra spaces', () => {
+  const before = '# Changelog\n\n##  Unreleased\n\n### A change\n\nDetail.\n\n## 0.1.23 - 2026-09-07\n\n### Older.\n'
+  const after = rollChangelog(before, '0.1.24', '2026-09-08')
+  assert.match(after, /## Unreleased\n\n## 0\.1\.24 - 2026-09-08\n/)
+  assert.match(after, /## 0\.1\.24 - 2026-09-08\n\n### A change/)
+  assert.equal(after.match(/^## Unreleased$/gm)?.length, 1)
 })
 
 test('rollChangelog preserves CRLF line endings on a CRLF source file', () => {

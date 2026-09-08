@@ -1,7 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { parseChangelog, compareVersions, releasesSince } from '../src/changelog/parse.ts'
+
+// app/tests/ -> app/ -> repo root, where the real CHANGELOG.md lives.
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 const SAMPLE = `# Changelog
 
@@ -134,4 +140,40 @@ test('releasesSince returns only newer releases, newest first, without Unrelease
   assert.deepEqual(releasesSince(all, '1.2.2').map(r => r.version), ['1.2.3'])
   assert.deepEqual(releasesSince(all, '1.2.3'), [])
   assert.deepEqual(releasesSince(all, '1.0.0').map(r => r.version), ['1.2.3', '1.2.2'])
+})
+
+// The fixtures above are shaped to match the real file rather than derived
+// from it, so on their own they cannot catch the shipped CHANGELOG.md
+// drifting out of the grammar it is supposed to follow. This test reads the
+// actual file the app bundles at build time and checks the parser makes
+// sense of it.
+test('the real repository CHANGELOG.md parses into a well-formed release list', () => {
+  const markdown = readFileSync(join(REPO_ROOT, 'CHANGELOG.md'), 'utf8')
+  const releases = parseChangelog(markdown)
+
+  assert.ok(releases.length > 0, 'expected at least one release section')
+  assert.ok(
+    releases.some(r => r.version === 'Unreleased'),
+    'expected an "Unreleased" section',
+  )
+
+  const VERSION_SHAPE = /^\d+\.\d+\.\d+[0-9A-Za-z.+-]*$/
+  for (const release of releases) {
+    assert.ok(
+      release.version === 'Unreleased' || VERSION_SHAPE.test(release.version),
+      `release version "${release.version}" is neither "Unreleased" nor X.Y.Z-shaped`,
+    )
+    for (const entry of release.entries) {
+      assert.ok(
+        entry.title.trim().length > 0,
+        `an entry under "${release.version}" has an empty title`,
+      )
+      if (entry.kind !== undefined) {
+        assert.ok(
+          entry.kind === 'feat' || entry.kind === 'fix' || entry.kind === 'perf',
+          `entry "${entry.title}" has an unrecognised kind "${entry.kind}"`,
+        )
+      }
+    }
+  }
 })

@@ -47,7 +47,7 @@ changelog_section() {
       if (parts[1] == ver) { found = 1; next }
       next
     }
-    found && /^kind:[[:space:]]/ { next }
+    found && /^kind:[[:space:]]*/ { next }
     found { print }
   ' CHANGELOG.md
 }

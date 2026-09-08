@@ -51,9 +51,28 @@ EOF
 fi
 
 # Touching the file is not enough: the entry has to be in the pending section.
+# A fenced code block inside an entry's detail can legitimately contain a
+# `### ` line (a worked markdown example, say), so fence state is tracked the
+# same way parse.ts tracks it: a trimmed line starting with ``` or ~~~ toggles
+# the fence, only a matching marker closes it, and no line inside a fence is
+# read as a heading.
 pending="$(awk '
-  /^## / { if (seen) exit; if ($0 ~ /^## +Unreleased/) { seen = 1 }; next }
-  seen && /^### / { print }
+  {
+    trimmed = $0
+    sub(/^[ \t]*/, "", trimmed)
+    if (trimmed ~ /^(```|~~~)/) {
+      marker = substr(trimmed, 1, 3)
+      if (in_fence) {
+        if (substr(trimmed, 1, length(fence_marker)) == fence_marker) { in_fence = 0; fence_marker = "" }
+      } else {
+        in_fence = 1; fence_marker = marker
+      }
+      next
+    }
+    if (in_fence) next
+    if ($0 ~ /^## /) { if (seen) exit; if ($0 ~ /^## +Unreleased/) { seen = 1 }; next }
+    if (seen && $0 ~ /^### /) print
+  }
 ' CHANGELOG.md)"
 
 if [ -z "${pending}" ]; then

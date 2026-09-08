@@ -20,24 +20,66 @@ import { fileURLToPath } from 'node:url'
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const CARGO_PACKAGE = 'AiDesktopCompanion'
 
+// Mirrors the FENCE regex in app/src/changelog/parse.ts, so an entry detail
+// containing a worked markdown example (a fenced block with its own `### `
+// line) is not mistaken here for a real pending entry.
+const FENCE = /^\s*(```|~~~)/
+
 export function isValidVersion(version) {
   return /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/.test(version)
 }
 
 /**
- * Major, minor and patch only. A prerelease suffix does not make a version
- * newer here, so cutting 0.1.24-rc.1 after 0.1.24 is rejected rather than
- * quietly writing a lower release.
+ * Major, minor and patch decide it first. On a tie, a final version outranks
+ * every prerelease that shares its X.Y.Z, so promoting a release candidate to
+ * its final version - `isNewerVersion('0.1.24', '0.1.24-rc.1')` - is a step
+ * forward rather than a rejection. The reverse is still false: a prerelease
+ * is never newer than the matching final version. Two prereleases of the same
+ * X.Y.Z compare their suffixes identifier by identifier (split on `.`),
+ * comparing numerically when both sides of a pair are digits and lexically
+ * otherwise, so `rc.2` beats `rc.10` the way it would under semver precedence
+ * rather than losing to it on plain string order.
  */
 export function isNewerVersion(candidate, current) {
   const parts = (v) => v.split('-')[0].split('.').map((n) => Number.parseInt(n, 10) || 0)
+  const prerelease = (v) => {
+    const i = v.indexOf('-')
+    return i < 0 ? null : v.slice(i + 1)
+  }
+  // Compare two prerelease suffixes identifier by identifier. Returns
+  // negative/zero/positive the way `Array.prototype.sort` comparators do.
+  const compareSuffix = (a, b) => {
+    const as = a.split('.')
+    const bs = b.split('.')
+    const len = Math.max(as.length, bs.length)
+    for (let i = 0; i < len; i++) {
+      if (as[i] === undefined) return -1
+      if (bs[i] === undefined) return 1
+      const an = /^\d+$/.test(as[i])
+      const bn = /^\d+$/.test(bs[i])
+      if (an && bn) {
+        const diff = Number.parseInt(as[i], 10) - Number.parseInt(bs[i], 10)
+        if (diff !== 0) return diff
+      } else if (as[i] !== bs[i]) {
+        return as[i] < bs[i] ? -1 : 1
+      }
+    }
+    return 0
+  }
+
   const a = parts(candidate)
   const b = parts(current)
   for (let i = 0; i < 3; i++) {
     const diff = (a[i] ?? 0) - (b[i] ?? 0)
     if (diff !== 0) return diff > 0
   }
-  return false
+
+  const pa = prerelease(candidate)
+  const pb = prerelease(current)
+  if (pa === null && pb === null) return false
+  if (pa === null) return true
+  if (pb === null) return false
+  return compareSuffix(pa, pb) > 0
 }
 
 /** Replace the first top-level `"version": "..."`. */
@@ -89,18 +131,44 @@ export function rollChangelog(markdown, version, date) {
   // of assumed. Reusing that terminator for both freshly written lines keeps
   // the whole file on one line-ending style - a hardcoded `\n` would leave a
   // silently mixed CRLF/LF file on a CRLF checkout.
-  const re = /^## Unreleased(\r\n|\n)/m
+  //
+  // `## +Unreleased` (one or more spaces), not a literal single space: this
+  // has to accept whatever `changelog-check.sh` and `parse.ts` already accept,
+  // or a heading with two spaces after `##` passes CI and renders in the app
+  // while this function throws as if the section were missing.
+  const re = /^## +Unreleased(\r\n|\n)/m
   if (!re.test(markdown)) throw new Error('no "## Unreleased" heading found in CHANGELOG.md')
   return markdown.replace(re, (whole, eol) => `## Unreleased${eol}${eol}## ${version} - ${date}${eol}`)
 }
 
-/** The entries currently sitting under `## Unreleased`. */
+/**
+ * The entries currently sitting under `## Unreleased`.
+ *
+ * Fence-aware like `parse.ts`: a `### ` line inside a fenced markdown example
+ * in an entry's detail is content, not a second pending entry.
+ */
 export function unreleasedEntries(markdown) {
-  const start = markdown.search(/^## Unreleased[^\n]*$/m)
+  const start = markdown.search(/^## +Unreleased[^\n]*$/m)
   if (start < 0) return []
   const rest = markdown.slice(start).split('\n').slice(1)
   const out = []
+  let inFence = false
+  let fenceMarker = ''
   for (const line of rest) {
+    const fence = line.match(FENCE)
+    if (fence) {
+      // Only a matching marker closes the block, so ``` inside a ~~~ block is
+      // content rather than a terminator - same rule as parse.ts.
+      if (!inFence) {
+        inFence = true
+        fenceMarker = fence[1]
+      } else if (line.trim().startsWith(fenceMarker)) {
+        inFence = false
+        fenceMarker = ''
+      }
+      continue
+    }
+    if (inFence) continue
     if (/^## /.test(line)) break
     const m = line.match(/^###\s+(.+?)\s*$/)
     if (m) out.push(m[1])
