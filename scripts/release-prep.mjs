@@ -83,9 +83,15 @@ export function bumpCargoLockVersion(text, packageName, version) {
  * duplicate them.
  */
 export function rollChangelog(markdown, version, date) {
-  const re = /^## Unreleased[^\n]*$/m
+  // Match through the heading's own line terminator rather than stopping at
+  // `$`, so the exact bytes that separated "## Unreleased" from the rest of
+  // the file (this repo's CHANGELOG.md is CRLF on disk) are captured instead
+  // of assumed. Reusing that terminator for both freshly written lines keeps
+  // the whole file on one line-ending style - a hardcoded `\n` would leave a
+  // silently mixed CRLF/LF file on a CRLF checkout.
+  const re = /^## Unreleased(\r\n|\n)/m
   if (!re.test(markdown)) throw new Error('no "## Unreleased" heading found in CHANGELOG.md')
-  return markdown.replace(re, `## Unreleased\n\n## ${version} - ${date}`)
+  return markdown.replace(re, (whole, eol) => `## Unreleased${eol}${eol}## ${version} - ${date}${eol}`)
 }
 
 /** The entries currently sitting under `## Unreleased`. */
