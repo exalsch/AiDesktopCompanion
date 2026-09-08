@@ -14,8 +14,10 @@ labels="${PR_LABELS:-[]}"
 base="${BASE_REF:-main}"
 
 # semantic-pr.yml has already forced the title into Conventional Commit shape,
-# so this only has to read the type back out.
-type="$(printf '%s' "${title}" | sed -nE 's/^([a-z]+)(\([^)]*\))?!?:.*/\1/p')"
+# so this only has to read the type back out. Lowercase the type before the case
+# statement as defense in depth: if the upstream type-case enforcement is not applied,
+# we will still recognise feat, fix, perf in any case.
+type="$(printf '%s' "${title}" | sed -nE 's/^([a-zA-Z]+)(\([^)]*\))?!?:.*/\1/p' | tr '[:upper:]' '[:lower:]')"
 
 case "${type}" in
   feat|fix|perf) ;;
