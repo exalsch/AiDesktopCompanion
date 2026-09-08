@@ -9,6 +9,15 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
+### The app tells you what changed after an update
+
+kind: feat
+
+After installing a new version, a What's New window lists what changed since the
+version you were running. Each item shows a one-line headline; click it to read
+the detail. You can reopen it any time from the version number at the bottom of
+the sidebar.
+
 ## 0.1.23 - 2026-09-07
 
 ### The app re-checks for updates when you come back to it
