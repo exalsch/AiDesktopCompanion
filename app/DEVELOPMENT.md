@@ -28,6 +28,14 @@ npm run build  # Vite build + type check
 # Packaging via Tauri (later): npm run tauri build
 ```
 
+Run `npm test` to check the changelog tooling: `node --test tests/` exercises
+`app/src/changelog/parse.ts` and `scripts/release-prep.mjs`, the tests that
+catch the four changelog scanners (parser, release-prep, changelog-check.sh,
+release-notes.sh) disagreeing with each other. It needs Node 22.6.0 or newer
+- see `engines` in `app/package.json` - because the tests are TypeScript run
+through `node --test`'s built-in type stripping. On an older Node the command
+fails with an opaque parse error rather than a clear version complaint.
+
 ## Environment
 Set required keys before running (PowerShell example):
 ```powershell
