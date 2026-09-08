@@ -1,66 +1,3 @@
-<script lang="ts">
-// ── Module-level singleton: shared across ALL MessageItem instances ──
-// One MarkdownIt + DOMPurify + highlight.js — not re-created per component.
-
-let _mdReady: Promise<(src: string) => string> | null = null
-
-function _escapeHtml(s: string): string {
-  return (s ?? '')
-    .replaceAll(/&/g, '&amp;')
-    .replaceAll(/</g, '&lt;')
-    .replaceAll(/>/g, '&gt;')
-}
-
-function initMarkdownSingleton(): Promise<(src: string) => string> {
-  if (_mdReady) return _mdReady
-  _mdReady = (async () => {
-    try {
-      const [{ default: MarkdownIt }, { default: DOMPurify }] = await Promise.all([
-        import('markdown-it'),
-        import('dompurify'),
-      ])
-
-      let hljs: any | undefined
-      try {
-        const mod = await import('highlight.js/lib/common')
-        hljs = (mod as any).default || (mod as any)
-      } catch {
-        hljs = undefined
-      }
-
-      const md = new MarkdownIt({
-        linkify: true,
-        breaks: true,
-        highlight: (code: string, lang: string) => {
-          try {
-            if (hljs) {
-              if (lang && hljs.getLanguage(lang)) {
-                return `<pre class="hljs"><code>${hljs.highlight(code, { language: lang }).value}</code></pre>`
-              }
-              return `<pre class="hljs"><code>${hljs.highlightAuto(code).value}</code></pre>`
-            }
-          } catch {}
-          return `<pre class="md-pre"><code>${_escapeHtml(code)}</code></pre>`
-        },
-      })
-      return (src: string) => DOMPurify.sanitize(md.render(src))
-    } catch {
-      // Fallback returned if dynamic imports fail — allows retry on next call.
-      _mdReady = null
-      return (src: string) => _basicFallback(src)
-    }
-  })()
-  return _mdReady as Promise<(src: string) => string>
-}
-
-// Minimal fallback for when markdown-it/dompurify fail to load (module-level accessible)
-function _basicFallback(input: string): string {
-  let s = (input ?? '').replace(/\r\n/g, '\n')
-  s = _escapeHtml(s)
-  return s.split(/\n\n+/).map(p => `<p>${p.replace(/\n/g, '<br/>')}</p>`).join('')
-}
-</script>
-
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import type { Message } from '../state/conversation'
@@ -69,6 +6,7 @@ import { emit as emitTauri } from '@tauri-apps/api/event'
 import { useSettings } from '../composables/useSettings'
 import { estimateTextTokens, estimateImageTokensFromMeta } from '../composables/useTokenEstimate'
 import { useImageMeta } from '../composables/useImageMeta'
+import { initMarkdownSingleton } from '../markdown'
 
 const props = defineProps<{ message: Message; hideToolDetails?: boolean; isPlaying?: boolean }>()
 const emit = defineEmits<{
