@@ -29,6 +29,43 @@ else
   range="HEAD"
 fi
 
+# The changelog is written for users; the commit log is written for us. When the
+# tag being released has a section, that is the better release body, so it wins
+# and the Conventional Commit grouping below never runs.
+#
+# `kind:` lines are metadata for the in-app popup and are dropped here. Everything
+# else is emitted verbatim: the `### ` titles render as headings on GitHub, which
+# reads better than folding them into a bullet list.
+changelog_section() {
+  local version="$1"
+  [ -f CHANGELOG.md ] || return 1
+  awk -v ver="${version}" '
+    /^## / {
+      if (found) exit
+      line = substr($0, 4)
+      split(line, parts, " ")
+      if (parts[1] == ver) { found = 1; next }
+      next
+    }
+    found && /^kind:[[:space:]]/ { next }
+    found { print }
+  ' CHANGELOG.md
+}
+
+if [ -n "${current}" ]; then
+  version="${current#v}"
+  section="$(changelog_section "${version}" || true)"
+  # A section of nothing but blank lines counts as absent.
+  if [ -n "$(printf '%s' "${section}" | tr -d '[:space:]')" ]; then
+    printf '%s\n' "${section}"
+    if [ -n "${previous}" ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
+      printf '\n**Full changelog**: https://github.com/%s/compare/%s...%s\n' \
+        "${GITHUB_REPOSITORY}" "${previous}" "${current}"
+    fi
+    exit 0
+  fi
+fi
+
 # Conventional Commit types we group under each heading. Anything that matches
 # none of them still gets listed under "Other changes" so nothing is dropped.
 known_types='feat|fix|perf|docs|refactor|chore|build|ci|style|test|revert'
