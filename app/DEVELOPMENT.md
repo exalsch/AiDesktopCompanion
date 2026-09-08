@@ -28,13 +28,19 @@ npm run build  # Vite build + type check
 # Packaging via Tauri (later): npm run tauri build
 ```
 
-Run `npm test` to check the changelog tooling: `node --test tests/` exercises
+Run `npm test` to check the changelog tooling: it exercises
 `app/src/changelog/parse.ts` and `scripts/release-prep.mjs`, the tests that
 catch the four changelog scanners (parser, release-prep, changelog-check.sh,
 release-notes.sh) disagreeing with each other. It needs Node 22.6.0 or newer
 - see `engines` in `app/package.json` - because the tests are TypeScript run
 through `node --test`'s built-in type stripping. On an older Node the command
 fails with an opaque parse error rather than a clear version complaint.
+
+The script names every test file explicitly rather than passing the `tests/`
+directory. Node 24 and newer walk a directory argument, but Node 22 resolves it
+as a module and fails with `MODULE_NOT_FOUND` - which is what CI hit, since
+`actions/setup-node` with `node-version: '22'` installs a 22.x. Add new test
+files to that list.
 
 ## Environment
 Set required keys before running (PowerShell example):
