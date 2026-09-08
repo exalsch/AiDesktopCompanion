@@ -12,6 +12,13 @@ export default defineConfig({
     include: [],
   },
   server: {
+    // `CHANGELOG.md` lives at the repository root, one level above the Vite
+    // root, and is pulled in with `?raw`. Without this the dev server refuses
+    // to read it while the production bundle inlines it happily, which is the
+    // most confusing possible split.
+    fs: {
+      allow: ['..'],
+    },
     watch: {
       ignored: ['**/src-tauri/target/**'],
     },

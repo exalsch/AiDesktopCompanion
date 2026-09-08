@@ -15,10 +15,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
+      # 22 is a floor, not a preference: `npm test` runs the changelog and
+      # release-prep suites through `node --test`, relying on Node's built-in
+      # TypeScript type stripping, which only lands stably from 22.6. Below
+      # that the test command fails with an opaque parse error, so do not
+      # lower this back to 20.
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: 'app/package-lock.json'
 
@@ -75,6 +80,14 @@ jobs:
       - name: Install frontend dependencies
         working-directory: app
         run: npm ci
+
+      # The only mechanical guarantee that CHANGELOG.md, parse.ts,
+      # release-prep.mjs and the changelog-check.sh/release-notes.sh scripts
+      # still agree with each other; this is currently the only CI trigger
+      # that runs it.
+      - name: Run frontend tests
+        working-directory: app
+        run: npm test
 
       - name: Build Tauri app (Windows release)
         working-directory: app

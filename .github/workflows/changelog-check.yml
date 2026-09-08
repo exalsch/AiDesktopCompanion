@@ -1,0 +1,28 @@
+name: Changelog Entry
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+
+# Plain `pull_request`, not `pull_request_target`: this job needs the head diff
+# and needs no write access, so it must not run with the base repository's token.
+permissions:
+  contents: read
+
+jobs:
+  changelog:
+    name: Require a changelog entry for user-facing changes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check for a pending entry
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: bash scripts/changelog-check.sh

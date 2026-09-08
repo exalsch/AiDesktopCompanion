@@ -11,6 +11,7 @@ import TTSPanel from './components/TTSPanel.vue'
 import STTPanel from './components/STTPanel.vue'
 import SidebarNav from './components/sidebar/SidebarNav.vue'
 import SettingsMain from './components/settings/SettingsMain.vue'
+import WhatsNewDialog from './components/WhatsNewDialog.vue'
 import conversation, { appendMessage, clearAllConversations, newConversation, updateMessage, getPersistState } from './state/conversation'
 import { onMounted, onBeforeUnmount, reactive, ref, watch, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
@@ -474,6 +475,9 @@ async function autoConnectServers() {
 
     <!-- Toast -->
     <div v-if="toast.visible" class="toast" :class="toast.kind">{{ toast.message }}</div>
+
+    <!-- Shown once after an update; reopenable from the sidebar version label. -->
+    <WhatsNewDialog />
     </div>
 
 </template>

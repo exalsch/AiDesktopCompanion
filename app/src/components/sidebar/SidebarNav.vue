@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import LoadingDots from '../LoadingDots.vue'
 import NavIcon, { type NavIconName } from './NavIcon.vue'
 import { useUpdateCheck } from '../../composables/useUpdateCheck'
+import { useWhatsNew } from '../../composables/useWhatsNew'
 
 type Section = 'Prompt' | 'Assistant' | 'TTS' | 'STT' | 'Settings'
 type SettingsSubview = 'General' | 'Speech To Text' | 'Quick Prompts' | 'MCP Servers'
@@ -19,6 +20,8 @@ const props = defineProps<{
 
 // Notify-only: a link to the release page, never a download.
 const { info: updateInfo, openRelease } = useUpdateCheck()
+// Reopening what changed is the natural thing to want from a version number.
+const { open: openWhatsNew } = useWhatsNew()
 
 const emit = defineEmits<{
   (e: 'toggle-sidebar'): void
@@ -141,7 +144,13 @@ const collapsed = computed(() => !props.sidebarOpen)
       >
         <span class="side-update-dot"></span>
       </button>
-      <div v-if="props.version && props.sidebarOpen" class="side-version">v{{ props.version }}</div>
+      <button
+        v-if="props.version && props.sidebarOpen"
+        class="side-version"
+        type="button"
+        title="What's new in this version"
+        @click="openWhatsNew()"
+      >v{{ props.version }}</button>
     </div>
   </aside>
 </template>
@@ -279,10 +288,18 @@ const collapsed = computed(() => !props.sidebarOpen)
 }
 .side-status { min-width: 0; flex: 1 1 auto; }
 .side-version {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
   font-size: var(--fs-xs);
   color: var(--adc-fg-muted);
   font-variant-numeric: tabular-nums;
 }
+.side-version:hover { color: var(--adc-fg); }
+.side-version:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--adc-focus-ring); }
 
 /* Reads as a quiet note next to the version, not a call to action - there is
    nothing urgent about a new release being available. */
