@@ -1,0 +1,98 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+
+import {
+  rollChangelog,
+  bumpJsonVersion,
+  bumpPackageLockVersion,
+  bumpCargoTomlVersion,
+  bumpCargoLockVersion,
+  isValidVersion,
+  isNewerVersion,
+  unreleasedEntries,
+} from '../../scripts/release-prep.mjs'
+
+test('isValidVersion accepts semver with an optional prerelease suffix', () => {
+  assert.equal(isValidVersion('0.1.24'), true)
+  assert.equal(isValidVersion('1.0.0-rc.1'), true)
+  assert.equal(isValidVersion('v0.1.24'), false)
+  assert.equal(isValidVersion('0.1'), false)
+  assert.equal(isValidVersion('not-a-version'), false)
+})
+
+test('isNewerVersion refuses anything that is not a step forward', () => {
+  assert.equal(isNewerVersion('0.1.24', '0.1.23'), true)
+  assert.equal(isNewerVersion('0.2.0', '0.1.99'), true)
+  assert.equal(isNewerVersion('1.0.0', '0.9.9'), true)
+  assert.equal(isNewerVersion('0.1.23', '0.1.23'), false)
+  assert.equal(isNewerVersion('0.1.22', '0.1.23'), false)
+})
+
+test('unreleasedEntries lists the pending titles and stops at the next version', () => {
+  const md = '## Unreleased\n\n### One\n\nDetail.\n\n### Two\n\n## 0.1.23 - 2026-09-07\n\n### Already released\n'
+  assert.deepEqual(unreleasedEntries(md), ['One', 'Two'])
+  assert.deepEqual(unreleasedEntries('## 0.1.23 - 2026-09-07\n\n### Released\n'), [])
+})
+
+test('rollChangelog dates the Unreleased section and opens a fresh one', () => {
+  const before = `# Changelog
+
+Intro.
+
+## Unreleased
+
+### A change
+
+kind: feat
+
+Detail.
+
+## 0.1.23 - 2026-09-07
+
+### Older.
+`
+  const after = rollChangelog(before, '0.1.24', '2026-09-08')
+  assert.match(after, /## Unreleased\n\n## 0\.1\.24 - 2026-09-08\n/)
+  assert.match(after, /## 0\.1\.24 - 2026-09-08\n\n### A change/)
+  assert.match(after, /## 0\.1\.23 - 2026-09-07/)
+  // Exactly one Unreleased section survives, and it is empty.
+  assert.equal(after.match(/^## Unreleased$/gm)?.length, 1)
+})
+
+test('rollChangelog throws when there is no Unreleased section', () => {
+  assert.throws(() => rollChangelog('# Changelog\n\n## 0.1.23 - 2026-09-07\n', '0.1.24', '2026-09-08'), /Unreleased/)
+})
+
+test('bumpJsonVersion replaces only the top-level version field', () => {
+  const before = '{\n  "name": "AiDesktopCompanion",\n  "version": "0.1.23",\n  "dependencies": {\n    "vue": "^3.5.41"\n  }\n}\n'
+  const after = bumpJsonVersion(before, '0.1.24')
+  assert.match(after, /"version": "0\.1\.24"/)
+  assert.match(after, /"vue": "\^3\.5\.41"/)
+})
+
+test('bumpPackageLockVersion updates both the root and the self entry', () => {
+  const before = '{\n  "name": "AiDesktopCompanion",\n  "version": "0.1.23",\n  "packages": {\n    "": {\n      "name": "AiDesktopCompanion",\n      "version": "0.1.23"\n    },\n    "node_modules/vue": {\n      "version": "3.5.41"\n    }\n  }\n}\n'
+  const after = bumpPackageLockVersion(before, '0.1.24')
+  assert.equal(after.match(/"version": "0\.1\.24"/g)?.length, 2)
+  assert.match(after, /"version": "3\.5\.41"/)
+})
+
+test('bumpCargoTomlVersion changes the package version, not a dependency version', () => {
+  const before = '[package]\nname = "AiDesktopCompanion"\nversion = "0.1.23"\nedition = "2021"\n\n[dependencies]\nserde = { version = "1.0" }\n'
+  const after = bumpCargoTomlVersion(before, '0.1.24')
+  assert.match(after, /\[package\]\nname = "AiDesktopCompanion"\nversion = "0\.1\.24"/)
+  assert.match(after, /serde = \{ version = "1\.0" \}/)
+})
+
+test('bumpCargoLockVersion changes only the named package block', () => {
+  const before = '[[package]]\nname = "AiDesktopCompanion"\nversion = "0.1.23"\ndependencies = [\n "arboard",\n]\n\n[[package]]\nname = "arboard"\nversion = "0.1.23"\n'
+  const after = bumpCargoLockVersion(before, 'AiDesktopCompanion', '0.1.24')
+  assert.match(after, /name = "AiDesktopCompanion"[\r\n]+version = "0\.1\.24"/)
+  assert.match(after, /name = "arboard"[\r\n]+version = "0\.1\.23"/)
+})
+
+test('each bump helper throws when its target is missing', () => {
+  assert.throws(() => bumpJsonVersion('{}', '0.1.24'), /version/)
+  assert.throws(() => bumpCargoTomlVersion('[dependencies]\n', '0.1.24'), /\[package\]/)
+  assert.throws(() => bumpCargoLockVersion('[[package]]\nname = "other"\nversion = "1.0.0"\n', 'AiDesktopCompanion', '0.1.24'), /AiDesktopCompanion/)
+})
