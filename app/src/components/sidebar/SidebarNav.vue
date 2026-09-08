@@ -292,6 +292,7 @@ const collapsed = computed(() => !props.sidebarOpen)
   border: 0;
   background: transparent;
   font: inherit;
+  padding: 0;
   cursor: pointer;
   font-size: var(--fs-xs);
   color: var(--adc-fg-muted);
