@@ -1,0 +1,48 @@
+name: Tests
+
+# Pull requests only. A push to `main` is already covered by
+# `build-windows.yml`, which runs the same two commands on its way to the
+# installer, so running them here as well would only duplicate the signal.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Frontend tests and type check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      # The changelog tooling tests are TypeScript run through `node --test`'s
+      # built-in type stripping, so this must stay at or above the Node 22.6.0
+      # floor that `engines` in `app/package.json` declares. Lowering it makes
+      # the tests fail with an opaque parse error rather than a version
+      # complaint.
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: 'app/package-lock.json'
+
+      # `npm ci`, matching the two Windows workflows, so a pull request is
+      # checked against exactly the dependency tree the installers are built
+      # from rather than whatever `npm install` resolves today.
+      - name: Install frontend dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Run frontend tests
+        working-directory: app
+        run: npm test
+
+      # `vue-tsc` is this project's only type check, and until now it ran only
+      # after a merge, inside the Windows installer build. A minute on Linux
+      # catches the error while it is still a pull request.
+      - name: Type check and bundle
+        working-directory: app
+        run: npm run build
