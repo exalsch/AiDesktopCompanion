@@ -3,6 +3,8 @@
 // - stopRecording(): stops and returns { blob, mime }
 // NOTE: Requires user gesture and OS permission to use microphone.
 import { invoke } from '@tauri-apps/api/core'
+import { buildAudioConstraints, isVoiceIsolationSupported } from './audioConstraints'
+import type { SttAudioProcessingSettings } from './audioConstraints'
 
 let mediaStream: MediaStream | null = null
 let recorder: MediaRecorder | null = null
@@ -13,7 +15,11 @@ let recording = false
 let heldMedia = false
 let recordingStartTime = 0
 
-export async function startRecording(preferredMime = 'audio/webm;codecs=opus', inputDeviceId = ''): Promise<void> {
+export async function startRecording(
+  preferredMime = 'audio/webm;codecs=opus',
+  inputDeviceId = '',
+  audioSettings: SttAudioProcessingSettings | null = null,
+): Promise<void> {
   if (recording) return
   // Pick supported mime
   const mime = MediaRecorder.isTypeSupported(preferredMime)
@@ -22,10 +28,14 @@ export async function startRecording(preferredMime = 'audio/webm;codecs=opus', i
   if (!mime) {
     throw new Error('No supported audio recording format (MediaRecorder)')
   }
-  const deviceId = String(inputDeviceId || '').trim()
-  const audioConstraint: MediaTrackConstraints | boolean = deviceId
-    ? { deviceId: { exact: deviceId } }
-    : true
+  // Always constrain explicitly rather than passing `audio: true`: the webview
+  // would otherwise pick the processing chain itself, and echo cancellation is
+  // the one setting a user dictating next to a speaker needs to be able to see.
+  const audioConstraint = buildAudioConstraints(
+    audioSettings,
+    inputDeviceId,
+    isVoiceIsolationSupported(),
+  )
   mediaStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint })
   chunks = []
   try {

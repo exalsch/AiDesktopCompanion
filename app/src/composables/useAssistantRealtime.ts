@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useRealtimeUsage } from './useRealtimeUsage'
+import { buildAudioConstraints, isVoiceIsolationSupported } from '../audioConstraints'
 
 // Where the SDP offer is exchanged for an answer. The beta endpoint this used
 // to post to, `POST /v1/realtime?model=...`, was removed with the rest of the
@@ -609,8 +610,18 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       // Bidirectional audio for WebRTC session
       pc.addTransceiver('audio', { direction: 'sendrecv' })
 
-      // Capture microphone and add as sendonly track
-      const mic = await navigator.mediaDevices.getUserMedia({ audio: true })
+      // Capture microphone and add as sendonly track.
+      //
+      // Shares the STT audio-processing settings, but deliberately not the STT
+      // input device: this call has always used the system default and moving
+      // it would be a separate decision. Echo cancellation matters more here
+      // than anywhere else in the app, because the assistant's own voice plays
+      // back through the webview and is therefore a reference signal the
+      // canceller can actually use.
+      const audioSettings = await invoke<any>('get_settings').catch(() => null)
+      const mic = await navigator.mediaDevices.getUserMedia({
+        audio: buildAudioConstraints(audioSettings, '', isVoiceIsolationSupported()),
+      })
       // Keep the sender: muting detaches the track from it, which is what
       // actually stops audio leaving. See `setMicEnabled`.
       mic.getAudioTracks().forEach((t) => {
