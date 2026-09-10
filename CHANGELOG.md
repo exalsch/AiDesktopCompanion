@@ -9,6 +9,8 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
+## 0.1.24 - 2026-09-10
+
 ### You can now control how your microphone is cleaned up
 
 kind: feat
