@@ -9,6 +9,18 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
+### The app recovers instead of going silent after a display change
+
+kind: fix
+
+Changing your monitor setup - unplugging displays, docking, or resuming from
+hibernation - could kill the content of every window while the windows
+themselves stayed open. The app looked like it was running, but the hotkeys did
+nothing and neither the Assistant call pill nor the processing indicator ever
+appeared again until you restarted it. The app now notices that failure and
+reloads the affected windows, and the global hotkeys are re-registered when it
+does, so everything works again on its own.
+
 ### The app tells you what changed after an update
 
 kind: feat

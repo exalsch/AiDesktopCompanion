@@ -13,11 +13,25 @@
 //! nudging the existing WebView; the other means the browser process is gone and
 //! only a reload or recreate will do.
 //!
-//! So this module only watches and reports. It changes no behaviour: it attaches
-//! a `ProcessFailed` handler to each long-lived window and logs which kind of
-//! failure occurred. GPU_PROCESS_EXITED and BROWSER_PROCESS_EXITED want opposite
-//! repairs - a nudge versus a recreate - so knowing which one happened is the
-//! whole point. The next occurrence should say.
+//! The occurrence came, and it named RENDER_PROCESS_EXITED. A display topology
+//! change - unplugging two of three monitors - kills the render processes of
+//! every long-lived window at once. The windows survive: they are still shown,
+//! still positioned correctly, still `IsWindowVisible`. Only their content is
+//! gone. That is invisible on the two transparent pill windows, and it takes the
+//! main window's JS with it, which is what registers the global hotkeys and what
+//! drives both pills - so the hotkeys go dead and no pill can ever appear again
+//! until the app is restarted.
+//!
+//! So this module now repairs as well as reports. Each failure kind gets the one
+//! repair that suits it:
+//!   * RENDER_PROCESS_EXITED - reload; this is the recoverable case and the one
+//!     seen in the wild. Microsoft documents `Reload` as the recovery here.
+//!   * GPU_PROCESS_EXITED - log only. WebView2 re-creates the GPU process by
+//!     itself and the content keeps painting, so a reload would throw away good
+//!     state (a live Assistant call included) to fix nothing.
+//!   * BROWSER_PROCESS_EXITED - log only. The WebView2 environment is gone and
+//!     a reload has nothing left to talk to; only recreating the window helps,
+//!     which is more than this module should do on its own.
 //!
 //! Tauri already does the equivalent recovery on macOS - `tauri-runtime-wry`
 //! installs a default `on_web_content_process_terminate` handler that reloads the
@@ -44,11 +58,44 @@ pub fn watch_all(app: &tauri::AppHandle) {
 #[cfg(not(target_os = "windows"))]
 pub fn watch_all(_app: &tauri::AppHandle) {}
 
+/// How many reloads one window may be given inside `RELOAD_WINDOW`.
+///
+/// A render process that dies once is an accident worth repairing. One that dies
+/// again the moment it comes back is a crash loop, and reloading into it forever
+/// would burn the CPU and hide the real fault. After the budget is spent the
+/// failure is logged and left alone.
+#[cfg(target_os = "windows")]
+const RELOAD_BUDGET: usize = 3;
+
+#[cfg(target_os = "windows")]
+const RELOAD_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Recent reload times per window label, for the budget above.
+#[cfg(target_os = "windows")]
+static RELOADS: once_cell::sync::Lazy<
+  std::sync::Mutex<std::collections::HashMap<String, Vec<std::time::Instant>>>,
+> = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+/// Whether `label` may be reloaded now, recording the attempt when it may.
+///
+/// A poisoned lock allows the reload: the repair matters more than the counter.
+#[cfg(target_os = "windows")]
+fn may_reload(label: &str) -> bool {
+  let Ok(mut map) = RELOADS.lock() else { return true };
+  let now = std::time::Instant::now();
+  let seen = map.entry(label.to_string()).or_default();
+  seen.retain(|t| now.duration_since(*t) < RELOAD_WINDOW);
+  if seen.len() >= RELOAD_BUDGET {
+    return false;
+  }
+  seen.push(now);
+  true
+}
+
 /// Attach a `ProcessFailed` handler to one window's WebView2.
 ///
-/// Failures here are logged and swallowed: this is instrumentation, and a
-/// diagnostic that can stop a window from opening is worse than the bug it was
-/// added to investigate.
+/// Failures here are logged and swallowed: a handler that can stop a window from
+/// opening is worse than the bug it was added to repair.
 #[cfg(target_os = "windows")]
 fn watch(window: &tauri::WebviewWindow) {
   let label = window.label().to_string();
@@ -73,7 +120,7 @@ fn watch(window: &tauri::WebviewWindow) {
     };
 
     let for_event = label_for_closure.clone();
-    let handler = ProcessFailedEventHandler::create(Box::new(move |_sender, args| {
+    let handler = ProcessFailedEventHandler::create(Box::new(move |sender, args| {
       let Some(args) = args else {
         println!("[webview-health] {for_event}: process failed, no details supplied");
         return Ok(());
@@ -90,23 +137,51 @@ fn watch(window: &tauri::WebviewWindow) {
         return Ok(());
       }
 
-      let (name, note) = match kind {
+      // `reload` is the whole decision: only the render process leaves behind a
+      // WebView that can be talked to and a page worth putting back.
+      let (name, note, reload) = match kind {
         COREWEBVIEW2_PROCESS_FAILED_KIND_GPU_PROCESS_EXITED => (
           "GPU_PROCESS_EXITED",
-          " - the suspected hibernation case; the WebView is alive and a nudge should repair it",
+          " - WebView2 restarts the GPU process itself and the content keeps painting; left alone",
+          false,
         ),
         COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED => (
           "BROWSER_PROCESS_EXITED",
           " - the WebView is gone; only recreating it will help",
+          false,
         ),
-        COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED => ("RENDER_PROCESS_EXITED", " - a reload should repair it"),
-        COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE => ("RENDER_PROCESS_UNRESPONSIVE", ""),
+        COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED => {
+          ("RENDER_PROCESS_EXITED", " - reloading", true)
+        }
+        // Unresponsive is not dead. It arrives repeatedly while a page is merely
+        // slow, and reloading one would throw away work the user is waiting on.
+        COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE => {
+          ("RENDER_PROCESS_UNRESPONSIVE", " - left alone; it may still recover", false)
+        }
         other => {
           println!("[webview-health] {for_event}: PROCESS FAILED kind={} (unrecognised)", other.0);
           return Ok(());
         }
       };
       println!("[webview-health] {for_event}: PROCESS FAILED {name}{note}");
+
+      if reload {
+        let Some(sender) = sender else {
+          println!("[webview-health] {for_event}: no WebView to reload");
+          return Ok(());
+        };
+        if !may_reload(&for_event) {
+          println!(
+            "[webview-health] {for_event}: not reloading, {RELOAD_BUDGET} reloads already used in the last {}s",
+            RELOAD_WINDOW.as_secs()
+          );
+          return Ok(());
+        }
+        match unsafe { sender.Reload() } {
+          Ok(()) => println!("[webview-health] {for_event}: reloaded"),
+          Err(e) => println!("[webview-health] {for_event}: reload failed: {e}"),
+        }
+      }
       Ok(())
     }));
 
