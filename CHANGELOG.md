@@ -9,6 +9,23 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
+### You can now control how your microphone is cleaned up
+
+kind: feat
+
+Speech-to-text settings gained four microphone switches: echo cancellation,
+noise suppression, automatic gain control and voice isolation. The first three
+were always on, decided by the webview rather than by you, and now they are
+visible and settable. Turning automatic gain control off is worth trying if
+quiet speech comes back badly transcribed.
+
+Voice isolation is the one that helps when something else on the machine is
+making noise, because it is a Windows effect rather than an app one. It needs a
+microphone that offers the effect, so on machines without one the setting says
+so instead of pretending to work. It starts switched off.
+
+The settings apply to Assistant Mode's microphone as well as to recording.
+
 ### The app recovers instead of going silent after a display change
 
 kind: fix

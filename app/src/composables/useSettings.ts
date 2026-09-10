@@ -76,6 +76,14 @@ const settings = reactive({
   stt_cloud_model: 'gpt-transcribe' as string,
   stt_cloud_api_key: '' as string,
   stt_input_device_id: '' as string,
+  // Microphone audio processing. The first three default to what the webview
+  // already applies, so they change nothing until the user says otherwise.
+  stt_echo_cancellation: true as boolean,
+  stt_noise_suppression: true as boolean,
+  stt_auto_gain_control: true as boolean,
+  // An operating-system effect, off unless asked for and missing on most
+  // machines. See `isVoiceIsolationSupported`.
+  stt_voice_isolation: false as boolean,
   stt_post_process_enabled: false as boolean,
   stt_post_process_model: 'gpt-4o-mini' as string,
   stt_post_process_prompt: DEFAULT_STT_POST_PROCESS_PROMPT as string,
@@ -265,6 +273,10 @@ export function useSettings() {
       } else {
         settings.stt_input_device_id = ''
       }
+      settings.stt_echo_cancellation = (v as any).stt_echo_cancellation !== false
+      settings.stt_noise_suppression = (v as any).stt_noise_suppression !== false
+      settings.stt_auto_gain_control = (v as any).stt_auto_gain_control !== false
+      settings.stt_voice_isolation = (v as any).stt_voice_isolation === true
       if (typeof (v as any).stt_post_process_enabled === 'boolean') {
         settings.stt_post_process_enabled = (v as any).stt_post_process_enabled === true
       }

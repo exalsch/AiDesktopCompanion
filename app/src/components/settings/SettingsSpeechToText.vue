@@ -3,6 +3,7 @@
 import { computed, ref, watch, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import CollapsibleCard from '../ui/CollapsibleCard.vue'
+import { isVoiceIsolationSupported } from '../../audioConstraints'
 import { listen } from '@tauri-apps/api/event'
 
 const props = defineProps<{
@@ -12,6 +13,10 @@ const props = defineProps<{
 }>()
 
 const showSttCloudKey = ref(false)
+// Probed once: whether this webview and microphone expose the operating
+// system's voice isolation effect. Most machines do not, and offering a switch
+// that silently does nothing is worse than saying so.
+const voiceIsolationSupported = isVoiceIsolationSupported()
 const inputDevicesBusy = ref(false)
 const inputDevicesError = ref('')
 const inputDevices = ref<Array<{ id: string; label: string }>>([])
@@ -484,6 +489,67 @@ function infoTitle(v: string): string {
       <div class="field-hint">If another audio app hijacks your mic (e.g. virtual devices), select the physical input here.</div>
       <div class="field-hint" v-if="inputDevicesError">{{ inputDevicesError }}</div>
     </div>
+
+    <div class="field">
+      <div class="row-label">
+        <label class="field-label">Microphone processing</label>
+        <span class="info-icon" :title="infoTitle('How the microphone signal is cleaned up before it reaches the recogniser. The first three match what the app already did; change them only if transcripts get worse.')">i</span>
+      </div>
+      <div class="field-hint">
+        Applies to STT recording and to the Assistant Mode microphone.
+        Takes effect on the next recording.
+      </div>
+    </div>
+
+    <label class="switch row">
+      <input type="checkbox" v-model="props.settings.stt_echo_cancellation" />
+      <span class="switch-text">
+        <span class="switch-label">Echo cancellation</span>
+        <span class="switch-hint">
+          Removes this app's own audio from the microphone signal, so the assistant does not transcribe itself.
+          It can only cancel sound the app itself plays: audio from other programs, including text-to-speech
+          run by an MCP server, is produced outside the app and is not affected.
+        </span>
+      </span>
+    </label>
+
+    <label class="switch row">
+      <input type="checkbox" v-model="props.settings.stt_noise_suppression" />
+      <span class="switch-text">
+        <span class="switch-label">Noise suppression</span>
+        <span class="switch-hint">
+          Filters steady background noise such as fans and air conditioning.
+        </span>
+      </span>
+    </label>
+
+    <label class="switch row">
+      <input type="checkbox" v-model="props.settings.stt_auto_gain_control" />
+      <span class="switch-text">
+        <span class="switch-label">Automatic gain control</span>
+        <span class="switch-hint">
+          Levels out how loud you are. Turn it off if quiet speech is being transcribed poorly,
+          or if the gain audibly pumps between words.
+        </span>
+      </span>
+    </label>
+
+    <label class="switch row">
+      <input type="checkbox" v-model="props.settings.stt_voice_isolation" :disabled="!voiceIsolationSupported" />
+      <span class="switch-text">
+        <span class="switch-label">Voice isolation</span>
+        <span class="switch-hint" v-if="voiceIsolationSupported">
+          Keeps your voice and drops everything else, including sound from other programs playing through
+          your speakers. This is a Windows effect rather than an app one, so it is the only setting here that
+          helps when something outside the app is making noise. It can also thin out your own voice, so leave
+          it off unless it earns its place.
+        </span>
+        <span class="switch-hint" v-else>
+          Not available on this machine. It needs a microphone that exposes the Windows voice isolation
+          effect and a webview that can request it.
+        </span>
+      </span>
+    </label>
 
   </CollapsibleCard>
 

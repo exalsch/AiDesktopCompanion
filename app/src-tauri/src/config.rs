@@ -436,6 +436,13 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   if let Some(sm) = map.get("stt_cloud_model").and_then(|x| x.as_str()) { obj.insert("stt_cloud_model".to_string(), serde_json::Value::String(sm.to_string())); }
   if let Some(sk) = map.get("stt_cloud_api_key").and_then(|x| x.as_str()) { obj.insert("stt_cloud_api_key".to_string(), serde_json::Value::String(sk.to_string())); }
   if let Some(did) = map.get("stt_input_device_id").and_then(|x| x.as_str()) { obj.insert("stt_input_device_id".to_string(), serde_json::Value::String(did.to_string())); }
+  // Microphone audio processing. Absent keys keep the webview defaults, so a
+  // settings file written before these existed opens the microphone exactly
+  // as it did before.
+  if let Some(b) = map.get("stt_echo_cancellation").and_then(|x| x.as_bool()) { obj.insert("stt_echo_cancellation".to_string(), serde_json::Value::Bool(b)); }
+  if let Some(b) = map.get("stt_noise_suppression").and_then(|x| x.as_bool()) { obj.insert("stt_noise_suppression".to_string(), serde_json::Value::Bool(b)); }
+  if let Some(b) = map.get("stt_auto_gain_control").and_then(|x| x.as_bool()) { obj.insert("stt_auto_gain_control".to_string(), serde_json::Value::Bool(b)); }
+  if let Some(b) = map.get("stt_voice_isolation").and_then(|x| x.as_bool()) { obj.insert("stt_voice_isolation".to_string(), serde_json::Value::Bool(b)); }
   if let Some(pp) = map.get("stt_post_process_enabled").and_then(|x| x.as_bool()) { obj.insert("stt_post_process_enabled".to_string(), serde_json::Value::Bool(pp)); }
   if let Some(pm) = map.get("stt_post_process_model").and_then(|x| x.as_str()) { obj.insert("stt_post_process_model".to_string(), serde_json::Value::String(pm.to_string())); }
   if let Some(ppp) = map.get("stt_post_process_prompt").and_then(|x| x.as_str()) { obj.insert("stt_post_process_prompt".to_string(), serde_json::Value::String(ppp.to_string())); }

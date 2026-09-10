@@ -34,7 +34,7 @@ const state = reactive({
 async function onRecordToggle() {
   try {
     if (!state.recording) {
-      await startRecording('audio/webm;codecs=opus', String(settings.stt_input_device_id || ''))
+      await startRecording('audio/webm;codecs=opus', String(settings.stt_input_device_id || ''), settings)
       state.recording = true
       state.error = ''
       state.originalTranscript = ''

@@ -198,11 +198,13 @@ async function startCommandMode(): Promise<void> {
     commandStopRequested.value = false
     commandSelectedText.value = ''
     let inputDeviceId = ''
+    let audioSettings: any = null
     try {
       const cfg = await invoke<any>('get_settings')
       inputDeviceId = String((cfg as any)?.stt_input_device_id || '').trim()
+      audioSettings = cfg
     } catch {}
-    await sttStart('audio/webm;codecs=opus', inputDeviceId)
+    await sttStart('audio/webm;codecs=opus', inputDeviceId, audioSettings)
     commandRecording.value = true
     await suppressKeyGlobal('C', () => {
       if (commandRecording.value) void stopCommandModeAndRun()
@@ -632,11 +634,13 @@ async function startSTT(): Promise<void> {
     sttStopRequested.value = false
     sttPostProcessQuickPromptIndex.value = null
     let inputDeviceId = ''
+    let audioSettings: any = null
     try {
       const cfg = await invoke<any>('get_settings')
       inputDeviceId = String((cfg as any)?.stt_input_device_id || '').trim()
+      audioSettings = cfg
     } catch {}
-    await sttStart('audio/webm;codecs=opus', inputDeviceId)
+    await sttStart('audio/webm;codecs=opus', inputDeviceId, audioSettings)
     sttRecording.value = true
     // Register global S-key shortcut to prevent "sssss" in other apps while user holds S
     await suppressKeyGlobal('S', () => {
