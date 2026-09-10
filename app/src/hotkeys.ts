@@ -109,6 +109,21 @@ export async function initGlobalHotkeys(): Promise<void> {
 
   console.info('[hotkeys] Initializing global shortcuts…')
 
+  // Drop anything this process still holds before registering.
+  //
+  // Normally `beforeunload` releases the shortcuts, but a WebView2 render
+  // process that dies never gets to run it (see `webview_health.rs`). The
+  // registrations live in Rust, so they survive the crash and outlive the page
+  // that made them, holding the combinations with callbacks that go nowhere.
+  // Every `register` below would then fail as already-taken and the app would
+  // come back from the reload with no working hotkeys at all. On a healthy
+  // start there is nothing registered and this does nothing.
+  try {
+    await unregisterAll()
+  } catch (e) {
+    console.warn('[hotkeys] could not clear previous registrations', e)
+  }
+
   // Load user-configured hotkeys from persisted settings (if any). If the popup
   // hotkey fails to register (typically because another app already owns it),
   // fall through to the default candidate list instead of leaving the app with
