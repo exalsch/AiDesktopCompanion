@@ -9,6 +9,8 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
+## 0.1.25 - 2026-09-15
+
 ### You can dictate straight into the prompt box
 
 kind: feat
