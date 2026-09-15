@@ -160,6 +160,7 @@ pub fn run() {
       command_hook::create_default_command_script,
       command_hook::open_command_hooks_folder,
       command_hook::get_active_app_name,
+      command_hook::get_active_window_title,
       command_hook::pick_app_under_cursor,
       mcp_connect,
       mcp_disconnect,
@@ -546,6 +547,21 @@ async fn maybe_post_process_stt_text(text: String, prompt_override: Option<Strin
     .map(|s| s.trim().to_string())
     .filter(|s| !s.is_empty())
     .unwrap_or_else(|| config::get_stt_post_process_prompt_from_settings_or_env());
+
+  // Let the prompt (whether the stored setting or a one-off override)
+  // reference the window the transcript is destined for. Substituted here so
+  // the raw setting value stays a template; if the window can't be resolved
+  // (e.g. no prior focused window recorded yet) the placeholder is simply
+  // replaced with an empty string rather than left dangling in the prompt.
+  let prompt = if prompt.contains("{{active_app}}") || prompt.contains("{{window_title}}") {
+    let active_app = command_hook::active_app_name_from_last_foreground();
+    let window_title = command_hook::window_title_from_last_foreground();
+    prompt
+      .replace("{{active_app}}", &active_app)
+      .replace("{{window_title}}", &window_title)
+  } else {
+    prompt
+  };
 
   // The vocabulary rides on whichever prompt is in play, the override included:
   // an override replaces the instructions for one call, it does not mean the

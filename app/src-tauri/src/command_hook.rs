@@ -24,7 +24,7 @@ use windows::Win32::System::Threading::{
 use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::WindowsAndMessaging::{
-  GetAncestor, GetCursorPos, WindowFromPoint, GA_ROOT,
+  GetAncestor, GetCursorPos, GetWindowTextW, WindowFromPoint, GA_ROOT,
 };
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
@@ -235,6 +235,42 @@ pub(crate) fn active_app_name_from_last_foreground() -> String {
 #[tauri::command]
 pub fn get_active_app_name() -> String {
   active_app_name_from_last_foreground()
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn window_title_from_last_foreground() -> String {
+  let hraw = match crate::quick_actions::last_foreground_handle_raw() {
+    Some(v) => v,
+    None => return String::new(),
+  };
+
+  unsafe {
+    let hwnd = HWND(hraw as *mut c_void);
+    if hwnd.0.is_null() {
+      return String::new();
+    }
+
+    let mut buf = [0u16; 512];
+    let len = GetWindowTextW(hwnd, &mut buf);
+    if len <= 0 {
+      return String::new();
+    }
+    String::from_utf16_lossy(&buf[..len as usize])
+  }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn window_title_from_last_foreground() -> String {
+  String::new()
+}
+
+/// Window title of the window that STT/Quick Actions text is about to be
+/// inserted into. Exposed so the STT post-process prompt can reference
+/// `{{window_title}}` for extra context (e.g. distinguishing a terminal tab
+/// from a browser tab within the same app).
+#[tauri::command]
+pub fn get_active_window_title() -> String {
+  window_title_from_last_foreground()
 }
 
 /// Temporarily overrides the system arrow cursor with a crosshair while a

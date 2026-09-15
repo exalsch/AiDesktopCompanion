@@ -9,6 +9,16 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
+### STT post-processing prompt can reference the active window
+
+kind: feat
+
+The "Post-processing prompt" text can now include `{{active_app}}` and
+`{{window_title}}` placeholders. Before the cleanup pass runs, they're
+replaced with the process name and title of the window the transcript is
+about to be inserted into, so the prompt can tailor its behavior per app
+(e.g. a stricter cleanup for a terminal vs. a relaxed one for a chat window).
+
 ## 0.1.25 - 2026-09-15
 
 ### You can dictate straight into the prompt box

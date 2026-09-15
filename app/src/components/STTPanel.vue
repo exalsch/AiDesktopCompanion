@@ -192,6 +192,7 @@ const postProcessStatusHint = computed(() => {
           placeholder="You are an STT post-processor..."
         />
         <p class="field-hint">Which model does this is set under Settings → Speech To Text.</p>
+        <p class="field-hint">You can use <code v-pre>{{active_app}}</code> and <code v-pre>{{window_title}}</code> in the prompt - they're replaced with the process name and title of the window the text is about to be inserted into.</p>
       </div>
 
       <div class="field">
