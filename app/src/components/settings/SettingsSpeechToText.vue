@@ -24,6 +24,38 @@ const commandScriptsBusy = ref(false)
 const commandScriptsError = ref('')
 const commandScripts = ref<string[]>([])
 const commandScriptOpBusy = ref(false)
+const pickAppBusy = ref(false)
+const pickAppError = ref('')
+
+function addAppToPrefixList(name: string) {
+  const trimmed = name.trim()
+  if (!trimmed) return
+  const current = String(props.settings.stt_insert_prefix_apps || '')
+  const lines = current.split(/\r?\n/).map((s) => s.trim()).filter((s) => s.length > 0)
+  if (lines.some((l) => l.toLowerCase() === trimmed.toLowerCase())) return
+  lines.push(trimmed)
+  props.settings.stt_insert_prefix_apps = lines.join('\n')
+}
+
+// Started on pointerdown (button already held): the backend command polls the
+// OS-level mouse/cursor state, which keeps working once the pointer leaves our
+// webview - a plain JS mousemove/mouseup listener would stop firing at that point.
+async function onPickAppPointerDown(e: PointerEvent) {
+  e.preventDefault()
+  if (pickAppBusy.value) return
+  pickAppBusy.value = true
+  pickAppError.value = ''
+  try {
+    const res = await invoke<any>('pick_app_under_cursor')
+    const name = String(res?.process_name || '').trim()
+    if (!name) { pickAppError.value = 'Could not identify a process for that window.'; return }
+    addAppToPrefixList(name)
+  } catch (err: any) {
+    pickAppError.value = typeof err === 'string' ? err : (err?.message || 'Pick failed')
+  } finally {
+    pickAppBusy.value = false
+  }
+}
 
 function selectedInputDeviceExists(): boolean {
   const wanted = String(props.settings.stt_input_device_id || '').trim()
@@ -460,6 +492,42 @@ function infoTitle(v: string): string {
           <option value="local">Local (on-device)</option>
         </select>
       </div>
+    </div>
+
+    <div class="field">
+      <div class="row-label">
+        <label class="field-label">Insert prefix</label>
+        <span class="info-icon" :title="infoTitle('Prepended to the transcript before it is inserted into the focused app via the STT quick action (S). Leave empty for no prefix.')">i</span>
+      </div>
+      <input
+        type="text"
+        class="input w-md"
+        v-model="props.settings.stt_insert_prefix"
+        placeholder="e.g. STT: "
+      />
+      <div class="field-hint">Only applies when dictated text is inserted into another app, not to the STT panel or Command Mode.</div>
+    </div>
+
+    <div class="field" :style="{ opacity: props.settings.stt_insert_prefix ? 1 : 0.6 }">
+      <div class="row-label">
+        <label class="field-label">Apply prefix only in these apps</label>
+        <span class="info-icon" :title="infoTitle('Process names (one per line), e.g. code.exe or WindowsTerminal.exe. The prefix above is only inserted when the app you dictate into matches one of these. Leave empty to never add the prefix.')">i</span>
+      </div>
+      <textarea
+        v-model="props.settings.stt_insert_prefix_apps"
+        class="input mono"
+        rows="3"
+        placeholder="code.exe&#10;WindowsTerminal.exe"
+      />
+      <div class="actions">
+        <button
+          class="btn ghost sm"
+          type="button"
+          @pointerdown="onPickAppPointerDown"
+        >{{ pickAppBusy ? 'Hold and release over the target window…' : '🎯 Press, drag onto a window, release to add' }}</button>
+      </div>
+      <p v-if="pickAppError" class="field-hint error">{{ pickAppError }}</p>
+      <div class="field-hint">Matched case-insensitively against the executable name of the focused app. Empty list = prefix never applied, so it stays out of chats and other apps where it shouldn't appear.</div>
     </div>
 
     <label class="switch row">

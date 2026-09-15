@@ -159,6 +159,8 @@ pub fn run() {
       command_hook::list_command_scripts,
       command_hook::create_default_command_script,
       command_hook::open_command_hooks_folder,
+      command_hook::get_active_app_name,
+      command_hook::pick_app_under_cursor,
       mcp_connect,
       mcp_disconnect,
       mcp_list_tools,

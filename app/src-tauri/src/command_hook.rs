@@ -22,6 +22,12 @@ use windows::Win32::System::Threading::{
 };
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::WindowsAndMessaging::{
+  GetAncestor, GetCursorPos, WindowFromPoint, GA_ROOT,
+};
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 
 static COMMAND_RUNNING: AtomicBool = AtomicBool::new(false);
 
@@ -171,24 +177,11 @@ fn configured_script_name() -> String {
 }
 
 #[cfg(target_os = "windows")]
-fn active_app_name_from_last_foreground() -> String {
-  let hraw = match crate::quick_actions::last_foreground_handle_raw() {
-    Some(v) => v,
-    None => return String::new(),
-  };
-
+fn exe_name_for_pid(pid: u32) -> String {
+  if pid == 0 {
+    return String::new();
+  }
   unsafe {
-    let hwnd = HWND(hraw as *mut c_void);
-    if hwnd.0.is_null() {
-      return String::new();
-    }
-
-    let mut pid: u32 = 0;
-    let _ = GetWindowThreadProcessId(hwnd, Some(&mut pid));
-    if pid == 0 {
-      return String::new();
-    }
-
     let process: HANDLE = match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
       Ok(h) => h,
       Err(_) => return String::new(),
@@ -212,9 +205,137 @@ fn active_app_name_from_last_foreground() -> String {
   }
 }
 
+#[cfg(target_os = "windows")]
+pub(crate) fn active_app_name_from_last_foreground() -> String {
+  let hraw = match crate::quick_actions::last_foreground_handle_raw() {
+    Some(v) => v,
+    None => return String::new(),
+  };
+
+  unsafe {
+    let hwnd = HWND(hraw as *mut c_void);
+    if hwnd.0.is_null() {
+      return String::new();
+    }
+
+    let mut pid: u32 = 0;
+    let _ = GetWindowThreadProcessId(hwnd, Some(&mut pid));
+    exe_name_for_pid(pid)
+  }
+}
+
 #[cfg(not(target_os = "windows"))]
-fn active_app_name_from_last_foreground() -> String {
+pub(crate) fn active_app_name_from_last_foreground() -> String {
   String::new()
+}
+
+/// Process name (e.g. "chrome.exe") of the window that STT/Quick Actions text
+/// is about to be inserted into. Exposed to the frontend so features like the
+/// STT insert-prefix can be scoped to specific applications.
+#[tauri::command]
+pub fn get_active_app_name() -> String {
+  active_app_name_from_last_foreground()
+}
+
+/// Temporarily overrides the system arrow cursor with a crosshair while a
+/// drag-to-pick gesture is in progress, restoring the user's normal cursor
+/// scheme on drop. `SetSystemCursor` is process-wide (not limited to our
+/// window), which is required here since the drag deliberately leaves our
+/// webview to land on another app's window.
+#[cfg(target_os = "windows")]
+struct SystemCrosshairCursorGuard {
+  active: bool,
+}
+
+#[cfg(target_os = "windows")]
+impl SystemCrosshairCursorGuard {
+  fn new() -> Self {
+    use windows::Win32::UI::WindowsAndMessaging::{
+      CopyIcon, LoadCursorW, SetSystemCursor, HCURSOR, HICON, IDC_CROSS, OCR_NORMAL,
+    };
+    let active = unsafe {
+      match LoadCursorW(None, IDC_CROSS) {
+        Ok(base) => match CopyIcon(HICON(base.0)) {
+          Ok(copy) => SetSystemCursor(HCURSOR(copy.0), OCR_NORMAL).is_ok(),
+          Err(_) => false,
+        },
+        Err(_) => false,
+      }
+    };
+    Self { active }
+  }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for SystemCrosshairCursorGuard {
+  fn drop(&mut self) {
+    if !self.active {
+      return;
+    }
+    use windows::Win32::UI::WindowsAndMessaging::{SystemParametersInfoW, SPI_SETCURSORS, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS};
+    unsafe {
+      let _ = SystemParametersInfoW(SPI_SETCURSORS, 0, None, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0));
+    }
+  }
+}
+
+/// Waits for the left mouse button to be released (the caller invokes this
+/// while the user is still holding it down from a drag-and-drop gesture on a
+/// "pick app" button), then resolves the process name of whatever top-level
+/// window is under the cursor at release time.
+///
+/// Polls `GetAsyncKeyState`/`GetCursorPos` rather than a mouse hook: both are
+/// global (not limited to this app's windows), so the drag works even once the
+/// cursor leaves our webview - which a JS `mousemove`/`mouseup` listener can't
+/// observe once the pointer is outside our own window.
+#[cfg(target_os = "windows")]
+#[tauri::command]
+pub async fn pick_app_under_cursor() -> Result<serde_json::Value, String> {
+  use std::time::{Duration, Instant};
+
+  let deadline = Instant::now() + Duration::from_secs(20);
+  // VK_LBUTTON = 0x01; high-order bit of GetAsyncKeyState set means "down now".
+  let is_button_down = || unsafe { (GetAsyncKeyState(0x01) as u16 & 0x8000) != 0 };
+
+  // Held for the duration of the wait loop below; restores the normal cursor
+  // scheme via Drop regardless of which branch we return through.
+  let _cursor_guard = SystemCrosshairCursorGuard::new();
+
+  // Wait out the button-down period the drag started with.
+  while is_button_down() {
+    if Instant::now() >= deadline {
+      return Err("Timed out waiting for the drag to finish".to_string());
+    }
+    std::thread::sleep(Duration::from_millis(30));
+  }
+
+  unsafe {
+    let mut pt = windows::Win32::Foundation::POINT { x: 0, y: 0 };
+    let _ = GetCursorPos(&mut pt);
+    let hwnd = WindowFromPoint(pt);
+    if hwnd.0.is_null() {
+      return Err("No window under the cursor".to_string());
+    }
+    let root = GetAncestor(hwnd, GA_ROOT);
+    let target = if root.0.is_null() { hwnd } else { root };
+
+    let mut pid: u32 = 0;
+    let _ = GetWindowThreadProcessId(target, Some(&mut pid));
+    if pid == std::process::id() {
+      return Err("That window belongs to this app - drag onto a different app's window".to_string());
+    }
+    let process_name = exe_name_for_pid(pid);
+    if process_name.is_empty() {
+      return Err("Could not determine the process name for that window".to_string());
+    }
+    Ok(serde_json::json!({ "process_name": process_name }))
+  }
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+pub async fn pick_app_under_cursor() -> Result<serde_json::Value, String> {
+  Err("Not supported on this platform".to_string())
 }
 
 fn collect_context_env(transcript: &str, selected_text: Option<String>) -> Vec<(String, String)> {

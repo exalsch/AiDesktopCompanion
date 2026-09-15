@@ -89,6 +89,12 @@ const settings = reactive({
   stt_post_process_prompt: DEFAULT_STT_POST_PROCESS_PROMPT as string,
   // Proper nouns the recogniser keeps mangling, one per line.
   stt_vocabulary: '' as string,
+  // Prepended to the transcript before it is inserted into the focused app,
+  // e.g. "STT: ". Empty means no prefix.
+  stt_insert_prefix: '' as string,
+  // Allowlist of process names (one per line, e.g. "code.exe") the prefix
+  // above applies to. Empty means the prefix never applies.
+  stt_insert_prefix_apps: '' as string,
   // Local Whisper (STT) model config
   stt_whisper_model_preset: 'base' as string,
   stt_whisper_model_url: '' as string,
@@ -290,6 +296,12 @@ export function useSettings() {
       }
       if (typeof (v as any).stt_vocabulary === 'string') {
         settings.stt_vocabulary = String((v as any).stt_vocabulary)
+      }
+      if (typeof (v as any).stt_insert_prefix === 'string') {
+        settings.stt_insert_prefix = String((v as any).stt_insert_prefix)
+      }
+      if (typeof (v as any).stt_insert_prefix_apps === 'string') {
+        settings.stt_insert_prefix_apps = String((v as any).stt_insert_prefix_apps)
       }
       // Whisper model selection (optional)
       if (typeof (v as any).stt_whisper_model_preset === 'string') {

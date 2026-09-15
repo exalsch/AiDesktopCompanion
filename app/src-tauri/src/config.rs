@@ -447,6 +447,12 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   if let Some(pm) = map.get("stt_post_process_model").and_then(|x| x.as_str()) { obj.insert("stt_post_process_model".to_string(), serde_json::Value::String(pm.to_string())); }
   if let Some(ppp) = map.get("stt_post_process_prompt").and_then(|x| x.as_str()) { obj.insert("stt_post_process_prompt".to_string(), serde_json::Value::String(ppp.to_string())); }
   if let Some(vocab) = map.get("stt_vocabulary").and_then(|x| x.as_str()) { obj.insert("stt_vocabulary".to_string(), serde_json::Value::String(vocab.to_string())); }
+  // Text prepended to the transcript before it is inserted into the focused app
+  // (e.g. "STT: "). Empty string means no prefix.
+  if let Some(prefix) = map.get("stt_insert_prefix").and_then(|x| x.as_str()) { obj.insert("stt_insert_prefix".to_string(), serde_json::Value::String(prefix.to_string())); }
+  // Allowlist of process names (one per line) the prefix above applies to.
+  // Empty means the prefix never applies (opt-in per app).
+  if let Some(apps) = map.get("stt_insert_prefix_apps").and_then(|x| x.as_str()) { obj.insert("stt_insert_prefix_apps".to_string(), serde_json::Value::String(apps.to_string())); }
   // Whisper (local STT) model selection
   if let Some(u) = map.get("stt_whisper_model_url").and_then(|x| x.as_str()) { obj.insert("stt_whisper_model_url".to_string(), serde_json::Value::String(u.to_string())); }
   if let Some(preset) = map.get("stt_whisper_model_preset").and_then(|x| x.as_str()) { obj.insert("stt_whisper_model_preset".to_string(), serde_json::Value::String(preset.to_string())); }

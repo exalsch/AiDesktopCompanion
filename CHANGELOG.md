@@ -9,6 +9,20 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
+### Dictated text can now get an app-specific prefix
+
+kind: feat
+
+Speech-to-text settings gained an insert prefix (e.g. "STT: ") that is
+prepended to dictated text before it's inserted into the previously focused
+app via the STT quick action. It only applies in apps you explicitly allow, so
+a prefix useful for an agent/chat tool doesn't leak into a messenger where
+dictated text should read naturally.
+
+To build that allowlist without hunting for exe names, press and hold the new
+"drag onto a window" button, drag the crosshair cursor onto the target app's
+window, and release - the app's process name is added automatically.
+
 ## 0.1.24 - 2026-09-10
 
 ### You can now control how your microphone is cleaned up

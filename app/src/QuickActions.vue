@@ -766,13 +766,28 @@ async function stopSTTAndTranscribe(): Promise<void> {
     // clipboard ends up holding, so the net only fires when the insertion
     // actually failed - otherwise a lost transcript would be the only trace.
     if (text && text.trim().length > 0) {
+      let prefixedText = text
+      try {
+        const settings = await invoke<any>('get_settings')
+        const prefix = String(settings?.stt_insert_prefix || '')
+        const allowlist = String(settings?.stt_insert_prefix_apps || '')
+          .split(/\r?\n/)
+          .map((s) => s.trim().toLowerCase())
+          .filter((s) => s.length > 0)
+        if (prefix && allowlist.length > 0) {
+          const activeApp = String(await invoke<string>('get_active_app_name') || '').trim().toLowerCase()
+          if (activeApp && allowlist.includes(activeApp)) {
+            prefixedText = prefix + text
+          }
+        }
+      } catch {}
       try {
         await invoke('refocus_previous_app')
         await new Promise((r) => setTimeout(r, 80))
-        await invoke('insert_text_into_focused_app', { text, safe_mode: false })
+        await invoke('insert_text_into_focused_app', { text: prefixedText, safe_mode: false })
       } catch (err) {
         console.error('[stt] insert failed, falling back to the clipboard', err)
-        try { await invoke('copy_text_to_clipboard', { text }) } catch {}
+        try { await invoke('copy_text_to_clipboard', { text: prefixedText }) } catch {}
       }
     }
   } finally {
