@@ -9,6 +9,17 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
+### You can dictate straight into the prompt box
+
+kind: feat
+
+The Prompt view now has its own "Dictate" button next to Send. Previously
+the only way to voice a prompt was to switch to the separate STT section,
+record there, and click "Use as prompt" - and STT could not insert into the
+prompt textarea directly. Now you can record and transcribe without leaving
+the Prompt view; the text is inserted at the cursor, or replaces your current
+selection, so it composes naturally with anything you've already typed.
+
 ### Dictated text can now get an app-specific prefix
 
 kind: feat

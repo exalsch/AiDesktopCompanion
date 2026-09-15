@@ -404,6 +404,7 @@ async function autoConnectServers() {
                 :quickPrompts="quickPrompts"
                 :activeQuickPrompt="activeQuickPrompt"
                 :systemPromptText="combinedSystemPrompt"
+                :notify="showToast"
                 v-model:composerText="composerInput"
                 @list-tools="onListTools"
                 @toggle-tool="onToggleTool"

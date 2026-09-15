@@ -13,6 +13,7 @@ const props = defineProps<{
   activeQuickPrompt: number | null
   systemPromptText: string
   composerText: string
+  notify?: (msg: string, kind?: 'error' | 'success', ms?: number) => void
 }>()
 
 const emit = defineEmits<{
@@ -97,6 +98,7 @@ defineExpose({
       v-model="composerTextModel"
       :systemPromptText="systemPromptText"
       :pendingImages="pendingImages"
+      :notify="notify"
       @busy="$emit('busy', $event)"
       @clear-attachments="clearImages()"
     />
