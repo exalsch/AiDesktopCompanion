@@ -9,6 +9,8 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
+## 0.1.26 - 2026-09-24
+
 ### You can stop a transcription that is taking too long
 
 kind: feat
