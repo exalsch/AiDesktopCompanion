@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { reactive, watch, computed } from 'vue'
+import { reactive, watch, computed, onMounted, onBeforeUnmount } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
+import type { UnlistenFn } from '@tauri-apps/api/event'
 import { startRecording, stopRecording, transcodeToWav16kMono } from '../stt'
 import { useSettings } from '../composables/useSettings'
 import { estimateTextTokens, formatTokenInfo } from '../composables/useTokenEstimate'
@@ -12,6 +14,12 @@ type SttTranscriptionResult = {
   post_process_applied?: boolean
   post_process_error?: string | null
 }
+
+/** Backend record of the most recent transcription, whatever started it. */
+type LastTranscript = SttTranscriptionResult & { at_ms: number }
+
+/** Must match `stt_session::CANCELLED_MESSAGE` on the Rust side. */
+const CANCELLED_MESSAGE = 'Transcription cancelled'
 
 const emit = defineEmits<{
   (e: 'use-as-prompt', text: string): void
@@ -28,8 +36,52 @@ const state = reactive({
   postProcessApplied: false,
   postProcessError: '' as string,
   busy: false,
+  stopping: false,
   error: '' as string,
+  at: 0,
 })
+
+function applyTranscript(r: SttTranscriptionResult, atMs?: number) {
+  state.originalTranscript = String(r?.original_text || '').trim()
+  state.transcript = String(r?.final_text || '').trim()
+  state.postProcessApplied = r?.post_process_applied === true
+  state.postProcessError = String(r?.post_process_error || '').trim()
+  state.at = atMs || Date.now()
+}
+
+// Most transcriptions start from a hotkey with this window closed. The backend
+// keeps the last one and announces each new one, so this panel always shows
+// what was said last and what the AI pass made of it, not just the recordings
+// made from here.
+let unlistenLast: UnlistenFn | null = null
+onMounted(async () => {
+  try {
+    unlistenLast = await listen<LastTranscript>('stt:last-transcript', (e) => {
+      if (e?.payload && !state.recording) applyTranscript(e.payload, e.payload.at_ms)
+    })
+  } catch (err) {
+    console.warn('[stt] listen for last transcript failed', err)
+  }
+  try {
+    const last = await invoke<LastTranscript | null>('stt_get_last_transcript')
+    if (last && !state.transcript && !state.recording) applyTranscript(last, last.at_ms)
+  } catch (err) {
+    console.warn('[stt] load last transcript failed', err)
+  }
+})
+onBeforeUnmount(() => {
+  if (unlistenLast) { try { unlistenLast() } catch {} }
+})
+
+async function onStopTranscription() {
+  if (!state.busy || state.stopping) return
+  state.stopping = true
+  try {
+    await invoke('stt_cancel')
+  } catch (e: any) {
+    props.notify?.(e?.message || String(e) || 'Could not stop transcription', 'error')
+  }
+}
 
 async function onRecordToggle() {
   try {
@@ -83,10 +135,7 @@ async function transcribeBlob(blob: Blob, mime: string) {
     }
     const bytes = Array.from(payloadBytes)
     const result: SttTranscriptionResult = await invoke('stt_transcribe', { audio: bytes, mime: payloadMime })
-    state.originalTranscript = String(result?.original_text || '').trim()
-    state.transcript = String(result?.final_text || '').trim()
-    state.postProcessApplied = result?.post_process_applied === true
-    state.postProcessError = String(result?.post_process_error || '').trim()
+    applyTranscript(result)
 
     if (settings.stt_post_process_enabled && state.postProcessError) {
       props.notify?.(state.postProcessError, 'error', 4200)
@@ -94,10 +143,15 @@ async function transcribeBlob(blob: Blob, mime: string) {
     if (!state.transcript) props.notify?.('No transcription returned', 'error')
   } catch (e: any) {
     const msg = e?.message || String(e) || 'Transcription failed'
-    state.error = msg
-    props.notify?.(msg, 'error')
+    if (msg === CANCELLED_MESSAGE) {
+      props.notify?.('Transcription stopped', 'success', 1500)
+    } else {
+      state.error = msg
+      props.notify?.(msg, 'error')
+    }
   } finally {
     state.busy = false
+    state.stopping = false
   }
 }
 
@@ -127,7 +181,18 @@ const sttTextTokens = computed(() => {
   return estimateTextTokens(state.transcript || '', sttModelName.value, tokenizerMode.value).tokens
 })
 const sttTokenHint = computed(() => formatTokenInfo([{ label: 'text', tokens: sttTextTokens.value }]))
-const showOriginalTranscript = computed(() => settings.stt_post_process_enabled && !!state.originalTranscript)
+// Side by side whenever the AI pass actually produced the text, so a rewrite
+// that went wrong (answering the dictation instead of cleaning it up) is plain
+// to see next to what was really said.
+const showComparison = computed(() => state.postProcessApplied && !!state.originalTranscript)
+const transcriptTime = computed(() => {
+  if (!state.at) return ''
+  try {
+    return new Date(state.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  } catch {
+    return ''
+  }
+})
 /**
  * Whether the vocabulary can reach the engine at all.
  *
@@ -142,9 +207,10 @@ const vocabularyInert = computed(() =>
   && String(settings.stt_local_model || '').includes('parakeet')
 )
 const postProcessStatusHint = computed(() => {
-  if (!settings.stt_post_process_enabled || !state.transcript) return ''
+  if (!state.transcript) return ''
   if (state.postProcessError) return `Post-processing error: ${state.postProcessError}`
-  if (state.postProcessApplied) return 'Post-processing applied.'
+  if (state.postProcessApplied) return ''
+  if (!settings.stt_post_process_enabled) return ''
   return 'Post-processing enabled, but no changes were applied.'
 })
 </script>
@@ -166,6 +232,13 @@ const postProcessStatusHint = computed(() => {
           <span class="rec-dot" :class="{ live: state.recording }" aria-hidden="true"></span>
           {{ state.recording ? 'Stop & transcribe' : 'Record' }}
         </button>
+        <button
+          v-if="state.busy"
+          class="btn ghost"
+          type="button"
+          :disabled="state.stopping"
+          @click="onStopTranscription"
+        >{{ state.stopping ? 'Stopping…' : 'Stop transcribing' }}</button>
         <span class="field-hint">
           {{ state.busy ? 'Transcribing…' : 'Captured with MediaRecorder (WEBM/Opus). Needs microphone permission.' }}
         </span>
@@ -218,8 +291,8 @@ const postProcessStatusHint = computed(() => {
   <section class="card" v-if="state.transcript">
     <div class="card-head">
       <span class="card-heading">
-        <span class="card-title">Transcript</span>
-        <span class="card-desc">{{ sttTokenHint }}</span>
+        <span class="card-title">Last transcript</span>
+        <span class="card-desc">{{ transcriptTime ? `${transcriptTime} · ` : '' }}{{ sttTokenHint }}</span>
       </span>
       <span class="actions">
         <button class="btn ghost sm" type="button" @click="onCopy">Copy</button>
@@ -227,20 +300,25 @@ const postProcessStatusHint = computed(() => {
       </span>
     </div>
     <div class="card-body">
-      <textarea class="input" :value="state.transcript" rows="6" readonly />
+      <!-- With the AI pass in play, show both: what the engine heard and what
+           was inserted. Otherwise the one text is all there is. -->
+      <template v-if="showComparison">
+        <div class="field">
+          <label class="field-label">Transcribed</label>
+          <textarea class="input" :value="state.originalTranscript" rows="4" readonly />
+        </div>
+        <div class="field">
+          <label class="field-label">AI corrected</label>
+          <textarea class="input" :value="state.transcript" rows="4" readonly />
+        </div>
+      </template>
+      <textarea v-else class="input" :value="state.transcript" rows="6" readonly />
 
       <p
         v-if="postProcessStatusHint"
         class="field-hint"
         :class="{ error: !!state.postProcessError }"
       >{{ postProcessStatusHint }}</p>
-
-      <!-- Only worth showing once post-processing has actually rewritten
-           something, as a before/after for the cleanup. -->
-      <div v-if="showOriginalTranscript" class="field">
-        <label class="field-label">Before post-processing</label>
-        <textarea class="input" :value="state.originalTranscript" rows="4" readonly />
-      </div>
     </div>
   </section>
 </template>

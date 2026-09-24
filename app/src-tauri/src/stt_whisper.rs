@@ -258,8 +258,22 @@ pub async fn transcribe_local(audio: Vec<u8>, mime: String) -> Result<String, St
     params.set_initial_prompt(&vocabulary);
   }
 
+  // Lets a Stop press end a long run between decoding steps instead of
+  // letting it burn CPU to the end. A plain function reading a static flag,
+  // so there is no user data pointer to keep alive.
+  unsafe {
+    params.set_abort_callback(Some(crate::stt_session::whisper_abort_callback));
+  }
+
   let mut state = ctx.create_state().map_err(|e| format!("whisper state create failed: {e}"))?;
-  state.full(params, &pcm).map_err(|e| format!("whisper full failed: {e}"))?;
+  if crate::stt_session::cancel_requested() {
+    return Err(crate::stt_session::CANCELLED_MESSAGE.to_string());
+  }
+  let run = state.full(params, &pcm);
+  if crate::stt_session::cancel_requested() {
+    return Err(crate::stt_session::CANCELLED_MESSAGE.to_string());
+  }
+  run.map_err(|e| format!("whisper full failed: {e}"))?;
 
   let num_segments = state.full_n_segments();
   let mut out = String::new();

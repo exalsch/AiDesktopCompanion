@@ -17,6 +17,7 @@ type BusyState = {
   label: string
   detail: string
   started_ms: number
+  cancellable?: boolean
 }
 
 const state = ref<BusyState>({ state: 'idle', label: '', detail: '', started_ms: 0 })
@@ -74,11 +75,27 @@ function stopTicker() {
 function applyState(next: BusyState) {
   state.value = next
   nowMs.value = Date.now()
+  if (next.state !== 'running') stopping.value = false
   clearErrorTimer()
   if (next.state === 'running') startTicker()
   else stopTicker()
   if (next.state === 'error') {
     errorTimer = window.setTimeout(() => { void dismiss() }, ERROR_AUTO_HIDE_MS)
+  }
+}
+
+const canStop = computed(() => state.value.state === 'running' && state.value.cancellable === true)
+const stopping = ref(false)
+
+// Stops the running operation (today only a transcription). The pill hides
+// itself once the backend has wound it down.
+async function stop() {
+  if (stopping.value) return
+  stopping.value = true
+  try {
+    await invoke('busy_cancel')
+  } catch (err) {
+    console.warn('[busy] cancel failed', err)
   }
 }
 
@@ -131,9 +148,17 @@ onBeforeUnmount(() => {
       <div class="label">{{ state.label || 'Working' }}</div>
       <div v-if="state.state === 'error'" class="detail">{{ errorText }}</div>
       <div v-else class="detail">
-        {{ elapsedText }}<span v-if="slow"> · still working</span>
+        {{ stopping ? 'Stopping…' : elapsedText }}<span v-if="slow && !stopping"> · still working</span>
       </div>
     </div>
+    <button
+      v-if="canStop"
+      class="stop"
+      type="button"
+      title="Stop"
+      :disabled="stopping"
+      @click.stop="stop"
+    >Stop</button>
   </div>
 </template>
 
@@ -191,6 +216,27 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.stop {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 3px 10px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--adc-fg, #f2f3f5);
+  background: transparent;
+  border: 1px solid var(--adc-border, #33363d);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.stop:hover:not(:disabled) {
+  border-color: #b3413b;
+  color: #f0a6a2;
+}
+.stop:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 .is-error .detail {
   color: #f0a6a2;
