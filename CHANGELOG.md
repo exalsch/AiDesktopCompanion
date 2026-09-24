@@ -9,6 +9,35 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
+### You can stop a transcription that is taking too long
+
+kind: feat
+
+A long recording on a big local Whisper model could keep the app busy for a
+long time with no way out. The floating "Transcribing speech" indicator now has
+a Stop button. The STT section and the Dictate button in the Prompt view can
+stop it too. Stopping ends the Whisper run or cancels a cloud request or the AI
+cleanup pass. Nothing gets pasted.
+
+### The STT section shows your last transcription, before and after AI
+
+kind: feat
+
+The STT section now shows the most recent transcription, even when it was
+started from a hotkey with the main window closed. When "Improve transcribed
+text with AI" ran, you see both what was heard and what the AI turned it into,
+so you can tell at a glance whether the cleanup changed your words.
+
+### AI cleanup no longer answers what you dictate
+
+kind: fix
+
+Dictating a question or a request ("can you check the logs") with "Improve
+transcribed text with AI" on could make the model answer or act on it instead
+of just cleaning up the text. The transcript is now handed to the model as
+text to process, with a standing instruction never to reply to it or follow
+it. This also applies to quick prompts run over dictated text.
+
 ### STT post-processing prompt can reference the active window
 
 kind: feat

@@ -30,11 +30,14 @@ pub struct BusyState {
   /// Wall-clock epoch milliseconds when the operation started, so the window
   /// can render an elapsed-time counter even if it mounts late.
   pub started_ms: i64,
+  /// Whether the pill offers a Stop button. Only transcription can be stopped
+  /// today, so `busy_cancel` goes straight to the STT cancel flag.
+  pub cancellable: bool,
 }
 
 impl Default for BusyState {
   fn default() -> Self {
-    Self { state: "idle".into(), label: String::new(), detail: String::new(), started_ms: 0 }
+    Self { state: "idle".into(), label: String::new(), detail: String::new(), started_ms: 0, cancellable: false }
   }
 }
 
@@ -129,6 +132,10 @@ pub fn make_non_activating(_win: &tauri::WebviewWindow) {}
 
 /// Mark the start of a background operation and show the indicator.
 pub fn start(app: &tauri::AppHandle, label: &str) {
+  start_with(app, label, false);
+}
+
+fn start_with(app: &tauri::AppHandle, label: &str, cancellable: bool) {
   let first = {
     let mut count = BUSY_COUNT.lock().unwrap();
     let was_idle = *count == 0;
@@ -148,6 +155,7 @@ pub fn start(app: &tauri::AppHandle, label: &str) {
     label: label.to_string(),
     detail: String::new(),
     started_ms: now_ms(),
+    cancellable,
   };
   if let Ok(mut cur) = BUSY_STATE.lock() {
     *cur = state.clone();
@@ -193,6 +201,7 @@ pub fn finish(app: &tauri::AppHandle, result: Result<(), String>) {
         label: BUSY_STATE.lock().map(|s| s.label.clone()).unwrap_or_default(),
         detail: err,
         started_ms: now_ms(),
+        cancellable: false,
       };
       if let Ok(mut cur) = BUSY_STATE.lock() {
         *cur = state.clone();
@@ -223,6 +232,22 @@ where
   result
 }
 
+/// Like `with_indicator`, but the pill shows a Stop button. A run that ends
+/// because the user stopped it hides the pill rather than flashing an error.
+pub async fn with_cancellable_indicator<T, F>(app: &tauri::AppHandle, label: &str, fut: F) -> Result<T, String>
+where
+  F: std::future::Future<Output = Result<T, String>>,
+{
+  start_with(app, label, true);
+  let result = fut.await;
+  match &result {
+    Ok(_) => finish(app, Ok(())),
+    Err(e) if e == crate::stt_session::CANCELLED_MESSAGE => finish(app, Ok(())),
+    Err(e) => finish(app, Err(e.clone())),
+  }
+  result
+}
+
 /// Current state, so the indicator window can render correctly even when its
 /// webview finishes loading after the operation already started.
 #[tauri::command]
@@ -239,5 +264,12 @@ pub fn busy_hide(app: tauri::AppHandle) -> Result<(), String> {
   if let Some(win) = app.get_webview_window(BUSY_WINDOW_LABEL) {
     let _ = win.hide();
   }
+  Ok(())
+}
+
+/// Stop button on the pill.
+#[tauri::command]
+pub fn busy_cancel() -> Result<(), String> {
+  crate::stt_session::request_cancel();
   Ok(())
 }

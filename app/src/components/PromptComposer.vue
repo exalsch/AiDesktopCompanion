@@ -127,10 +127,16 @@ async function onSend() {
 // --- In-composer dictation ---
 // Lets a user dictate straight into the prompt textarea instead of switching
 // to the separate STT section and using "Use as prompt".
-const stt = reactive({ recording: false, busy: false })
-const micDisabled = computed(() => sending.value || stt.busy)
+const stt = reactive({ recording: false, busy: false, stopping: false })
+// While transcribing, the same button stops it, so it stays enabled.
+const micDisabled = computed(() => (sending.value && !stt.busy) || stt.stopping)
 
 async function onMicToggle() {
+  if (stt.busy) {
+    stt.stopping = true
+    try { await invoke('stt_cancel') } catch {}
+    return
+  }
   try {
     if (!stt.recording) {
       await startRecording('audio/webm;codecs=opus', String((settings as any).stt_input_device_id || ''), settings as any)
@@ -179,9 +185,12 @@ async function transcribeAndInsert(blob: Blob, mime: string) {
     insertAtCursor(text)
   } catch (e: any) {
     const msg = e?.message || String(e) || 'Transcription failed'
-    props.notify?.(msg, 'error')
+    // Matches `stt_session::CANCELLED_MESSAGE`: the user asked for this.
+    if (msg === 'Transcription cancelled') props.notify?.('Transcription stopped', 'success', 1500)
+    else props.notify?.(msg, 'error')
   } finally {
     stt.busy = false
+    stt.stopping = false
     emit('busy', false)
   }
 }
@@ -241,11 +250,11 @@ defineExpose({
         class="mic"
         :class="{ recording: stt.recording }"
         :disabled="micDisabled"
-        :title="stt.recording ? 'Stop and transcribe' : 'Dictate into the prompt'"
+        :title="stt.busy ? 'Stop transcribing' : (stt.recording ? 'Stop and transcribe' : 'Dictate into the prompt')"
         @click="onMicToggle"
       >
         <span class="rec-dot" :class="{ live: stt.recording }" aria-hidden="true"></span>
-        {{ stt.busy ? 'Transcribing…' : (stt.recording ? 'Stop' : 'Dictate') }}
+        {{ stt.busy ? (stt.stopping ? 'Stopping…' : 'Transcribing… Stop') : (stt.recording ? 'Stop' : 'Dictate') }}
       </button>
       <div class="hint">Press Enter to send</div>
       <button class="send" :disabled="sending || (!input.trim() && pendingImageCount === 0)" @click="onSend">
