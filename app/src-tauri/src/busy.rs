@@ -154,6 +154,38 @@ pub fn make_non_activating(win: &tauri::WebviewWindow) {
 #[cfg(not(target_os = "windows"))]
 pub fn make_non_activating(_win: &tauri::WebviewWindow) {}
 
+/// Put a just-shown pill on top of the topmost band, without activating it.
+///
+/// `set_always_on_top(true)` does not do this: tao skips it when the window is
+/// already flagged topmost, so after a resume the pill kept whatever stale
+/// z-order position it had. Seen in the wild with a full-screen window spanning
+/// every monitor: the pill was shown, correctly placed, and never painted. One
+/// `SetWindowPos(HWND_TOPMOST)` from outside the process was enough to bring it
+/// back, and that is what this repeats on every show.
+#[cfg(target_os = "windows")]
+pub fn raise_topmost(win: &tauri::WebviewWindow) {
+  use windows::Win32::Foundation::HWND;
+  use windows::Win32::UI::WindowsAndMessaging::{
+    SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
+  };
+  if let Ok(handle) = win.hwnd() {
+    unsafe {
+      let _ = SetWindowPos(
+        HWND(handle.0 as _),
+        Some(HWND_TOPMOST),
+        0,
+        0,
+        0,
+        0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+      );
+    }
+  }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn raise_topmost(_win: &tauri::WebviewWindow) {}
+
 /// Mark the start of a background operation and show the indicator.
 pub fn start(app: &tauri::AppHandle, label: &str) {
   start_with(app, label, false);
@@ -189,6 +221,7 @@ fn start_with(app: &tauri::AppHandle, label: &str, cancellable: bool) {
     position_window(app, &win);
     let _ = win.show();
     let _ = win.set_always_on_top(true);
+    raise_topmost(&win);
   }
   publish(app, &state);
 }
@@ -235,6 +268,7 @@ pub fn finish(app: &tauri::AppHandle, result: Result<(), String>) {
         position_window(app, &win);
         let _ = win.show();
         let _ = win.set_always_on_top(true);
+        raise_topmost(&win);
       }
       publish(app, &state);
     }

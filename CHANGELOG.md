@@ -9,6 +9,17 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
+### The floating pills no longer stay invisible
+
+kind: fix
+
+The Assistant call pill and the progress indicator could stop appearing: the
+call ran, but no pill showed. The windows were shown in the right place, but
+the webview inside them had decided they were covered by other windows and
+did not draw. It happened after hibernation and also on a normal start, with
+a maximized browser behind the pill. The app now switches that check off and
+puts the pills on top every time they appear.
+
 ### Call costs use current prices and cover Gemini Live
 
 kind: fix

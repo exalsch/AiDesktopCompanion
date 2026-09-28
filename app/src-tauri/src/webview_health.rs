@@ -38,6 +38,41 @@
 //! webview - but it is `#[cfg(macos, ios)]` with no WebView2 equivalent, which is
 //! why this lives in app code.
 
+/// Turn off Chromium's native window occlusion tracking for every WebView2 in
+/// the process.
+///
+/// The second failure after a resume, and the one left once render processes
+/// were being reloaded: every process alive, every window shown, correctly
+/// placed and not cloaked, and the two transparent pills still painting nothing.
+/// Chromium decides a window it believes is covered does not need frames, and
+/// with a full-screen window spanning all monitors that belief went stale across
+/// the sleep. A reload did not help, since the verdict lives in the browser
+/// process; a resize did not either. Only a z-order change made the pill paint
+/// again. The pills are tiny and mostly hidden, so the frames the tracker saves
+/// are not worth a pill that can silently stop appearing.
+///
+/// This goes through the environment variable rather than per-window
+/// `additionalBrowserArgs`, because WebView2 refuses to create a webview whose
+/// arguments differ from the running environment's, and the capture overlay is
+/// created from JS, where those arguments cannot be set. WebView2 merges
+/// `--disable-features` lists, but the defaults wry would otherwise pass are
+/// repeated here so they survive whichever way the two are combined. Must run
+/// before the first webview is created.
+#[cfg(target_os = "windows")]
+pub fn disable_native_occlusion() {
+  const VAR: &str = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS";
+  const ARGS: &str =
+    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion";
+  let value = match std::env::var(VAR) {
+    Ok(existing) if !existing.trim().is_empty() => format!("{existing} {ARGS}"),
+    _ => ARGS.to_string(),
+  };
+  std::env::set_var(VAR, value);
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn disable_native_occlusion() {}
+
 /// Windows that exist for the life of the process and are only ever shown and
 /// hidden, never recreated. They are the ones exposed to this: a window that is
 /// rebuilt gets a fresh WebView and repairs itself by accident.

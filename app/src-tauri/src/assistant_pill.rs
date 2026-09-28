@@ -142,6 +142,7 @@ pub fn assistant_pill_set(
       position_window(&app, &win);
       let _ = win.show();
       let _ = win.set_always_on_top(true);
+      crate::busy::raise_topmost(&win);
     }
   }
   // Move a showing busy pill above the call pill, or back into the corner.
