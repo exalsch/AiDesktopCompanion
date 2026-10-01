@@ -213,40 +213,164 @@ pub async fn transcribe_local(audio: Vec<u8>, mime: String, has_cuda: bool, loca
     let model_dir = ensure_model_files_v3(None).await?;
     let pcm = crate::stt_whisper::decode_to_f32_mono_16k(&audio, &mime)?;
 
-    let model_dir_key = model_dir.to_string_lossy().to_string();
-    let mut cache = PARKEET_TDT_CACHE
-      .lock()
-      .map_err(|_| "parakeet v3 cache lock poisoned".to_string())?;
-
-    let needs_init = match cache.as_ref() {
-      Some(c) => c.has_cuda != has_cuda || c.model_dir != model_dir_key,
-      None => true,
-    };
-
-    if needs_init {
-      let exec = if has_cuda {
-        parakeet_rs_alt::ExecutionConfig::new().with_execution_provider(parakeet_rs_alt::ExecutionProvider::Cuda)
-      } else {
-        parakeet_rs_alt::ExecutionConfig::new().with_execution_provider(parakeet_rs_alt::ExecutionProvider::Cpu)
-      };
-
-      let asr = parakeet_rs_alt::ParakeetTDT::from_pretrained(&model_dir, Some(exec))
-        .map_err(|e| format!("parakeet v3 init failed: {e}"))?;
-
-      *cache = Some(ParakeetTdtCache {
-        has_cuda,
-        model_dir: model_dir_key.clone(),
-        asr,
-      });
-    }
-
-    let asr = cache.as_mut().ok_or_else(|| "parakeet v3 cache init failed".to_string())?;
-    let res = asr
-      .asr
-      .transcribe_samples(pcm, 16000, 1, None)
-      .map_err(|e| format!("parakeet v3 transcribe failed: {e}"))?;
+    let res = with_tdt(&model_dir, has_cuda, |asr| {
+      asr
+        .transcribe_samples(pcm, 16000, 1, None)
+        .map_err(|e| format!("parakeet v3 transcribe failed: {e}"))
+    })?;
     Ok(res.text.trim().to_string())
   }
+}
+
+/// Runs `f` on the cached TDT model, loading it first when nothing is cached
+/// or the cached one was built for another directory or execution provider.
+/// Holds the cache lock for the whole call, so a dictation waits for a file
+/// chunk in progress rather than loading a second copy of the model.
+#[cfg(feature = "local-stt")]
+fn with_tdt<R>(
+  model_dir: &std::path::Path,
+  has_cuda: bool,
+  f: impl FnOnce(&mut parakeet_rs_alt::ParakeetTDT) -> Result<R, String>,
+) -> Result<R, String> {
+  let model_dir_key = model_dir.to_string_lossy().to_string();
+  let mut cache = PARKEET_TDT_CACHE
+    .lock()
+    .map_err(|_| "parakeet v3 cache lock poisoned".to_string())?;
+
+  let needs_init = match cache.as_ref() {
+    Some(c) => c.has_cuda != has_cuda || c.model_dir != model_dir_key,
+    None => true,
+  };
+
+  if needs_init {
+    let asr = parakeet_rs_alt::ParakeetTDT::from_pretrained(model_dir, Some(execution_config(has_cuda)))
+      .map_err(|e| format!("parakeet v3 init failed: {e}"))?;
+
+    *cache = Some(ParakeetTdtCache {
+      has_cuda,
+      model_dir: model_dir_key,
+      asr,
+    });
+  }
+
+  let c = cache.as_mut().ok_or_else(|| "parakeet v3 cache init failed".to_string())?;
+  f(&mut c.asr)
+}
+
+#[cfg(feature = "local-stt")]
+fn execution_config(has_cuda: bool) -> parakeet_rs_alt::ExecutionConfig {
+  if has_cuda {
+    parakeet_rs_alt::ExecutionConfig::new().with_execution_provider(parakeet_rs_alt::ExecutionProvider::Cuda)
+  } else {
+    parakeet_rs_alt::ExecutionConfig::new().with_execution_provider(parakeet_rs_alt::ExecutionProvider::Cpu)
+  }
+}
+
+/// Makes sure the TDT model is on disk (downloading it when missing) and
+/// returns its directory. File transcription calls this before going onto a
+/// blocking thread, where the download could not run.
+#[cfg(feature = "local-stt")]
+pub async fn ensure_model_dir() -> Result<PathBuf, String> {
+  ensure_model_files_v3(None).await
+}
+
+/// Transcribes 16 kHz mono samples into sentences with start and end times in
+/// seconds, relative to the start of `pcm`. Blocking: call it from a blocking
+/// thread. Feed it a few minutes at most; TDT has a sequence length limit
+/// around 8-10 minutes.
+#[cfg(feature = "local-stt")]
+pub fn transcribe_sentences_blocking(
+  model_dir: &std::path::Path,
+  has_cuda: bool,
+  pcm: Vec<f32>,
+) -> Result<Vec<crate::stt_file::TimedText>, String> {
+  use parakeet_rs_alt::Transcriber;
+  // Raw tokens, grouped here rather than by the crate's `Sentences` mode:
+  // that one drops the separate space token in front of a number ("um12
+  // Uhr") and swallows a repeated word ("die die").
+  let res = with_tdt(model_dir, has_cuda, |asr| {
+    asr
+      .transcribe_samples(pcm, 16000, 1, Some(parakeet_rs_alt::TimestampMode::Tokens))
+      .map_err(|e| format!("parakeet v3 transcribe failed: {e}"))
+  })?;
+  let tokens: Vec<crate::stt_file::TimedText> = res
+    .tokens
+    .into_iter()
+    .map(|t| crate::stt_file::TimedText { start: t.start, end: t.end, text: t.text })
+    .collect();
+  Ok(crate::stt_file::sentences_from_tokens(&tokens))
+}
+
+// ---- Speaker diarization (NVIDIA Sortformer v2.1, up to 4 speakers) ----
+
+#[cfg(feature = "local-stt")]
+const DIARIZER_FILE: &str = "diar_streaming_sortformer_4spk-v2.1.onnx";
+#[cfg(feature = "local-stt")]
+const DIARIZER_URL: &str =
+  "https://huggingface.co/altunenes/parakeet-rs/resolve/main/diar_streaming_sortformer_4spk-v2.1.onnx?download=true";
+
+/// The real file is about 490 MB. Anything far smaller is a failed or
+/// truncated download and must not be handed to ONNX Runtime.
+#[cfg(feature = "local-stt")]
+const DIARIZER_MIN_BYTES: u64 = 100 * 1024 * 1024;
+
+#[cfg(feature = "local-stt")]
+fn diarizer_path() -> Result<PathBuf, String> {
+  let dir = models_dir("sortformer").ok_or_else(|| "Unsupported platform for model path".to_string())?;
+  Ok(dir.join(DIARIZER_FILE))
+}
+
+#[cfg(feature = "local-stt")]
+fn diarizer_present(path: &std::path::Path) -> bool {
+  fs::metadata(path).map(|m| m.len() >= DIARIZER_MIN_BYTES).unwrap_or(false)
+}
+
+/// Whether the speaker model is on disk, and where it lives (or would live).
+#[cfg(feature = "local-stt")]
+pub fn diarizer_status() -> Result<(bool, String), String> {
+  let path = diarizer_path()?;
+  Ok((diarizer_present(&path), path.to_string_lossy().to_string()))
+}
+
+#[cfg(not(feature = "local-stt"))]
+pub fn diarizer_status() -> Result<(bool, String), String> {
+  Err("Local STT is not available: app built without 'local-stt' feature.".into())
+}
+
+/// Downloads the speaker model when it is missing. Progress goes out as
+/// `stt-diarizer-download` events in the same shape as the TDT download.
+#[cfg(feature = "local-stt")]
+pub async fn ensure_diarizer(app: Option<&tauri::AppHandle>) -> Result<PathBuf, String> {
+  let path = diarizer_path()?;
+  if diarizer_present(&path) {
+    return Ok(path);
+  }
+  if let Some(dir) = path.parent() {
+    fs::create_dir_all(dir).map_err(|e| format!("create model dir failed: {e}"))?;
+  }
+  download_file_with_progress(app, DIARIZER_URL, &path, "stt-diarizer-download").await?;
+  if !diarizer_present(&path) {
+    return Err("Speaker model download finished but the file is incomplete.".into());
+  }
+  Ok(path)
+}
+
+#[cfg(not(feature = "local-stt"))]
+pub async fn ensure_diarizer(_app: Option<&tauri::AppHandle>) -> Result<PathBuf, String> {
+  Err("Local STT is not available: app built without 'local-stt' feature.".into())
+}
+
+/// Labels who speaks when across the whole recording, as `(start, end,
+/// speaker)` in seconds with zero-based speaker numbers. One pass over the
+/// full file: Sortformer streams internally with a speaker cache, so the
+/// numbers stay stable from start to end. Blocking and not interruptible.
+#[cfg(feature = "local-stt")]
+pub fn diarize_blocking(model_path: &std::path::Path, has_cuda: bool, pcm: Vec<f32>) -> Result<Vec<(f32, f32, usize)>, String> {
+  use parakeet_rs_alt::sortformer::{DiarizationConfig, Sortformer};
+  let mut sf = Sortformer::with_config(model_path, Some(execution_config(has_cuda)), DiarizationConfig::callhome())
+    .map_err(|e| format!("speaker model init failed: {e}"))?;
+  let segs = sf.diarize(pcm, 16000, 1).map_err(|e| format!("speaker diarization failed: {e}"))?;
+  Ok(segs.into_iter().map(|s| (s.start, s.end, s.speaker_id)).collect())
 }
 
 #[cfg(not(feature = "local-stt"))]

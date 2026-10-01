@@ -9,6 +9,7 @@ import PromptMain from './components/prompt/PromptMain.vue'
 import AssistantMode from './components/assistant/AssistantMode.vue'
 import TTSPanel from './components/TTSPanel.vue'
 import STTPanel from './components/STTPanel.vue'
+import SttFilePanel from './components/SttFilePanel.vue'
 import SidebarNav from './components/sidebar/SidebarNav.vue'
 import SettingsMain from './components/settings/SettingsMain.vue'
 import WhatsNewDialog from './components/WhatsNewDialog.vue'
@@ -45,6 +46,7 @@ const ui = reactive({
   sections: ['Prompt', 'Assistant', 'TTS', 'STT', 'Settings'] as const,
   activeSection: 'Prompt' as 'Prompt' | 'Assistant' | 'TTS' | 'STT' | 'Settings',
   promptSubview: 'Chat' as 'Chat' | 'History',
+  sttSubview: 'Dictation' as 'Dictation' | 'Audio Files',
   settingsSubview: 'General' as 'General' | 'Speech To Text' | 'Quick Prompts' | 'MCP Servers',
 })
 
@@ -178,7 +180,7 @@ const { registerAppEvents } = useAppEvents({
   updateMessage: (id: string, patch: any) => { try { return !!updateMessage(id as any, patch) } catch { return false } },
   findServerById: (id: string) => mcp.findServerById(id),
   showToast,
-  setSection: (s: 'Prompt' | 'Assistant' | 'TTS' | 'STT' | 'Settings') => { ui.activeSection = s; if (s === 'Prompt') ui.promptSubview = 'Chat' },
+  setSection: (s: 'Prompt' | 'Assistant' | 'TTS' | 'STT' | 'Settings') => { ui.activeSection = s; if (s === 'Prompt') ui.promptSubview = 'Chat'; if (s === 'STT') ui.sttSubview = 'Dictation' },
   openAssistant,
 })
 
@@ -321,6 +323,7 @@ function openAssistant(autostart: boolean) {
 function setSection(s: 'Prompt' | 'Assistant' | 'TTS' | 'STT' | 'Settings') {
   ui.activeSection = s
   if (s === 'Prompt') ui.promptSubview = 'Chat'
+  if (s === 'STT') ui.sttSubview = 'Dictation'
 }
 
 // Attempt auto-connecting MCP servers based on per-server flag only
@@ -371,6 +374,7 @@ async function autoConnectServers() {
         :sections="ui.sections as any"
         :active-section="ui.activeSection"
         :prompt-subview="ui.promptSubview"
+        :stt-subview="ui.sttSubview"
         :settings-subview="ui.settingsSubview"
         :sidebar-open="layout.sidebarOpen"
         :busy="isBusy"
@@ -378,6 +382,7 @@ async function autoConnectServers() {
         @toggle-sidebar="layout.sidebarOpen = !layout.sidebarOpen"
         @set-section="setSection($event)"
         @open-history="ui.activeSection = 'Prompt'; ui.promptSubview = 'History'"
+        @open-audio-files="ui.activeSection = 'STT'; ui.sttSubview = 'Audio Files'"
         @set-settings-subview="(s) => { ui.activeSection = 'Settings'; ui.settingsSubview = s }"
       />
 
@@ -434,7 +439,17 @@ async function autoConnectServers() {
             <TTSPanel ref="ttsRef" :notify="showToast" @busy="busy.tts = $event" />
           </div>
 
-          <div v-if="ui.activeSection === 'STT'" class="page">
+          <div v-if="ui.activeSection === 'STT' && ui.sttSubview === 'Audio Files'" class="page">
+            <header class="page-head">
+              <div>
+                <h1 class="page-title">Audio Files</h1>
+                <p class="page-desc">Transcribe a recording from disk, with optional speaker labels. Runs locally.</p>
+              </div>
+            </header>
+            <SttFilePanel :notify="showToast" @use-as-prompt="handleUseAsPrompt" />
+          </div>
+
+          <div v-if="ui.activeSection === 'STT' && ui.sttSubview === 'Dictation'" class="page">
             <header class="page-head">
               <div>
                 <h1 class="page-title">Speech To Text</h1>
