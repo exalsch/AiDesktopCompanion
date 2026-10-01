@@ -21,6 +21,7 @@ export type NavIconName =
   | 'general'
   | 'quick-prompts'
   | 'mcp'
+  | 'audio-file'
 
 defineProps<{ name: NavIconName }>()
 </script>
@@ -76,6 +77,15 @@ defineProps<{ name: NavIconName }>()
       <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(180 12 12)" />
       <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(240 12 12)" />
       <rect x="11" y="0" width="2" height="4" rx="1" transform="rotate(300 12 12)" />
+    </template>
+
+    <template v-else-if="name === 'audio-file'">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+      <polyline points="14 2 14 8 20 8" />
+      <path d="M8 16v-2" />
+      <path d="M11 18v-6" />
+      <path d="M14 16v-2" />
+      <path d="M17 17v-4" />
     </template>
 
     <template v-else-if="name === 'history'">

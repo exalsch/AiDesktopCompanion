@@ -104,4 +104,4 @@ webview2-com = "0.38"
 
 [features]
 default = ["local-stt"]
-local-stt = ["whisper-rs", "parakeet_rs_alt", "parakeet_rs_alt/cuda", "ort"]
+local-stt = ["whisper-rs", "parakeet_rs_alt", "parakeet_rs_alt/cuda", "parakeet_rs_alt/sortformer", "ort"]

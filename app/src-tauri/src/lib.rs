@@ -124,6 +124,11 @@ pub fn run() {
       stt_post_process_text,
       stt_session::stt_cancel,
       stt_session::stt_get_last_transcript,
+      stt_file::stt_file_transcribe,
+      stt_file::stt_file_cancel,
+      stt_file::stt_diarizer_status,
+      stt_file::stt_prefetch_diarizer_model,
+      stt_file::stt_file_save_text,
       stt_prefetch_whisper_model,
       stt_prefetch_parakeet_model,
       stt_check_parakeet_cuda,
@@ -225,6 +230,7 @@ mod stt;
 mod stt_whisper;
 mod stt_parakeet;
 mod stt_session;
+mod stt_file;
 mod capture;
 mod chat;
 mod settings;

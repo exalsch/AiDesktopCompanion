@@ -12,6 +12,7 @@ const props = defineProps<{
   sections: ReadonlyArray<Section>
   activeSection: Section
   promptSubview: 'Chat' | 'History'
+  sttSubview: 'Dictation' | 'Audio Files'
   settingsSubview: SettingsSubview
   sidebarOpen: boolean
   busy: boolean
@@ -27,6 +28,7 @@ const emit = defineEmits<{
   (e: 'toggle-sidebar'): void
   (e: 'set-section', section: Section): void
   (e: 'open-history'): void
+  (e: 'open-audio-files'): void
   (e: 'set-settings-subview', sub: SettingsSubview): void
 }>()
 
@@ -56,6 +58,13 @@ function subItemsFor(section: Section) {
       active: props.activeSection === 'Prompt' && props.promptSubview === 'History',
     }]
   }
+  if (section === 'STT') {
+    return [{
+      key: 'Audio Files',
+      icon: 'audio-file' as NavIconName,
+      active: props.activeSection === 'STT' && props.sttSubview === 'Audio Files',
+    }]
+  }
   if (section === 'Settings') {
     return SETTINGS_SUBVIEWS.map(s => ({
       key: s.key,
@@ -68,6 +77,7 @@ function subItemsFor(section: Section) {
 
 function onSubItem(section: Section, key: string) {
   if (section === 'Prompt') emit('open-history')
+  else if (section === 'STT') emit('open-audio-files')
   else emit('set-settings-subview', key as SettingsSubview)
 }
 

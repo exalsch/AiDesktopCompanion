@@ -9,6 +9,20 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
+### Transcribe audio files and see who said what
+
+kind: feat
+
+The STT section has a new **Audio Files** page. Pick a recording (MP3, M4A,
+WAV, FLAC, OGG and more) and it is transcribed on your machine with Parakeet
+or Whisper, with timestamps. Long recordings such as an hour-long meeting work
+too, with progress and a Stop button.
+
+Turn on **Identify speakers** to label who is talking, for up to four voices.
+You can rename "Speaker 1" and the others to real names, then copy the result,
+use it as a prompt or save it as text, Markdown or SRT subtitles. The speaker
+model is a one-time download of about 490 MB.
+
 ## 0.1.26 - 2026-09-24
 
 ### You can stop a transcription that is taking too long

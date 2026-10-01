@@ -69,7 +69,7 @@ pub fn local_model_status(url: String) -> Result<(bool, String, Vec<String>), St
   Ok((false, p, vec![file_name]))
 }
 
-async fn ensure_model_file() -> Result<PathBuf, String> {
+pub(crate) async fn ensure_model_file() -> Result<PathBuf, String> {
   let dir = models_dir().ok_or_else(|| "Unsupported platform for model path".to_string())?;
   if !dir.exists() { fs::create_dir_all(&dir).map_err(|e| format!("create model dir failed: {e}"))?; }
   // Determine model URL from settings, env, or default.
@@ -283,6 +283,65 @@ pub async fn transcribe_local(audio: Vec<u8>, mime: String) -> Result<String, St
     }
   }
   Ok(out.trim().to_string())
+}
+
+/// Transcribes a recording that has already been cut into chunks, loading the
+/// model once for all of them. Returns one list of segments per chunk, with
+/// times in seconds relative to that chunk's start. `before_chunk` runs ahead
+/// of each chunk and stops the run when it returns an error (cancel,
+/// progress). `abort` is polled by whisper.cpp between decoding steps.
+/// Blocking: call it from a blocking thread.
+#[cfg(feature = "local-stt")]
+pub fn transcribe_chunks_blocking(
+  model_path: &std::path::Path,
+  chunks: &[&[f32]],
+  abort: unsafe extern "C" fn(*mut std::ffi::c_void) -> bool,
+  mut before_chunk: impl FnMut(usize) -> Result<(), String>,
+) -> Result<Vec<Vec<crate::stt_file::TimedText>>, String> {
+  let ctx = WhisperContext::new_with_params(
+    model_path.to_string_lossy().as_ref(),
+    WhisperContextParameters::default(),
+  ).map_err(|e| format!("whisper init failed: {e}"))?;
+  let mut state = ctx.create_state().map_err(|e| format!("whisper state create failed: {e}"))?;
+  // Half the cores, not all but one as for dictation: a file job can run for
+  // many minutes and the machine has to stay usable meanwhile.
+  let n_threads = std::cmp::max(1, num_cpus::get() as i32 / 2);
+  let vocabulary = crate::config::get_stt_vocabulary_hint().replace('\0', "");
+
+  let mut out = Vec::with_capacity(chunks.len());
+  for (i, chunk) in chunks.iter().enumerate() {
+    before_chunk(i)?;
+    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+    params.set_n_threads(n_threads);
+    params.set_translate(false);
+    params.set_language(Some("auto"));
+    params.set_print_progress(false);
+    params.set_print_special(false);
+    params.set_print_realtime(false);
+    if !vocabulary.is_empty() {
+      params.set_initial_prompt(&vocabulary);
+    }
+    unsafe {
+      params.set_abort_callback(Some(abort));
+    }
+    state.full(params, chunk).map_err(|e| format!("whisper full failed: {e}"))?;
+
+    let mut segs = Vec::new();
+    for s in 0..state.full_n_segments() {
+      if let Some(seg) = state.get_segment(s) {
+        let text = seg.to_str_lossy().map(|t| t.trim().to_string()).unwrap_or_default();
+        if text.is_empty() { continue; }
+        // whisper.cpp timestamps are in centiseconds.
+        segs.push(crate::stt_file::TimedText {
+          start: seg.start_timestamp() as f32 / 100.0,
+          end: seg.end_timestamp() as f32 / 100.0,
+          text,
+        });
+      }
+    }
+    out.push(segs);
+  }
+  Ok(out)
 }
 
 #[cfg(not(feature = "local-stt"))]
