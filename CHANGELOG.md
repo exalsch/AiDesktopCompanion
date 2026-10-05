@@ -9,6 +9,18 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
+### Use Google Gemini models for chat, quick prompts and STT cleanup
+
+kind: feat
+
+Settings > General has a new **Gemini API key** field. Once it is filled in
+(or `GEMINI_API_KEY` is set), **Fetch models** lists Gemini models next to the
+OpenAI ones. Pick one for chat, for quick prompts or for STT cleanup and that
+feature runs on Gemini; the others keep the model they had. MCP tools work with
+Gemini models too.
+
+Speech synthesis, cloud transcription and Assistant Mode still use OpenAI.
+
 ### Transcribe audio files and see who said what
 
 kind: feat

@@ -149,6 +149,7 @@ pub fn run() {
       get_settings,
       save_settings,
       settings::list_openai_models,
+      settings::list_chat_models,
       load_conversation_state,
       save_conversation_state,
       clear_conversations,
@@ -233,6 +234,7 @@ mod stt_session;
 mod stt_file;
 mod capture;
 mod chat;
+mod llm_provider;
 mod settings;
 mod quick_actions;
 mod command_hook;
@@ -551,20 +553,44 @@ async fn maybe_post_process_stt_text(text: String, prompt_override: Option<Strin
     };
   }
 
-  let key = match config::get_api_key_from_settings_or_env() {
-    Ok(v) => v,
-    Err(_) => match config::get_stt_cloud_api_key_from_settings_or_env() {
-      Some(v) => v,
-      None => {
+  let model = config::get_stt_post_process_model_from_settings_or_env();
+  // A Gemini model goes to Google regardless of the STT base URL, which only
+  // describes where transcription runs. Anything else keeps using that base
+  // URL, so a custom or local OpenAI-compatible server still gets the cleanup.
+  let (chat_url, key) = if llm_provider::provider_for_model(&model) == llm_provider::Provider::Gemini {
+    match llm_provider::chat_endpoint_for_model(&model) {
+      Ok(ep) => (ep.url, ep.key),
+      Err(e) => {
         return SttPostProcessOutcome {
           final_text: original,
           applied: false,
-          error: Some("STT post-processing skipped: API key not configured (openai_api_key/OPENAI_API_KEY or stt_cloud_api_key).".to_string()),
+          error: Some(format!("STT post-processing skipped: {e}.")),
         };
       }
-    },
+    }
+  } else {
+    let key = match config::get_api_key_from_settings_or_env() {
+      Ok(v) => v,
+      Err(_) => match config::get_stt_cloud_api_key_from_settings_or_env() {
+        Some(v) => v,
+        None => {
+          return SttPostProcessOutcome {
+            final_text: original,
+            applied: false,
+            error: Some("STT post-processing skipped: API key not configured (openai_api_key/OPENAI_API_KEY or stt_cloud_api_key).".to_string()),
+          };
+        }
+      },
+    };
+    let base_url = config::get_stt_cloud_base_url_from_settings_or_env();
+    let b = base_url.trim().trim_end_matches('/');
+    let chat_url = if b.ends_with("/v1") {
+      format!("{}/chat/completions", b)
+    } else {
+      format!("{}/v1/chat/completions", b)
+    };
+    (chat_url, key)
   };
-  let model = config::get_stt_post_process_model_from_settings_or_env();
   let prompt = prompt_override
     .map(|s| s.trim().to_string())
     .filter(|s| !s.is_empty())
@@ -631,14 +657,6 @@ async fn maybe_post_process_stt_text(text: String, prompt_override: Option<Strin
     .connect_timeout(std::time::Duration::from_secs(10))
     .build()
     .unwrap_or_else(|_| reqwest::Client::new());
-  // Use the configured base URL for post-processing (respects custom/local LLM endpoints)
-  let base_url = config::get_stt_cloud_base_url_from_settings_or_env();
-  let b = base_url.trim().trim_end_matches('/');
-  let chat_url = if b.ends_with("/v1") {
-    format!("{}/chat/completions", b)
-  } else {
-    format!("{}/v1/chat/completions", b)
-  };
   let resp = match client
     .post(&chat_url)
     .bearer_auth(&key)
@@ -891,10 +909,10 @@ fn cleanup_stale_tts_wavs(max_age_minutes: Option<u64>) -> Result<u32, String> {
 
 #[tauri::command]
 async fn chat_complete(app: tauri::AppHandle, messages: Vec<chat::ChatMessage>) -> Result<String, String> {
-  let key = settings::get_api_key_from_settings_or_env()?;
   let model = settings::get_model_from_settings_or_env();
+  let endpoint = llm_provider::chat_endpoint_for_model(&model)?;
   let temp = settings::get_temperature_from_settings_or_env();
-  chat::chat_complete_with_mcp(app, messages, key, model, temp, &MCP_CLIENTS).await
+  chat::chat_complete_with_mcp(app, messages, endpoint, model, temp, &MCP_CLIENTS).await
 }
 
 // ---------------------------

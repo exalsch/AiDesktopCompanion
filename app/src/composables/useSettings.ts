@@ -40,6 +40,8 @@ const DEFAULT_STT_POST_PROCESS_PROMPT =
 
 const settings = reactive({
   openai_api_key: '',
+  // Used for any model whose id starts with `gemini-`; see llm_provider.rs.
+  gemini_api_key: '' as string,
   openai_chat_model: 'gpt-4o-mini',
   quick_prompt_model: '' as string,
   temperature: 1.0 as number,
@@ -110,6 +112,7 @@ export function useSettings() {
     const v = await invoke<any>('get_settings')
     if (v && typeof v === 'object') {
       if (typeof v.openai_api_key === 'string') settings.openai_api_key = v.openai_api_key
+      if (typeof v.gemini_api_key === 'string') settings.gemini_api_key = v.gemini_api_key
       if (typeof v.openai_chat_model === 'string' && v.openai_chat_model.trim()) settings.openai_chat_model = v.openai_chat_model
       // Optional dedicated model for quick prompts via Quick Actions; empty means fallback to global
       if (typeof (v as any).quick_prompt_model === 'string') {

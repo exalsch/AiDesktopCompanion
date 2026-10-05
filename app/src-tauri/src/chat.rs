@@ -15,7 +15,7 @@ pub struct ChatMessage {
 pub async fn chat_complete_with_mcp(
   app: tauri::AppHandle,
   messages: Vec<ChatMessage>,
-  key: String,
+  endpoint: crate::llm_provider::ChatEndpoint,
   model: String,
   temp: Option<f32>,
   mcp_clients: &AsyncMutex<std::collections::HashMap<String, Arc<RunningService<RoleClient, ()>>>>,
@@ -112,8 +112,8 @@ pub async fn chat_complete_with_mcp(
     }
 
     let resp = client
-      .post("https://api.openai.com/v1/chat/completions")
-      .bearer_auth(&key)
+      .post(&endpoint.url)
+      .bearer_auth(&endpoint.key)
       .json(&body)
       .send()
       .await
@@ -122,7 +122,7 @@ pub async fn chat_complete_with_mcp(
     if !resp.status().is_success() {
       let status = resp.status();
       let body_text = resp.text().await.unwrap_or_default();
-      return Err(format!("OpenAI error: {status} {body_text}"));
+      return Err(format!("{} error: {status} {body_text}", endpoint.provider.label()));
     }
 
     let v: serde_json::Value = resp.json().await.map_err(|e| format!("json error: {e}"))?;
@@ -131,6 +131,9 @@ pub async fn chat_complete_with_mcp(
     let tool_calls_opt = msg.get("tool_calls").and_then(|x| x.as_array()).cloned();
     let content_str_opt = msg.get("content").and_then(|t| t.as_str()).map(|s| s.to_string());
 
+    // The tool_calls array goes back to the model exactly as it came. Gemini 3
+    // attaches a thought signature to each call (`extra_content.google`) and
+    // rejects the follow-up turn if it is missing.
     if allow_tools && tool_calls_opt.is_some() {
       let tool_calls = tool_calls_opt.unwrap();
       // Append assistant message with tool_calls to history
