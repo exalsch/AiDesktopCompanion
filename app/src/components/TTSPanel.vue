@@ -62,24 +62,53 @@ async function refreshOpenaiModels() {
     // No key yet or offline - the fallback list still lets the panel render.
   }
 }
-// Gemini's prebuilt voices. Like OpenAI there is no listing endpoint; each of
-// these was checked against gemini-3.8-flash-tts and gemini-2.5-flash-preview-tts.
-const GEMINI_TTS_VOICES = [
-  'Achernar','Achird','Algenib','Algieba','Alnilam','Aoede','Autonoe','Callirrhoe','Charon','Despina',
-  'Enceladus','Erinome','Fenrir','Gacrux','Iapetus','Kore','Laomedeia','Leda','Orus','Puck',
-  'Pulcherrima','Rasalgethi','Sadachbia','Sadaltager','Schedar','Sulafat','Umbriel','Vindemiatrix','Zephyr','Zubenelgenubi',
+// Gemini's prebuilt voices with the style Google gives each one. Like OpenAI
+// there is no listing endpoint; every name was checked against
+// gemini-3.8-flash-tts and gemini-2.5-flash-preview-tts.
+const GEMINI_TTS_VOICES: Array<{ name: string; style: string }> = [
+  { name: 'Achernar', style: 'Soft' }, { name: 'Achird', style: 'Friendly' }, { name: 'Algenib', style: 'Gravelly' },
+  { name: 'Algieba', style: 'Smooth' }, { name: 'Alnilam', style: 'Firm' }, { name: 'Aoede', style: 'Breezy' },
+  { name: 'Autonoe', style: 'Bright' }, { name: 'Callirrhoe', style: 'Easy-going' }, { name: 'Charon', style: 'Informative' },
+  { name: 'Despina', style: 'Smooth' }, { name: 'Enceladus', style: 'Breathy' }, { name: 'Erinome', style: 'Clear' },
+  { name: 'Fenrir', style: 'Excitable' }, { name: 'Gacrux', style: 'Mature' }, { name: 'Iapetus', style: 'Clear' },
+  { name: 'Kore', style: 'Firm' }, { name: 'Laomedeia', style: 'Upbeat' }, { name: 'Leda', style: 'Youthful' },
+  { name: 'Orus', style: 'Firm' }, { name: 'Puck', style: 'Upbeat' }, { name: 'Pulcherrima', style: 'Forward' },
+  { name: 'Rasalgethi', style: 'Informative' }, { name: 'Sadachbia', style: 'Lively' }, { name: 'Sadaltager', style: 'Knowledgeable' },
+  { name: 'Schedar', style: 'Even' }, { name: 'Sulafat', style: 'Warm' }, { name: 'Umbriel', style: 'Easy-going' },
+  { name: 'Vindemiatrix', style: 'Gentle' }, { name: 'Zephyr', style: 'Bright' }, { name: 'Zubenelgenubi', style: 'Casual' },
 ]
-const FALLBACK_GEMINI_TTS_MODELS = ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts', 'gemini-2.5-flash-preview-tts']
+// Google's current TTS models as of 2026-10. "Fetch" replaces this with what
+// the key can actually reach.
+const FALLBACK_GEMINI_TTS_MODELS = ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts', 'gemini-3.1-flash-tts-preview', 'gemini-2.5-pro-preview-tts', 'gemini-2.5-flash-preview-tts']
+const geminiModelsLoading = ref(false)
 const geminiModelOptions = ref<string[]>([...FALLBACK_GEMINI_TTS_MODELS])
 
-async function refreshGeminiModels() {
+async function refreshGeminiModels(manual = false) {
+  geminiModelsLoading.value = true
   try {
     const all = await invoke<string[]>('list_gemini_tts_models')
     if (Array.isArray(all) && all.length) geminiModelOptions.value = all
-  } catch {
-    // No Gemini key - keep the fallback list.
+  } catch (e: any) {
+    // No Gemini key - keep the fallback list. Only a click deserves a toast.
+    if (manual) props.notify?.(`Gemini models failed: ${e?.message || String(e)}`, 'error')
+  } finally {
+    geminiModelsLoading.value = false
   }
 }
+
+// A saved value that is not in the list still has to be selectable, or the
+// <select> shows blank and the next change silently replaces it.
+function withCurrent(list: string[], current: string): string[] {
+  const c = String(current || '').trim()
+  return c && !list.includes(c) ? [c, ...list] : list
+}
+const geminiModelChoices = computed(() => withCurrent(geminiModelOptions.value, form.geminiModel))
+const geminiVoiceChoices = computed(() => {
+  const c = String(form.geminiVoice || '').trim()
+  return c && !GEMINI_TTS_VOICES.some(v => v.name === c) ? [{ name: c, style: 'current' }, ...GEMINI_TTS_VOICES] : GEMINI_TTS_VOICES
+})
+const openaiModelChoices = computed(() => withCurrent(openaiModelOptions.value, form.openaiModel))
+const openaiVoiceChoices = computed(() => withCurrent(openaiVoiceOptions.value, form.openaiVoice))
 
 const openaiFormatOptions = ref<Array<'wav'|'mp3'|'opus'>>(['wav','mp3','opus'])
 const hasSavableOutput = computed(() => !!String(wavPath.value || '').trim())
@@ -339,19 +368,17 @@ const ttsTokenHint = computed(() => formatTokenInfo([{ label: 'text', tokens: tt
 
       <div class="field" v-if="engine === 'openai'">
         <label class="field-label">Model</label>
-        <input class="input" v-model="form.openaiModel" list="openai-models" placeholder="gpt-4o-mini-tts" />
-        <datalist id="openai-models">
-          <option v-for="m in openaiModelOptions" :key="m" :value="m" />
-        </datalist>
+        <select class="input" v-model="form.openaiModel">
+          <option v-for="m in openaiModelChoices" :key="m" :value="m">{{ m }}</option>
+        </select>
         <p class="field-hint">gpt-4o-mini-tts is the current model and the only one that honours Tone below.</p>
       </div>
 
       <div class="field" v-if="engine === 'openai'">
         <label class="field-label">Voice</label>
-        <input class="input" v-model="form.openaiVoice" list="openai-voices" placeholder="alloy" />
-        <datalist id="openai-voices">
-          <option v-for="v in openaiVoiceOptions" :key="v" :value="v" />
-        </datalist>
+        <select class="input" v-model="form.openaiVoice">
+          <option v-for="v in openaiVoiceChoices" :key="v" :value="v">{{ v }}</option>
+        </select>
         <p class="field-hint">
           {{ String(form.openaiModel || '').startsWith('tts-1')
             ? 'tts-1 supports the nine original voices only.'
@@ -361,20 +388,23 @@ const ttsTokenHint = computed(() => formatTokenInfo([{ label: 'text', tokens: tt
 
       <div class="field" v-if="engine === 'gemini'">
         <label class="field-label">Model</label>
-        <input class="input" v-model="form.geminiModel" list="gemini-tts-models" placeholder="gemini-3.8-flash-tts" />
-        <datalist id="gemini-tts-models">
-          <option v-for="m in geminiModelOptions" :key="m" :value="m" />
-        </datalist>
+        <div class="actions">
+          <select class="input" v-model="form.geminiModel">
+            <option v-for="m in geminiModelChoices" :key="m" :value="m">{{ m }}</option>
+          </select>
+          <button class="btn ghost" type="button" :disabled="geminiModelsLoading" @click="refreshGeminiModels(true)">
+            {{ geminiModelsLoading ? 'Fetching…' : 'Fetch' }}
+          </button>
+        </div>
         <p class="field-hint">Uses the Gemini API key from General settings. Output is always WAV and is not streamed.</p>
       </div>
 
       <div class="field" v-if="engine === 'gemini'">
         <label class="field-label">Voice</label>
-        <input class="input" v-model="form.geminiVoice" list="gemini-voices" placeholder="Kore" />
-        <datalist id="gemini-voices">
-          <option v-for="v in GEMINI_TTS_VOICES" :key="v" :value="v" />
-        </datalist>
-        <p class="field-hint">Thirty prebuilt voices.</p>
+        <select class="input" v-model="form.geminiVoice">
+          <option v-for="v in geminiVoiceChoices" :key="v.name" :value="v.name">{{ v.name }} - {{ v.style }}</option>
+        </select>
+        <p class="field-hint">Thirty prebuilt voices, with the style Google describes for each.</p>
       </div>
 
       <div class="field" v-if="engine !== 'local'">

@@ -452,6 +452,7 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   if let Some(b) = map.get("stt_parakeet_has_cuda").and_then(|x| x.as_bool()) { obj.insert("stt_parakeet_has_cuda".to_string(), serde_json::Value::Bool(b)); }
   if let Some(bu) = map.get("stt_cloud_base_url").and_then(|x| x.as_str()) { obj.insert("stt_cloud_base_url".to_string(), serde_json::Value::String(bu.to_string())); }
   if let Some(sm) = map.get("stt_cloud_model").and_then(|x| x.as_str()) { obj.insert("stt_cloud_model".to_string(), serde_json::Value::String(sm.to_string())); }
+  if let Some(sp) = map.get("stt_cloud_provider").and_then(|x| x.as_str()) { obj.insert("stt_cloud_provider".to_string(), serde_json::Value::String(sp.to_string())); }
   if let Some(sk) = map.get("stt_cloud_api_key").and_then(|x| x.as_str()) { obj.insert("stt_cloud_api_key".to_string(), serde_json::Value::String(sk.to_string())); }
   if let Some(did) = map.get("stt_input_device_id").and_then(|x| x.as_str()) { obj.insert("stt_input_device_id".to_string(), serde_json::Value::String(did.to_string())); }
   // Microphone audio processing. Absent keys keep the webview defaults, so a

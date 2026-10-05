@@ -16,18 +16,24 @@ use crate::tts_utils::write_pcm16_wav_from_any;
 pub const DEFAULT_GEMINI_TTS_MODEL: &str = "gemini-3.8-flash-tts";
 pub const DEFAULT_GEMINI_TTS_VOICE: &str = "Kore";
 
-/// The prompt actually sent. TTS models still read it as a prompt, and some
-/// refuse bare text outright ("Model tried to generate text, but it should only
-/// be used for TTS") - `gemini-2.5-flash-preview-tts` does so for a plain
-/// "Hi.". Both framings were checked by transcribing the result back: the
-/// instruction is not spoken, only the text. A "Style: ..." line after the
-/// instruction made `gemini-3.8-flash-lite-tts` return silence, which is why
-/// the tone goes inline.
+/// The prompt actually sent.
+///
+/// Without a tone it is the bare text. The 3.8 models speak any instruction in
+/// front of it ("Say: Hi." comes out as "Say hi"). With a tone the style goes
+/// inline: a separate "Style: ..." line made `gemini-3.8-flash-lite-tts` return
+/// silence.
 fn build_prompt(text: &str, tone: Option<&str>) -> String {
   match tone.map(str::trim).filter(|t| !t.is_empty()) {
     Some(t) => format!("Say in this style ({t}): {text}"),
-    None => format!("Read the following text aloud, exactly as written:\n\n{text}"),
+    None => text.to_string(),
   }
+}
+
+/// Retry prompt for a model that refused bare text ("Model tried to generate
+/// text, but it should only be used for TTS"). `gemini-2.5-flash-preview-tts`
+/// does that for a short "Hi." and reads this form without speaking the "Say".
+fn build_retry_prompt(text: &str) -> String {
+  format!("Say: {text}")
 }
 
 /// Sample rate from a mime type such as `audio/L16;codec=pcm;rate=24000`.
@@ -114,10 +120,10 @@ pub async fn gemini_synthesize_wav(
   let voice = voice.map(|v| v.trim().to_string()).filter(|v| !v.is_empty()).unwrap_or_else(|| DEFAULT_GEMINI_TTS_VOICE.to_string());
   let prompt = build_prompt(&text, instructions.as_deref());
 
-  // The "tried to generate text" refusal is not deterministic; one retry
-  // clears most of them.
   let (mime, bytes) = match request_audio(&key, &model, &voice, &prompt).await {
-    Err(e) if e.contains("tried to generate text") => request_audio(&key, &model, &voice, &prompt).await?,
+    Err(e) if e.contains("tried to generate text") => {
+      request_audio(&key, &model, &voice, &build_retry_prompt(&text)).await?
+    }
     other => other?,
   };
   let wav = if mime.to_ascii_lowercase().contains("wav") {
@@ -164,7 +170,7 @@ mod tests {
   #[test]
   fn tone_goes_inline() {
     assert_eq!(build_prompt("Hi.", Some("cheerful")), "Say in this style (cheerful): Hi.");
-    assert!(build_prompt("Hi.", Some("  ")).starts_with("Read the following text aloud"));
-    assert!(build_prompt("Hi.", None).ends_with("\n\nHi."));
+    assert_eq!(build_prompt("Hi.", Some("  ")), "Hi.");
+    assert_eq!(build_prompt("Hi.", None), "Hi.");
   }
 }

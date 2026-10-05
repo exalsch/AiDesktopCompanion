@@ -76,6 +76,9 @@ const settings = reactive({
   stt_parakeet_has_cuda: false as boolean,
   stt_cloud_base_url: 'https://api.openai.com' as string,
   stt_cloud_model: 'gpt-transcribe' as string,
+  // Which API the cloud STT engine talks to. Empty means "not chosen yet": the
+  // settings page then infers it from the model and base URL.
+  stt_cloud_provider: '' as '' | 'openai' | 'gemini' | 'custom',
   stt_cloud_api_key: '' as string,
   stt_input_device_id: '' as string,
   // Microphone audio processing. The first three default to what the webview
@@ -273,6 +276,9 @@ export function useSettings() {
       }
       if (typeof (v as any).stt_cloud_model === 'string' && String((v as any).stt_cloud_model).trim()) {
         settings.stt_cloud_model = String((v as any).stt_cloud_model).trim()
+      }
+      if (['openai', 'gemini', 'custom'].includes((v as any).stt_cloud_provider)) {
+        settings.stt_cloud_provider = (v as any).stt_cloud_provider
       }
       if (typeof (v as any).stt_cloud_api_key === 'string') {
         settings.stt_cloud_api_key = String((v as any).stt_cloud_api_key)

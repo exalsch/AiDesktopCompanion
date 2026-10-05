@@ -165,16 +165,54 @@ const parakeetVariants = [
 // the backend reads that field and nothing else. That rules out
 // gpt-4o-transcribe-diarize (needs response_format=diarized_json) and the
 // realtime/streaming models (gpt-live-transcribe, gpt-realtime-whisper).
-const cloudSttModelPresetsBase = [
-  { label: 'GPT Transcribe (gpt-transcribe)', value: 'gpt-transcribe', hint: 'OpenAI current recommendation for recorded audio and the replacement for whisper-1. Best accuracy.' },
-  { label: 'GPT-4o Transcribe (gpt-4o-transcribe)', value: 'gpt-4o-transcribe', hint: 'Previous generation GPT-4o speech-to-text. Still available.' },
-  { label: 'GPT-4o mini Transcribe (gpt-4o-mini-transcribe)', value: 'gpt-4o-mini-transcribe', hint: 'Cheaper and faster than gpt-4o-transcribe, slightly lower accuracy.' },
-  { label: 'Whisper (whisper-1)', value: 'whisper-1', hint: 'Legacy OpenAI model. Keep it for OpenAI-compatible servers that only implement whisper-1.' },
-  { label: 'Parakeet V2 (parakeet-tdt-0.6b-v2)', value: 'parakeet-tdt-0.6b-v2', hint: 'Parakeet via OpenAI-compatible endpoint.' },
-  { label: 'Parakeet V3 (parakeet-tdt-0.6b-v3)', value: 'parakeet-tdt-0.6b-v3', hint: 'Newer Parakeet variant via OpenAI-compatible endpoint.' },
-  { label: 'Gemini 3.5 Flash (gemini-3.5-flash)', value: 'gemini-3.5-flash', hint: 'Google Gemini. Uses the Gemini API key; the base URL and key below are ignored. Good with names and mixed languages.' },
-  { label: 'Gemini 3.5 Flash Lite (gemini-3.5-flash-lite)', value: 'gemini-3.5-flash-lite', hint: 'Google Gemini, cheaper and slightly faster than 3.5 Flash. Uses the Gemini API key.' },
+type CloudProvider = 'openai' | 'gemini' | 'custom'
+const OPENAI_BASE_URL = 'https://api.openai.com'
+
+// Gemini models are not called through /v1/audio/transcriptions; the backend
+// sends them to Google's chat completions with the audio inline.
+const cloudSttModelPresetsBase: Array<{ label: string; value: string; hint: string; providers: CloudProvider[] }> = [
+  { label: 'GPT Transcribe (gpt-transcribe)', value: 'gpt-transcribe', hint: 'OpenAI current recommendation for recorded audio and the replacement for whisper-1. Best accuracy.', providers: ['openai'] },
+  { label: 'GPT-4o Transcribe (gpt-4o-transcribe)', value: 'gpt-4o-transcribe', hint: 'Previous generation GPT-4o speech-to-text. Still available.', providers: ['openai'] },
+  { label: 'GPT-4o mini Transcribe (gpt-4o-mini-transcribe)', value: 'gpt-4o-mini-transcribe', hint: 'Cheaper and faster than gpt-4o-transcribe, slightly lower accuracy.', providers: ['openai'] },
+  { label: 'Whisper (whisper-1)', value: 'whisper-1', hint: 'Legacy OpenAI model, and the name most OpenAI-compatible servers answer to.', providers: ['openai', 'custom'] },
+  { label: 'Parakeet V2 (parakeet-tdt-0.6b-v2)', value: 'parakeet-tdt-0.6b-v2', hint: 'Parakeet via OpenAI-compatible endpoint.', providers: ['custom'] },
+  { label: 'Parakeet V3 (parakeet-tdt-0.6b-v3)', value: 'parakeet-tdt-0.6b-v3', hint: 'Newer Parakeet variant via OpenAI-compatible endpoint.', providers: ['custom'] },
+  { label: 'Gemini 3.5 Flash (gemini-3.5-flash)', value: 'gemini-3.5-flash', hint: 'Good with names and mixed languages. Uses your vocabulary list while transcribing.', providers: ['gemini'] },
+  { label: 'Gemini 3.5 Flash Lite (gemini-3.5-flash-lite)', value: 'gemini-3.5-flash-lite', hint: 'Cheaper and slightly faster than 3.5 Flash.', providers: ['gemini'] },
 ]
+
+const DEFAULT_MODEL_FOR_PROVIDER: Record<CloudProvider, string> = {
+  openai: 'gpt-transcribe',
+  gemini: 'gemini-3.5-flash',
+  custom: 'whisper-1',
+}
+
+/** What a settings file written before the provider choice existed means. */
+function inferCloudProvider(): CloudProvider {
+  if (String(props.settings.stt_cloud_model || '').trim().toLowerCase().startsWith('gemini-')) return 'gemini'
+  const url = String(props.settings.stt_cloud_base_url || '').trim()
+  return !url || url.startsWith(OPENAI_BASE_URL) ? 'openai' : 'custom'
+}
+
+/**
+ * The API the cloud engine talks to. Switching keeps the model when the new
+ * provider offers it and otherwise picks that provider's default; switching to
+ * OpenAI also points the base URL back at OpenAI, which is what the backend
+ * routes on.
+ */
+const cloudProvider = computed<CloudProvider>({
+  get() {
+    const p = props.settings.stt_cloud_provider
+    return p === 'openai' || p === 'gemini' || p === 'custom' ? p : inferCloudProvider()
+  },
+  set(v) {
+    props.settings.stt_cloud_provider = v
+    const model = String(props.settings.stt_cloud_model || '').trim()
+    const fits = cloudSttModelPresetsBase.some(p => p.value === model && p.providers.includes(v))
+    if (!fits) props.settings.stt_cloud_model = DEFAULT_MODEL_FOR_PROVIDER[v]
+    if (v === 'openai') props.settings.stt_cloud_base_url = OPENAI_BASE_URL
+  },
+})
 
 const whisperPresets = [
   { label: 'Whisper Base', value: 'base', hint: 'Fast, lower accuracy', url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin' },
@@ -188,10 +226,6 @@ const whisperPresets = [
   { label: 'Whisper Large V3 Turbo (Q8)', value: 'large-v3-turbo-q8_0', hint: 'Turbo quantized to 8-bit: ~874 MB, accuracy close to full Turbo', url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q8_0.bin' },
   { label: 'Whisper Large V3 Turbo (Q5)', value: 'large-v3-turbo-q5_0', hint: 'Turbo quantized to 5-bit: ~574 MB, about a third of the full download', url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin' },
 ]
-
-function isKnownCloudModel(model: string): boolean {
-  return cloudSttModelPresetsBase.some(p => p.value === model)
-}
 
 const isParakeetLocal = computed(() => {
   return String(props.settings.stt_local_model || '').toLowerCase().includes('parakeet')
@@ -214,11 +248,12 @@ const localProvider = computed({
 })
 
 const cloudSttModelPresets = computed(() => {
+  const forProvider = cloudSttModelPresetsBase.filter(p => p.providers.includes(cloudProvider.value))
   const cur = String(props.settings.stt_cloud_model || '').trim()
-  if (cur && !isKnownCloudModel(cur)) {
-    return [{ label: `${cur} (current)`, value: cur, hint: 'Current value is not in the suggested list.' }, ...cloudSttModelPresetsBase]
+  if (cur && !forProvider.some(p => p.value === cur)) {
+    return [{ label: `${cur} (current)`, value: cur, hint: 'Current value is not in the suggested list.', providers: [cloudProvider.value] }, ...forProvider]
   }
-  return cloudSttModelPresetsBase
+  return forProvider
 })
 
 const postProcessModelOptions = computed(() => {
@@ -442,12 +477,6 @@ const cloudModelNotOnOpenai = computed(() => {
   if (!v) return false
   return !/^(gpt-|whisper-1$|gemini-)/.test(v)
 })
-
-/** Gemini models bypass the base URL and key below and go to Google. */
-const cloudModelIsGemini = computed(() =>
-  String(props.settings.stt_cloud_model || '').trim().toLowerCase().startsWith('gemini-')
-)
-
 /**
  * Whisper's `.en` builds are English-only by construction - they cannot
  * transcribe another language, they transcribe it badly as English.
@@ -491,11 +520,11 @@ function infoTitle(v: string): string {
     <div class="field">
       <div class="row-label">
         <label class="field-label">Engine</label>
-        <span class="info-icon" :title="infoTitle('Local runs fully on-device. Cloud sends audio to the configured endpoint (POST /v1/audio/transcriptions).')">i</span>
+        <span class="info-icon" :title="infoTitle('Local runs fully on-device. API Endpoint sends audio to OpenAI, Gemini or an OpenAI-compatible server of your own.')">i</span>
       </div>
       <div class="actions">
         <select v-model="props.settings.stt_engine" class="input w-md">
-          <option value="openai">Cloud (OpenAI compatible)</option>
+          <option value="openai">API Endpoint</option>
           <option value="local">Local (on-device)</option>
         </select>
       </div>
@@ -772,9 +801,25 @@ function infoTitle(v: string): string {
   <CollapsibleCard
     v-if="props.settings.stt_engine === 'openai'"
     id="settings.stt.cloud"
-    title="Cloud endpoint"
-    desc="Any server implementing POST /v1/audio/transcriptions, or Google Gemini."
+    title="API endpoint"
+    desc="Which service transcribes the audio, and with which model."
   >
+    <div class="field">
+      <label class="field-label">Provider</label>
+      <div class="actions">
+        <select v-model="cloudProvider" class="input w-md">
+          <option value="openai">OpenAI</option>
+          <option value="gemini">Google Gemini</option>
+          <option value="custom">Custom OpenAI-compatible endpoint</option>
+        </select>
+      </div>
+      <p class="field-hint">
+        <template v-if="cloudProvider === 'openai'">Uses the OpenAI API key from General settings.</template>
+        <template v-else-if="cloudProvider === 'gemini'">Uses the Gemini API key from General settings. A single recording can be up to about ten minutes.</template>
+        <template v-else>Your own server, such as a local Whisper or Parakeet service, answering <code>POST /v1/audio/transcriptions</code>.</template>
+      </p>
+    </div>
+
     <div class="field">
       <div class="row-label">
         <label class="field-label">Model</label>
@@ -782,13 +827,9 @@ function infoTitle(v: string): string {
       </div>
 
       <p v-if="cloudModelNotOnOpenai" class="field-hint error">
-        <code>{{ props.settings.stt_cloud_model }}</code> is not a model OpenAI hosts, and the base URL points at
-        api.openai.com. The request will be rejected. Either pick a GPT model below, or point the base URL at a server
-        that serves this one.
-      </p>
-      <p v-if="cloudModelIsGemini" class="field-hint">
-        Gemini models are sent to Google with the Gemini API key from General settings. The base URL and key below
-        are not used for them. A single recording can be up to about ten minutes.
+        <code>{{ props.settings.stt_cloud_model }}</code> is not a model OpenAI hosts, so the request will be
+        rejected. Either pick a model below, or switch the provider to a custom
+        endpoint that serves this one.
       </p>
 
       <div class="model-list">
@@ -810,21 +851,18 @@ function infoTitle(v: string): string {
       </div>
     </div>
 
-    <div v-if="props.settings.stt_engine === 'openai'" class="field">
+    <div v-if="cloudProvider === 'custom'" class="field">
       <div class="row-label">
-        <label class="field-label">Cloud STT Base URL</label>
-        <span class="info-icon" :title="infoTitle('Must support POST /v1/audio/transcriptions (OpenAI compatible).')">i</span>
+        <label class="field-label">Base URL</label>
+        <span class="info-icon" :title="infoTitle('Must support POST /v1/audio/transcriptions (OpenAI compatible). With or without the trailing /v1.')">i</span>
       </div>
-      <div class="actions">
-        <input v-model="props.settings.stt_cloud_base_url" class="input" placeholder="https://api.openai.com" />
-        <button class="btn" @click="props.settings.stt_cloud_base_url = 'https://api.openai.com'">Use OpenAI</button>
-      </div>
+      <input v-model="props.settings.stt_cloud_base_url" class="input" placeholder="http://127.0.0.1:8000" />
     </div>
 
-    <div v-if="props.settings.stt_engine === 'openai'" class="field">
+    <div v-if="cloudProvider === 'custom'" class="field">
       <div class="row-label">
-        <label class="field-label">Cloud STT API Key (optional)</label>
-        <span class="info-icon" :title="infoTitle('Only used for non-OpenAI base URLs that require auth. For OpenAI base URL, the OpenAI API key is used.')">i</span>
+        <label class="field-label">API key (optional)</label>
+        <span class="info-icon" :title="infoTitle('Sent as a Bearer token. Leave empty for servers without authentication.')">i</span>
       </div>
       <div class="actions">
         <input
