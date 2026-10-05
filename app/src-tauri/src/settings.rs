@@ -77,6 +77,26 @@ pub async fn list_gemini_tts_models() -> Result<Vec<String>, String> {
   Ok(ids)
 }
 
+/// Gemini Live (speech-to-speech) models for Assistant Mode.
+///
+/// Live ids are named either `*-live*` or `*-native-audio-*`. The transcribe
+/// and translate variants share the suffix but do not hold a conversation.
+#[tauri::command]
+pub async fn list_gemini_live_models() -> Result<Vec<String>, String> {
+  let key = crate::config::get_gemini_api_key_from_settings_or_env()?;
+  let url = format!("{}/models", crate::llm_provider::GEMINI_OPENAI_BASE_URL);
+  let mut ids: Vec<String> = fetch_model_ids(&url, &key, "Gemini")
+    .await?
+    .into_iter()
+    .map(|id| id.strip_prefix("models/").unwrap_or(&id).to_string())
+    .filter(|id| id.starts_with("gemini-") && (id.contains("live") || id.contains("native-audio")))
+    .filter(|id| !id.contains("transcribe") && !id.contains("translate"))
+    .collect();
+  ids.sort();
+  ids.dedup();
+  Ok(ids)
+}
+
 /// Models for the chat-style pickers (chat, quick prompts, STT cleanup):
 /// OpenAI's and Gemini's, from whichever providers have a key.
 ///

@@ -183,6 +183,8 @@ pub fn run() {
       mcp_ping,
       mcp_is_connected,
       realtime_create_ephemeral_token,
+      gemini_live_create_token,
+      settings::list_gemini_live_models,
       realtime_build_tools,
       realtime_call_tool,
       media::media_hold,
@@ -941,6 +943,45 @@ async fn chat_complete(app: tauri::AppHandle, messages: Vec<chat::ChatMessage>) 
 /// preview id; it has since been retired and no longer appears in `/v1/models`,
 /// which is how this whole feature ended up failing.
 const DEFAULT_REALTIME_MODEL: &str = "gpt-realtime";
+
+/// Mint a single-use ephemeral token for a Gemini Live session.
+///
+/// The Gemini counterpart to `realtime_create_ephemeral_token`: the WebView
+/// opens the Live WebSocket with this as `access_token`, so the API key stays
+/// here. The token may open one session, within a minute; a resumed session
+/// (settings change, `goAway`) asks for a fresh one.
+#[tauri::command]
+async fn gemini_live_create_token() -> Result<String, String> {
+  let key = config::get_gemini_api_key_from_settings_or_env()?;
+  let now = chrono::Utc::now();
+  let body = serde_json::json!({
+    "uses": 1,
+    "expireTime": (now + chrono::Duration::minutes(30)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+    "newSessionExpireTime": (now + chrono::Duration::minutes(1)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+  });
+  let client = reqwest::Client::builder()
+    .timeout(std::time::Duration::from_secs(15))
+    .connect_timeout(std::time::Duration::from_secs(10))
+    .build()
+    .unwrap_or_else(|_| reqwest::Client::new());
+  let resp = client
+    .post("https://generativelanguage.googleapis.com/v1beta/auth_tokens")
+    .header("x-goog-api-key", key)
+    .json(&body)
+    .send()
+    .await
+    .map_err(|e| format!("request failed: {e}"))?;
+  if !resp.status().is_success() {
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    return Err(format!("Gemini error: {status} {text}"));
+  }
+  let v: serde_json::Value = resp.json().await.map_err(|e| format!("json error: {e}"))?;
+  v.get("name")
+    .and_then(|x| x.as_str())
+    .map(|s| s.to_string())
+    .ok_or_else(|| "Gemini returned no token".to_string())
+}
 
 /// Mint an ephemeral client secret for an OpenAI Realtime WebRTC session.
 ///
