@@ -539,9 +539,8 @@ async fn tts_selection_inner(app: tauri::AppHandle, safe_mode: Option<bool>) -> 
     let wav = if engine == "gemini" {
       let voice = settings.get("tts_gemini_voice").and_then(|x| x.as_str()).map(|s| s.to_string());
       let model = settings.get("tts_gemini_model").and_then(|x| x.as_str()).map(|s| s.to_string());
-      let tone = settings.get("tts_openai_instructions").and_then(|x| x.as_str()).map(|s| s.to_string());
       let key = crate::config::get_gemini_api_key_from_settings_or_env()?;
-      crate::tts_gemini::gemini_synthesize_wav(key, selection.clone(), voice, model, Some(rate), Some(vol), tone).await?
+      crate::tts_gemini::gemini_synthesize_wav(key, selection.clone(), voice, model, Some(rate), Some(vol)).await?
     } else {
       let voice = settings.get("tts_openai_voice").and_then(|x| x.as_str()).unwrap_or("alloy").to_string();
       let model = settings.get("tts_openai_model").and_then(|x| x.as_str()).unwrap_or("gpt-4o-mini-tts").to_string();

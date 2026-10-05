@@ -25,8 +25,9 @@ The base URL and key fields only appear for the custom one. Gemini 3.5 Flash
 and Flash Lite also use your vocabulary list while transcribing.
 
 Text to speech has a new **Gemini** engine with thirty voices, each listed with
-its speaking style, and the same Tone, Rate and Volume settings. Model and voice
-are now dropdowns for both cloud engines.
+its speaking style, and the same Rate and Volume settings. Gemini has no Tone
+setting, because its voices read any style instruction out loud. Model and
+voice are now dropdowns for both cloud engines.
 
 Assistant Mode can run on **Gemini Live** models. Pick one from the Gemini
 group in the model list; tools, the supervisor and push-to-talk work as they do

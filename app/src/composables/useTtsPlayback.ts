@@ -63,7 +63,6 @@ export function useTtsPlayback(notify?: NotifyFn) {
         model: form.geminiModel || null,
         rate: form.rate,
         volume: form.volume,
-        instructions: form.openaiInstructions || null,
       })
     }
     return invoke<string>('tts_openai_synthesize_file', {

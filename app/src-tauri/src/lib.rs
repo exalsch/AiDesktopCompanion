@@ -475,12 +475,12 @@ async fn tts_openai_synthesize_file(text: String, voice: Option<String>, model: 
   tts_openai::openai_synthesize_file(key, text, voice, model, format, rate, volume, instructions).await
 }
 
-/// Synthesize speech via Gemini and return a temp WAV path. `instructions` is
-/// the same Tone field the OpenAI engine uses.
+/// Synthesize speech via Gemini and return a temp WAV path. Takes no tone:
+/// see the module docs of `tts_gemini`.
 #[tauri::command]
-async fn tts_gemini_synthesize_file(text: String, voice: Option<String>, model: Option<String>, rate: Option<i32>, volume: Option<u8>, instructions: Option<String>) -> Result<String, String> {
+async fn tts_gemini_synthesize_file(text: String, voice: Option<String>, model: Option<String>, rate: Option<i32>, volume: Option<u8>) -> Result<String, String> {
   let key = config::get_gemini_api_key_from_settings_or_env()?;
-  tts_gemini::gemini_synthesize_wav(key, text, voice, model, rate, volume, instructions).await
+  tts_gemini::gemini_synthesize_wav(key, text, voice, model, rate, volume).await
 }
 
 /// Start a chunked download stream from OpenAI audio/speech and emit chunks to the frontend.

@@ -8,6 +8,12 @@
 //! rate/volume step as OpenAI's output so the sliders mean the same thing.
 //!
 //! No streaming: the whole clip arrives in one response.
+//!
+//! No tone either. The text goes to the model bare because the 3.8 models
+//! speak any instruction placed in front of it ("Say in this style (...)" was
+//! read out), and none of the TTS models accept a system instruction ("Developer
+//! instruction is not enabled for this model"), so there is nowhere else to put
+//! a style.
 
 use base64::Engine;
 
@@ -16,22 +22,10 @@ use crate::tts_utils::write_pcm16_wav_from_any;
 pub const DEFAULT_GEMINI_TTS_MODEL: &str = "gemini-3.8-flash-tts";
 pub const DEFAULT_GEMINI_TTS_VOICE: &str = "Kore";
 
-/// The prompt actually sent.
-///
-/// Without a tone it is the bare text. The 3.8 models speak any instruction in
-/// front of it ("Say: Hi." comes out as "Say hi"). With a tone the style goes
-/// inline: a separate "Style: ..." line made `gemini-3.8-flash-lite-tts` return
-/// silence.
-fn build_prompt(text: &str, tone: Option<&str>) -> String {
-  match tone.map(str::trim).filter(|t| !t.is_empty()) {
-    Some(t) => format!("Say in this style ({t}): {text}"),
-    None => text.to_string(),
-  }
-}
-
 /// Retry prompt for a model that refused bare text ("Model tried to generate
 /// text, but it should only be used for TTS"). `gemini-2.5-flash-preview-tts`
-/// does that for a short "Hi." and reads this form without speaking the "Say".
+/// does that for a short "Hi." and reads this form without speaking the "Say";
+/// the 3.8 models, which would speak it, never refuse.
 fn build_retry_prompt(text: &str) -> String {
   format!("Say: {text}")
 }
@@ -112,15 +106,13 @@ pub async fn gemini_synthesize_wav(
   model: Option<String>,
   rate: Option<i32>,
   volume: Option<u8>,
-  instructions: Option<String>,
 ) -> Result<String, String> {
   let text = text.trim().to_string();
   if text.is_empty() { return Err("Text is empty".into()); }
   let model = model.map(|m| m.trim().to_string()).filter(|m| !m.is_empty()).unwrap_or_else(|| DEFAULT_GEMINI_TTS_MODEL.to_string());
   let voice = voice.map(|v| v.trim().to_string()).filter(|v| !v.is_empty()).unwrap_or_else(|| DEFAULT_GEMINI_TTS_VOICE.to_string());
-  let prompt = build_prompt(&text, instructions.as_deref());
 
-  let (mime, bytes) = match request_audio(&key, &model, &voice, &prompt).await {
+  let (mime, bytes) = match request_audio(&key, &model, &voice, &text).await {
     Err(e) if e.contains("tried to generate text") => {
       request_audio(&key, &model, &voice, &build_retry_prompt(&text)).await?
     }
@@ -165,12 +157,5 @@ mod tests {
     assert_eq!(r.spec().channels, 1);
     let samples: Vec<i16> = r.samples::<i16>().map(|s| s.unwrap()).collect();
     assert_eq!(samples, vec![0, 1000, -1000, i16::MAX]);
-  }
-
-  #[test]
-  fn tone_goes_inline() {
-    assert_eq!(build_prompt("Hi.", Some("cheerful")), "Say in this style (cheerful): Hi.");
-    assert_eq!(build_prompt("Hi.", Some("  ")), "Hi.");
-    assert_eq!(build_prompt("Hi.", None), "Hi.");
   }
 }

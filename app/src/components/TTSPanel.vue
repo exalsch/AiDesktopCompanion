@@ -407,12 +407,11 @@ const ttsTokenHint = computed(() => formatTokenInfo([{ label: 'text', tokens: tt
         <p class="field-hint">Thirty prebuilt voices, with the style Google describes for each.</p>
       </div>
 
-      <div class="field" v-if="engine !== 'local'">
+      <div class="field" v-if="engine === 'openai'">
         <label class="field-label">Tone</label>
         <input class="input" v-model="form.openaiInstructions" placeholder="e.g. Cheerful and positive" />
         <p class="field-hint">
-          Optional hint influencing speaking style.
-          {{ engine === 'openai' ? 'Ignored by tts-1 and tts-1-hd.' : 'Shared with the OpenAI engine.' }}
+          Optional hint influencing speaking style. Ignored by tts-1 and tts-1-hd.
         </p>
       </div>
 
