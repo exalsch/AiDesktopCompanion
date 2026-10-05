@@ -114,6 +114,8 @@ pub fn run() {
       tts_synthesize_wav,
       tts_openai_synthesize_wav,
       tts_openai_synthesize_file,
+      tts_gemini_synthesize_file,
+      settings::list_gemini_tts_models,
       tts_openai_stream_start,
       tts_openai_stream_stop,
       tts_create_stream_session,
@@ -223,6 +225,7 @@ mod config;
 mod quick_prompts;
 mod mcp;
 mod tts_openai;
+mod tts_gemini;
 mod tts_win_native;
 mod tts_utils;
 pub mod tts_mod;
@@ -468,6 +471,14 @@ async fn tts_openai_synthesize_wav(text: String, voice: Option<String>, model: O
 async fn tts_openai_synthesize_file(text: String, voice: Option<String>, model: Option<String>, format: Option<String>, rate: Option<i32>, volume: Option<u8>, instructions: Option<String>) -> Result<String, String> {
   let key = settings::get_api_key_from_settings_or_env()?;
   tts_openai::openai_synthesize_file(key, text, voice, model, format, rate, volume, instructions).await
+}
+
+/// Synthesize speech via Gemini and return a temp WAV path. `instructions` is
+/// the same Tone field the OpenAI engine uses.
+#[tauri::command]
+async fn tts_gemini_synthesize_file(text: String, voice: Option<String>, model: Option<String>, rate: Option<i32>, volume: Option<u8>, instructions: Option<String>) -> Result<String, String> {
+  let key = config::get_gemini_api_key_from_settings_or_env()?;
+  tts_gemini::gemini_synthesize_wav(key, text, voice, model, rate, volume, instructions).await
 }
 
 /// Start a chunked download stream from OpenAI audio/speech and emit chunks to the frontend.
@@ -779,6 +790,10 @@ async fn stt_transcribe_inner(audio: Vec<u8>, mime: String, apply_post_process: 
     tokio::task::spawn_blocking(move || tauri::async_runtime::block_on(transcribe_local_wrapper(audio, mime)))
       .await
       .map_err(|e| format!("local transcription task failed: {e}"))??
+  } else if llm_provider::provider_for_model(&config::get_stt_cloud_model_from_settings_or_env()) == llm_provider::Provider::Gemini {
+    // A Gemini model goes to Google whatever the base URL says, like the
+    // cleanup step does.
+    stt::transcribe_gemini(config::get_stt_cloud_model_from_settings_or_env(), audio, mime).await?
   } else {
     let base_url = config::get_stt_cloud_base_url_from_settings_or_env();
     let model = config::get_stt_cloud_model_from_settings_or_env();

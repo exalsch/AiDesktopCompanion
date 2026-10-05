@@ -62,6 +62,25 @@ async function refreshOpenaiModels() {
     // No key yet or offline - the fallback list still lets the panel render.
   }
 }
+// Gemini's prebuilt voices. Like OpenAI there is no listing endpoint; each of
+// these was checked against gemini-3.8-flash-tts and gemini-2.5-flash-preview-tts.
+const GEMINI_TTS_VOICES = [
+  'Achernar','Achird','Algenib','Algieba','Alnilam','Aoede','Autonoe','Callirrhoe','Charon','Despina',
+  'Enceladus','Erinome','Fenrir','Gacrux','Iapetus','Kore','Laomedeia','Leda','Orus','Puck',
+  'Pulcherrima','Rasalgethi','Sadachbia','Sadaltager','Schedar','Sulafat','Umbriel','Vindemiatrix','Zephyr','Zubenelgenubi',
+]
+const FALLBACK_GEMINI_TTS_MODELS = ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts', 'gemini-2.5-flash-preview-tts']
+const geminiModelOptions = ref<string[]>([...FALLBACK_GEMINI_TTS_MODELS])
+
+async function refreshGeminiModels() {
+  try {
+    const all = await invoke<string[]>('list_gemini_tts_models')
+    if (Array.isArray(all) && all.length) geminiModelOptions.value = all
+  } catch {
+    // No Gemini key - keep the fallback list.
+  }
+}
+
 const openaiFormatOptions = ref<Array<'wav'|'mp3'|'opus'>>(['wav','mp3','opus'])
 const hasSavableOutput = computed(() => !!String(wavPath.value || '').trim())
 const openaiInputLength = computed(() => form.text.trim().length)
@@ -118,7 +137,9 @@ async function loadTtsSettings() {
   try {
     const v = await invoke<any>('get_settings')
     if (v && typeof v === 'object') {
-      if (typeof v.tts_engine === 'string' && (v.tts_engine === 'local' || v.tts_engine === 'openai')) engine.value = v.tts_engine
+      if (typeof v.tts_engine === 'string' && ['local', 'openai', 'gemini'].includes(v.tts_engine)) engine.value = v.tts_engine
+      if (typeof v.tts_gemini_model === 'string' && v.tts_gemini_model.trim()) form.geminiModel = v.tts_gemini_model
+      if (typeof v.tts_gemini_voice === 'string' && v.tts_gemini_voice.trim()) form.geminiVoice = v.tts_gemini_voice
       if (typeof v.tts_rate === 'number') form.rate = v.tts_rate
       if (typeof v.tts_volume === 'number') form.volume = v.tts_volume
       if (typeof v.tts_voice_local === 'string') form.voice = v.tts_voice_local
@@ -165,6 +186,8 @@ function scheduleSaveTtsSettings() {
         tts_openai_format: form.openaiFormat,
         tts_openai_streaming: form.openaiStreaming,
         tts_openai_instructions: form.openaiInstructions,
+        tts_gemini_model: form.geminiModel,
+        tts_gemini_voice: form.geminiVoice,
       } })
     } catch {}
   }, 300)
@@ -178,11 +201,15 @@ watch(() => form.openaiVoice, scheduleSaveTtsSettings)
 watch(() => form.openaiModel, scheduleSaveTtsSettings)
 watch(() => form.openaiFormat, scheduleSaveTtsSettings)
 watch(() => form.openaiStreaming, scheduleSaveTtsSettings)
+watch(() => form.openaiInstructions, scheduleSaveTtsSettings)
+watch(() => form.geminiModel, scheduleSaveTtsSettings)
+watch(() => form.geminiVoice, scheduleSaveTtsSettings)
 
 onMounted(() => {
   if (!props.lightMount) {
     loadVoices().catch(() => {})
     void refreshOpenaiModels()
+    void refreshGeminiModels()
     ensureTtsSettingsLoaded().catch(() => {})
     // Kick off stale cleanup now and periodically (every 30 minutes)
     invoke('cleanup_stale_tts_wavs', { maxAgeMinutes: 240 }).catch(() => {})
@@ -205,6 +232,8 @@ watch([
   () => form.openaiModel,
   () => form.openaiFormat,
   () => form.openaiInstructions,
+  () => form.geminiModel,
+  () => form.geminiVoice,
   () => form.rate,
   () => form.volume,
 ], () => {
@@ -229,7 +258,7 @@ defineExpose({
 
 // Token hint for unsent TTS text (approximate or tokenizer-based)
 const { settings } = useSettings()
-const ttsModelName = computed(() => engine.value === 'openai' ? form.openaiModel : settings.openai_chat_model)
+const ttsModelName = computed(() => engine.value === 'openai' ? form.openaiModel : engine.value === 'gemini' ? form.geminiModel : settings.openai_chat_model)
 const tokenizerMode = computed(() => settings.tokenizer_mode)
 const ttsTextTokens = computed(() => {
   const _ready = tokenizerReady.value
@@ -248,6 +277,7 @@ const ttsTokenHint = computed(() => formatTokenInfo([{ label: 'text', tokens: tt
           <select v-model="engine" class="input">
             <option value="local">Local (Windows)</option>
             <option value="openai">OpenAI</option>
+            <option value="gemini">Gemini</option>
           </select>
         </div>
       </div>
@@ -279,7 +309,7 @@ const ttsTokenHint = computed(() => formatTokenInfo([{ label: 'text', tokens: tt
           :class="{ danger: speaking }"
           :disabled="(busy && !speaking) || openaiTextTooLong"
           @click="speaking ? onStop() : onPlay()"
-        >{{ speaking ? 'Stop' : (busy && engine === 'openai' ? 'Synthesizing…' : 'Play') }}</button>
+        >{{ speaking ? 'Stop' : (busy && engine !== 'local' ? 'Synthesizing…' : 'Play') }}</button>
         <button class="btn ghost" type="button" :disabled="!hasSavableOutput || busy" @click="onSynthesizeWithSave">Save to file</button>
       </div>
 
@@ -290,7 +320,7 @@ const ttsTokenHint = computed(() => formatTokenInfo([{ label: 'text', tokens: tt
   <CollapsibleCard
     id="tts.voice"
     title="Voice and output"
-    :desc="engine === 'openai' ? 'Model, voice, format and delivery for the OpenAI engine.' : 'Windows System.Speech voice and delivery.'"
+    :desc="engine === 'openai' ? 'Model, voice, format and delivery for the OpenAI engine.' : engine === 'gemini' ? 'Model, voice and delivery for the Gemini engine.' : 'Windows System.Speech voice and delivery.'"
   >
     <div class="field-grid">
       <div class="field" v-if="engine === 'local'">
@@ -329,11 +359,30 @@ const ttsTokenHint = computed(() => formatTokenInfo([{ label: 'text', tokens: tt
         </p>
       </div>
 
-      <div class="field" v-if="engine === 'openai'">
+      <div class="field" v-if="engine === 'gemini'">
+        <label class="field-label">Model</label>
+        <input class="input" v-model="form.geminiModel" list="gemini-tts-models" placeholder="gemini-3.8-flash-tts" />
+        <datalist id="gemini-tts-models">
+          <option v-for="m in geminiModelOptions" :key="m" :value="m" />
+        </datalist>
+        <p class="field-hint">Uses the Gemini API key from General settings. Output is always WAV and is not streamed.</p>
+      </div>
+
+      <div class="field" v-if="engine === 'gemini'">
+        <label class="field-label">Voice</label>
+        <input class="input" v-model="form.geminiVoice" list="gemini-voices" placeholder="Kore" />
+        <datalist id="gemini-voices">
+          <option v-for="v in GEMINI_TTS_VOICES" :key="v" :value="v" />
+        </datalist>
+        <p class="field-hint">Thirty prebuilt voices.</p>
+      </div>
+
+      <div class="field" v-if="engine !== 'local'">
         <label class="field-label">Tone</label>
         <input class="input" v-model="form.openaiInstructions" placeholder="e.g. Cheerful and positive" />
         <p class="field-hint">
-          Optional hint influencing speaking style. Ignored by tts-1 and tts-1-hd.
+          Optional hint influencing speaking style.
+          {{ engine === 'openai' ? 'Ignored by tts-1 and tts-1-hd.' : 'Shared with the OpenAI engine.' }}
         </p>
       </div>
 

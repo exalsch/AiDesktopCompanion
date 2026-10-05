@@ -6,10 +6,14 @@ export interface NotifyFn { (msg: string, kind?: 'error' | 'success', ms?: numbe
 
 export const OPENAI_TTS_MAX_INPUT_CHARS = 3500
 
+export type TtsEngine = 'local' | 'openai' | 'gemini'
+
 export function useTtsPlayback(notify?: NotifyFn) {
-  const engine = ref<'local' | 'openai'>('local')
+  const engine = ref<TtsEngine>('local')
 
   const form = reactive({
+    geminiModel: 'gemini-3.8-flash-tts' as string,
+    geminiVoice: 'Kore' as string,
     text: '' as string,
     voice: '' as string,
     rate: -2 as number,
@@ -46,6 +50,33 @@ export function useTtsPlayback(notify?: NotifyFn) {
     return true
   }
 
+  /**
+   * Synthesize the current text with the selected cloud engine and return the
+   * temp file path. Gemini always produces WAV, so `format` only applies to
+   * OpenAI.
+   */
+  function synthesizeCloudFile(format: 'wav' | 'mp3' | 'opus'): Promise<string> {
+    if (engine.value === 'gemini') {
+      return invoke<string>('tts_gemini_synthesize_file', {
+        text: form.text,
+        voice: form.geminiVoice || null,
+        model: form.geminiModel || null,
+        rate: form.rate,
+        volume: form.volume,
+        instructions: form.openaiInstructions || null,
+      })
+    }
+    return invoke<string>('tts_openai_synthesize_file', {
+      text: form.text,
+      voice: form.openaiVoice || 'alloy',
+      model: form.openaiModel || 'gpt-4o-mini-tts',
+      format,
+      rate: form.rate,
+      volume: form.volume,
+      instructions: form.openaiInstructions || null,
+    })
+  }
+
   async function onPlay() {
     if (!validateTtsInput()) { return }
     try {
@@ -62,20 +93,12 @@ export function useTtsPlayback(notify?: NotifyFn) {
           } catch { speaking.value = false; if (localPollHandle) { clearInterval(localPollHandle); localPollHandle = null } }
         }, 500)
       } else {
-        if (form.openaiStreaming) {
+        if (engine.value === 'openai' && form.openaiStreaming) {
           await startProxyStreaming()
         } else {
           busy.value = true
           const fmt = form.openaiFormat || 'wav'
-          const path = await invoke<string>('tts_openai_synthesize_file', {
-            text: form.text,
-            voice: form.openaiVoice || 'alloy',
-            model: form.openaiModel || 'gpt-4o-mini-tts',
-            format: fmt,
-            rate: form.rate,
-            volume: form.volume,
-            instructions: form.openaiInstructions || null,
-          })
+          const path = await synthesizeCloudFile(fmt)
           busy.value = false
           wavPath.value = path
           wavSrc.value = convertFileSrc(path)
@@ -88,15 +111,7 @@ export function useTtsPlayback(notify?: NotifyFn) {
                 if (fallbackTried) return false
                 fallbackTried = true
                 try {
-                  const fallbackPath = await invoke<string>('tts_openai_synthesize_file', {
-                    text: form.text,
-                    voice: form.openaiVoice || 'alloy',
-                    model: form.openaiModel || 'gpt-4o-mini-tts',
-                    format: 'wav',
-                    rate: form.rate,
-                    volume: form.volume,
-                    instructions: form.openaiInstructions || null,
-                  })
+                  const fallbackPath = await synthesizeCloudFile('wav')
                   const oldPath = lastPlayTempPath.value
                   wavPath.value = fallbackPath
                   wavSrc.value = convertFileSrc(fallbackPath)
@@ -309,7 +324,7 @@ export function useTtsPlayback(notify?: NotifyFn) {
       busy.value = true
       const path = engine.value === 'local'
         ? await invoke<string>('tts_synthesize_wav', { text: form.text, voice: form.voice || null, rate: form.rate, volume: form.volume })
-        : await invoke<string>('tts_openai_synthesize_file', { text: form.text, voice: (form.openaiVoice || 'alloy'), model: (form.openaiModel || 'gpt-4o-mini-tts'), format: (form.openaiFormat || 'wav'), rate: form.rate, volume: form.volume, instructions: form.openaiInstructions || null })
+        : await synthesizeCloudFile(form.openaiFormat || 'wav')
       busy.value = false
       wavPath.value = path
       wavSrc.value = convertFileSrc(path)

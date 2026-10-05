@@ -439,6 +439,8 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   if let Some(om) = map.get("tts_openai_model").and_then(|x| x.as_str()) { obj.insert("tts_openai_model".to_string(), serde_json::Value::String(om.to_string())); }
   if let Some(of) = map.get("tts_openai_format").and_then(|x| x.as_str()) { obj.insert("tts_openai_format".to_string(), serde_json::Value::String(of.to_string())); }
   if let Some(os) = map.get("tts_openai_streaming").and_then(|x| x.as_bool()) { obj.insert("tts_openai_streaming".to_string(), serde_json::Value::Bool(os)); }
+  if let Some(gm) = map.get("tts_gemini_model").and_then(|x| x.as_str()) { obj.insert("tts_gemini_model".to_string(), serde_json::Value::String(gm.to_string())); }
+  if let Some(gv) = map.get("tts_gemini_voice").and_then(|x| x.as_str()) { obj.insert("tts_gemini_voice".to_string(), serde_json::Value::String(gv.to_string())); }
   if let Some(ti) = map.get("tts_openai_instructions").and_then(|x| x.as_str()) { obj.insert("tts_openai_instructions".to_string(), serde_json::Value::String(ti.to_string())); }
 
   // Tokenizer mode

@@ -172,6 +172,8 @@ const cloudSttModelPresetsBase = [
   { label: 'Whisper (whisper-1)', value: 'whisper-1', hint: 'Legacy OpenAI model. Keep it for OpenAI-compatible servers that only implement whisper-1.' },
   { label: 'Parakeet V2 (parakeet-tdt-0.6b-v2)', value: 'parakeet-tdt-0.6b-v2', hint: 'Parakeet via OpenAI-compatible endpoint.' },
   { label: 'Parakeet V3 (parakeet-tdt-0.6b-v3)', value: 'parakeet-tdt-0.6b-v3', hint: 'Newer Parakeet variant via OpenAI-compatible endpoint.' },
+  { label: 'Gemini 3.5 Flash (gemini-3.5-flash)', value: 'gemini-3.5-flash', hint: 'Google Gemini. Uses the Gemini API key; the base URL and key below are ignored. Good with names and mixed languages.' },
+  { label: 'Gemini 3.5 Flash Lite (gemini-3.5-flash-lite)', value: 'gemini-3.5-flash-lite', hint: 'Google Gemini, cheaper and slightly faster than 3.5 Flash. Uses the Gemini API key.' },
 ]
 
 const whisperPresets = [
@@ -438,8 +440,13 @@ const cloudModelNotOnOpenai = computed(() => {
   if (!/(^|\/\/)api\.openai\.com/.test(url)) return false
   const v = String(props.settings.stt_cloud_model || '').toLowerCase()
   if (!v) return false
-  return !/^(gpt-|whisper-1$)/.test(v)
+  return !/^(gpt-|whisper-1$|gemini-)/.test(v)
 })
+
+/** Gemini models bypass the base URL and key below and go to Google. */
+const cloudModelIsGemini = computed(() =>
+  String(props.settings.stt_cloud_model || '').trim().toLowerCase().startsWith('gemini-')
+)
 
 /**
  * Whisper's `.en` builds are English-only by construction - they cannot
@@ -766,7 +773,7 @@ function infoTitle(v: string): string {
     v-if="props.settings.stt_engine === 'openai'"
     id="settings.stt.cloud"
     title="Cloud endpoint"
-    desc="Any server implementing POST /v1/audio/transcriptions."
+    desc="Any server implementing POST /v1/audio/transcriptions, or Google Gemini."
   >
     <div class="field">
       <div class="row-label">
@@ -778,6 +785,10 @@ function infoTitle(v: string): string {
         <code>{{ props.settings.stt_cloud_model }}</code> is not a model OpenAI hosts, and the base URL points at
         api.openai.com. The request will be rejected. Either pick a GPT model below, or point the base URL at a server
         that serves this one.
+      </p>
+      <p v-if="cloudModelIsGemini" class="field-hint">
+        Gemini models are sent to Google with the Gemini API key from General settings. The base URL and key below
+        are not used for them. A single recording can be up to about ten minutes.
       </p>
 
       <div class="model-list">

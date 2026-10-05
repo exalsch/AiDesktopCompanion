@@ -6,7 +6,7 @@ import { useSettings } from '../composables/useSettings'
 import { estimateTextTokens, estimateImageTokensFromMeta, formatTokenInfo } from '../composables/useTokenEstimate'
 import { useImageMeta } from '../composables/useImageMeta'
 import { tokenizerReady } from '../composables/useTokenizer'
-import { startRecording, stopRecording, transcodeToWav16kMono } from '../stt'
+import { startRecording, stopRecording, transcodeToWav16kMono, sttNeedsWav } from '../stt'
 
 const props = defineProps<{
   modelValue: string
@@ -163,10 +163,7 @@ async function transcribeAndInsert(blob: Blob, mime: string) {
     // transcoded to WAV 16kHz mono on the frontend for broad compatibility.
     let payloadBytes: Uint8Array
     let payloadMime = mime
-    const engine = String((settings as any).stt_engine || 'openai')
-    const baseUrl = String((settings as any).stt_cloud_base_url || 'https://api.openai.com').trim()
-    const isOpenAi = baseUrl.startsWith('https://api.openai.com')
-    const shouldTranscode = engine === 'local' || (engine !== 'local' && !isOpenAi)
+    const shouldTranscode = sttNeedsWav(settings)
     if (shouldTranscode) {
       try {
         payloadBytes = await transcodeToWav16kMono(blob)

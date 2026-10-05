@@ -116,6 +116,22 @@ function cleanup() {
   recordingStartTime = 0
 }
 
+/**
+ * Whether a recording has to be transcoded to WAV before `stt_transcribe`.
+ *
+ * Only OpenAI itself takes the recorder's WebM/Opus as-is. The local engines
+ * and other OpenAI-compatible servers get WAV for compatibility, and Gemini
+ * accepts nothing but WAV or MP3.
+ */
+export function sttNeedsWav(settings: any): boolean {
+  const engine = String(settings?.stt_engine || 'openai')
+  if (engine === 'local') return true
+  const model = String(settings?.stt_cloud_model || '').trim().toLowerCase()
+  if (model.startsWith('gemini-')) return true
+  const baseUrl = String(settings?.stt_cloud_base_url || 'https://api.openai.com').trim()
+  return !baseUrl.startsWith('https://api.openai.com')
+}
+
 // Transcode arbitrary audio blob to WAV 16kHz mono using WebAudio.
 // This allows us to support WebM/Opus recordings on browsers that don't expose an Opus decoder on the Rust side.
 export async function transcodeToWav16kMono(blob: Blob): Promise<Uint8Array> {

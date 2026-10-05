@@ -9,7 +9,7 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
-### Use Google Gemini models for chat, quick prompts and STT cleanup
+### Use Google Gemini for chat, speech to text and text to speech
 
 kind: feat
 
@@ -19,7 +19,12 @@ OpenAI ones. Pick one for chat, for quick prompts or for STT cleanup and that
 feature runs on Gemini; the others keep the model they had. MCP tools work with
 Gemini models too.
 
-Speech synthesis, cloud transcription and Assistant Mode still use OpenAI.
+The cloud speech-to-text engine offers **Gemini 3.5 Flash** and **Flash Lite**,
+which also use your vocabulary list while transcribing. Text to speech has a
+new **Gemini** engine with thirty voices and the same Tone, Rate and Volume
+settings.
+
+Assistant Mode still uses OpenAI.
 
 ### Transcribe audio files and see who said what
 

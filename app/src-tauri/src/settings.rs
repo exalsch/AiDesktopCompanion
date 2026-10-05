@@ -61,6 +61,22 @@ async fn list_gemini_models() -> Result<Vec<String>, String> {
   Ok(crate::llm_provider::filter_gemini_chat_models(&ids))
 }
 
+/// Gemini speech-synthesis models this key can reach (the `*-tts` ids).
+#[tauri::command]
+pub async fn list_gemini_tts_models() -> Result<Vec<String>, String> {
+  let key = crate::config::get_gemini_api_key_from_settings_or_env()?;
+  let url = format!("{}/models", crate::llm_provider::GEMINI_OPENAI_BASE_URL);
+  let mut ids: Vec<String> = fetch_model_ids(&url, &key, "Gemini")
+    .await?
+    .into_iter()
+    .map(|id| id.strip_prefix("models/").unwrap_or(&id).to_string())
+    .filter(|id| id.starts_with("gemini-") && id.contains("tts"))
+    .collect();
+  ids.sort();
+  ids.dedup();
+  Ok(ids)
+}
+
 /// Models for the chat-style pickers (chat, quick prompts, STT cleanup):
 /// OpenAI's and Gemini's, from whichever providers have a key.
 ///
