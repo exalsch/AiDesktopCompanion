@@ -278,7 +278,7 @@ async function refreshModels() {
   models.loading = true; models.error = null
   models.list = []
   try {
-    const ids = await invoke<string[]>('list_openai_models')
+    const ids = await invoke<string[]>('list_chat_models')
     models.list = ids
   } catch (err) {
     const msg = typeof err === 'string' ? err : (err && (err as any).message) ? (err as any).message : 'Unknown error'

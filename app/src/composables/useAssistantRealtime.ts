@@ -39,8 +39,8 @@ const MIN_TALK_MS = 200
 // Escalation to the supervisor, expressed as something the model can choose to
 // do. This replaces a keyword list that only recognised English - the model
 // knows when a question is beyond it regardless of the language it is asked in.
-const SUPERVISOR_TOOL_NAME = 'consult_supervisor'
-const SUPERVISOR_TOOL = {
+export const SUPERVISOR_TOOL_NAME = 'consult_supervisor'
+export const SUPERVISOR_TOOL = {
   type: 'function',
   name: SUPERVISOR_TOOL_NAME,
   description:
@@ -104,6 +104,39 @@ export interface ConnectParams {
 }
 
 export interface HistoryTurn { role: 'user' | 'assistant' | 'tool', content: string }
+
+/**
+ * Put a question to the supervisor and return its answer as plain text.
+ *
+ * The supervisor is a normal chat completion using the Prompt-section model,
+ * which already has the MCP tools wired in. It receives the session's
+ * transcript so a follow-up question still makes sense on its own. Shared by
+ * the OpenAI and Gemini voice clients.
+ */
+export async function askSupervisorChat(history: HistoryTurn[], userText: string, log: (msg: string) => void): Promise<string> {
+  // Logging the configuration is best-effort; failing to read it must not
+  // stop the question being asked.
+  try {
+    const s: any = await invoke('get_settings').catch(() => null)
+    const promptModel = (s?.prompt && s.prompt.model) ? s.prompt.model : (s?.model || 'n/a')
+    const promptTemp = (s?.prompt && typeof s.prompt.temperature === 'number') ? s.prompt.temperature : (typeof s?.temperature === 'number' ? s.temperature : 'n/a')
+    log(`[supervisor] using backend Prompt settings model=${promptModel}, temperature=${promptTemp}`)
+  } catch {}
+
+  const messages = [
+    {
+      role: 'system',
+      content: 'You are the reasoning half of a voice assistant. Your reply is read aloud verbatim, so answer in plain spoken prose with no markdown, no code fences and no bullet lists. Keep it short unless asked for detail. Reply in the same language the user is speaking. If you are unsure, reply in English. Do not switch languages unless the user clearly switches.'
+    },
+    // Everything before the current turn, so the supervisor can follow up.
+    // Tool entries are display-only; a chat completion would reject the role.
+    ...history.slice(-20).filter((t) => t.role !== 'tool'),
+    { role: 'user', content: userText }
+  ] as any
+
+  const text = await invoke<string>('chat_complete', { messages })
+  return (text || '').trim()
+}
 
 export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
   const pcRef = ref<RTCPeerConnection | null>(null)
@@ -288,36 +321,8 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
    * has to deliver the text; telling it to repeat the answer exactly is what
    * stops it from rewriting the supervisor's words.
    */
-  /**
-   * Put a question to the supervisor and return its answer as plain text.
-   *
-   * The supervisor is a normal chat completion using the Prompt-section model,
-   * which already has the MCP tools wired in. It receives this session's
-   * transcript so a follow-up question still makes sense on its own.
-   */
-  async function askSupervisor(userText: string): Promise<string> {
-    // Logging the configuration is best-effort; failing to read it must not
-    // stop the question being asked.
-    try {
-      const s: any = await invoke('get_settings').catch(() => null)
-      const promptModel = (s?.prompt && s.prompt.model) ? s.prompt.model : (s?.model || 'n/a')
-      const promptTemp = (s?.prompt && typeof s.prompt.temperature === 'number') ? s.prompt.temperature : (typeof s?.temperature === 'number' ? s.temperature : 'n/a')
-      log(`[supervisor] using backend Prompt settings model=${promptModel}, temperature=${promptTemp}`)
-    } catch {}
-
-    const messages = [
-      {
-        role: 'system',
-        content: 'You are the reasoning half of a voice assistant. Your reply is read aloud verbatim, so answer in plain spoken prose with no markdown, no code fences and no bullet lists. Keep it short unless asked for detail. Reply in the same language the user is speaking. If you are unsure, reply in English. Do not switch languages unless the user clearly switches.'
-      },
-      // Everything before the current turn, so the supervisor can follow up.
-      // Tool entries are display-only; a chat completion would reject the role.
-      ...history.value.slice(-20).filter((t) => t.role !== 'tool'),
-      { role: 'user', content: userText }
-    ] as any
-
-    const text = await invoke<string>('chat_complete', { messages })
-    return (text || '').trim()
+  function askSupervisor(userText: string): Promise<string> {
+    return askSupervisorChat(history.value, userText, log)
   }
 
   /**

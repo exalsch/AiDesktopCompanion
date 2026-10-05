@@ -9,6 +9,31 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
+### Use Google Gemini for chat, speech, and the voice assistant
+
+kind: feat
+
+Settings > General has a new **Gemini API key** field. Once it is filled in
+(or `GEMINI_API_KEY` is set), **Fetch models** lists Gemini models next to the
+OpenAI ones. Pick one for chat, for quick prompts or for STT cleanup and that
+feature runs on Gemini; the others keep the model they had. MCP tools work with
+Gemini models too.
+
+Speech to text's cloud engine is now called **API Endpoint** and asks which
+provider to use: OpenAI, Google Gemini, or a custom OpenAI-compatible server.
+The base URL and key fields only appear for the custom one. Gemini 3.5 Flash
+and Flash Lite also use your vocabulary list while transcribing.
+
+Text to speech has a new **Gemini** engine with thirty voices, each listed with
+its speaking style, and the same Rate and Volume settings. Gemini has no Tone
+setting, because its voices read any style instruction out loud. Model and
+voice are now dropdowns for both cloud engines.
+
+Assistant Mode can run on **Gemini Live** models. Pick one from the Gemini
+group in the model list; tools, the supervisor and push-to-talk work as they do
+with OpenAI. Changing a setting mid-call reconnects without losing the
+conversation. The call cost is not estimated for Gemini.
+
 ### Transcribe audio files and see who said what
 
 kind: feat

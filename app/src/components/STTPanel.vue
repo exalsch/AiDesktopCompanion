@@ -3,7 +3,7 @@ import { reactive, watch, computed, onMounted, onBeforeUnmount } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { UnlistenFn } from '@tauri-apps/api/event'
-import { startRecording, stopRecording, transcodeToWav16kMono } from '../stt'
+import { startRecording, stopRecording, transcodeToWav16kMono, sttNeedsWav } from '../stt'
 import { useSettings } from '../composables/useSettings'
 import { estimateTextTokens, formatTokenInfo } from '../composables/useTokenEstimate'
 import { tokenizerReady } from '../composables/useTokenizer'
@@ -116,10 +116,7 @@ async function transcribeBlob(blob: Blob, mime: string) {
     // For local STT, transcode to WAV 16kHz mono on the frontend to ensure broad compatibility.
     let payloadBytes: Uint8Array
     let payloadMime: string = mime
-    const engine = String((settings as any).stt_engine || 'openai')
-    const baseUrl = String((settings as any).stt_cloud_base_url || 'https://api.openai.com').trim()
-    const isOpenAi = baseUrl.startsWith('https://api.openai.com')
-    const shouldTranscode = engine === 'local' || (engine !== 'local' && !isOpenAi)
+    const shouldTranscode = sttNeedsWav(settings)
     if (shouldTranscode) {
       try {
         payloadBytes = await transcodeToWav16kMono(blob)

@@ -15,6 +15,7 @@ const props = defineProps<{
 }>()
 
 const showApiKey = ref(false)
+const showGeminiKey = ref(false)
 
 // Quick prompt titles for the select-all hotkey dropdown, so the user picks a
 // recognisable prompt instead of a bare number.
@@ -208,7 +209,7 @@ onMounted(async () => {
   <CollapsibleCard
     id="settings.general.provider"
     title="AI Provider"
-    desc="Credentials and the model used for chat and quick prompts."
+    desc="OpenAI and Gemini credentials, and the model used for chat and quick prompts."
   >
     <div class="field">
       <label class="field-label">OpenAI API key</label>
@@ -224,6 +225,26 @@ onMounted(async () => {
         <button class="btn ghost" type="button" @click="showApiKey = !showApiKey">{{ showApiKey ? 'Hide' : 'Show' }}</button>
       </div>
       <p class="field-hint">Stored in settings.json. Leave empty to fall back to the <code>OPENAI_API_KEY</code> environment variable.</p>
+    </div>
+
+    <div class="field">
+      <label class="field-label">Gemini API key</label>
+      <div class="actions">
+        <input
+          :type="showGeminiKey ? 'text' : 'password'"
+          v-model="props.settings.gemini_api_key"
+          class="input"
+          placeholder="AIza..."
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button class="btn ghost" type="button" @click="showGeminiKey = !showGeminiKey">{{ showGeminiKey ? 'Hide' : 'Show' }}</button>
+      </div>
+      <p class="field-hint">
+        Used for any model whose name starts with <code>gemini-</code>, in chat, quick prompts and STT cleanup.
+        Leave empty to fall back to the <code>GEMINI_API_KEY</code> or <code>GOOGLE_API_KEY</code> environment variable.
+        Speech and Assistant Mode stay on OpenAI.
+      </p>
     </div>
 
     <div class="field">

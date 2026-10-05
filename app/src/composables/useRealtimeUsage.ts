@@ -150,6 +150,36 @@ export function useRealtimeUsage() {
     return true
   }
 
+  /**
+   * Fold one Gemini Live `usageMetadata` block into the totals.
+   *
+   * Gemini sends one per model turn, broken down by modality. Thinking tokens
+   * are billed as output and reported apart from the response, so they are
+   * added to text out. There is no cached split per modality, so nothing is
+   * counted as cached. No Gemini model has rates in the table above, which
+   * leaves the cost at null ("unknown") rather than a made-up figure.
+   */
+  function addGeminiUsage(meta: any): boolean {
+    if (!meta || typeof meta !== 'object') return false
+    const byModality = (details: any, modality: string) =>
+      (Array.isArray(details) ? details : [])
+        .filter((d: any) => String(d?.modality || '').toUpperCase() === modality)
+        .reduce((sum: number, d: any) => sum + num(d?.tokenCount), 0)
+    const prompt = meta.promptTokensDetails
+    const response = meta.responseTokensDetails
+    if (!prompt && !response && !num(meta.totalTokenCount)) return false
+
+    const t = { ...totals.value }
+    t.audioIn += byModality(prompt, 'AUDIO')
+    t.textIn += byModality(prompt, 'TEXT')
+    t.audioOut += byModality(response, 'AUDIO')
+    t.textOut += byModality(response, 'TEXT') + num(meta.thoughtsTokenCount)
+    t.responses += 1
+    totals.value = t
+    recompute()
+    return true
+  }
+
   /** "$0.0412", or null when the model has no known rates. */
   function formatUsd(value: number | null): string | null {
     if (value === null) return null
@@ -157,5 +187,5 @@ export function useRealtimeUsage() {
     return `$${value.toFixed(2)}`
   }
 
-  return { totals, estimatedUsd, reset, addResponse, formatUsd, ratesChecked: RATES_CHECKED }
+  return { totals, estimatedUsd, reset, addResponse, addGeminiUsage, formatUsd, ratesChecked: RATES_CHECKED }
 }

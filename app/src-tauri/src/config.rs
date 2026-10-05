@@ -74,6 +74,21 @@ pub fn get_api_key_from_settings_or_env() -> Result<String, String> {
     .map_err(|_| "OPENAI_API_KEY not set in settings or environment".to_string())
 }
 
+/// Key for Gemini models. `GOOGLE_API_KEY` is the name Google's own SDKs
+/// fall back to, so it is accepted after `GEMINI_API_KEY`.
+pub fn get_gemini_api_key_from_settings_or_env() -> Result<String, String> {
+  let v = load_settings_json();
+  if let Some(s) = v.get("gemini_api_key").and_then(|x| x.as_str()) {
+    if !s.trim().is_empty() { return Ok(s.trim().to_string()); }
+  }
+  ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
+    .iter()
+    .filter_map(|name| std::env::var(name).ok())
+    .map(|s| s.trim().to_string())
+    .find(|s| !s.is_empty())
+    .ok_or_else(|| "GEMINI_API_KEY not set in settings or environment".to_string())
+}
+
 pub fn get_model_from_settings_or_env() -> String {
   let v = load_settings_json();
   if let Some(s) = v.get("openai_chat_model").and_then(|x| x.as_str()) {
@@ -356,6 +371,7 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
 
   // Existing keys
   if let Some(k) = map.get("openai_api_key").and_then(|x| x.as_str()) { obj.insert("openai_api_key".to_string(), serde_json::Value::String(k.to_string())); }
+  if let Some(k) = map.get("gemini_api_key").and_then(|x| x.as_str()) { obj.insert("gemini_api_key".to_string(), serde_json::Value::String(k.to_string())); }
   if let Some(m) = map.get("openai_chat_model").and_then(|x| x.as_str()) { obj.insert("openai_chat_model".to_string(), serde_json::Value::String(m.to_string())); }
   // Dedicated model for Quick Actions quick prompts (optional; empty string means fallback to global)
   if let Some(qpm) = map.get("quick_prompt_model").and_then(|x| x.as_str()) { obj.insert("quick_prompt_model".to_string(), serde_json::Value::String(qpm.to_string())); }
@@ -423,6 +439,8 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   if let Some(om) = map.get("tts_openai_model").and_then(|x| x.as_str()) { obj.insert("tts_openai_model".to_string(), serde_json::Value::String(om.to_string())); }
   if let Some(of) = map.get("tts_openai_format").and_then(|x| x.as_str()) { obj.insert("tts_openai_format".to_string(), serde_json::Value::String(of.to_string())); }
   if let Some(os) = map.get("tts_openai_streaming").and_then(|x| x.as_bool()) { obj.insert("tts_openai_streaming".to_string(), serde_json::Value::Bool(os)); }
+  if let Some(gm) = map.get("tts_gemini_model").and_then(|x| x.as_str()) { obj.insert("tts_gemini_model".to_string(), serde_json::Value::String(gm.to_string())); }
+  if let Some(gv) = map.get("tts_gemini_voice").and_then(|x| x.as_str()) { obj.insert("tts_gemini_voice".to_string(), serde_json::Value::String(gv.to_string())); }
   if let Some(ti) = map.get("tts_openai_instructions").and_then(|x| x.as_str()) { obj.insert("tts_openai_instructions".to_string(), serde_json::Value::String(ti.to_string())); }
 
   // Tokenizer mode
@@ -434,6 +452,7 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   if let Some(b) = map.get("stt_parakeet_has_cuda").and_then(|x| x.as_bool()) { obj.insert("stt_parakeet_has_cuda".to_string(), serde_json::Value::Bool(b)); }
   if let Some(bu) = map.get("stt_cloud_base_url").and_then(|x| x.as_str()) { obj.insert("stt_cloud_base_url".to_string(), serde_json::Value::String(bu.to_string())); }
   if let Some(sm) = map.get("stt_cloud_model").and_then(|x| x.as_str()) { obj.insert("stt_cloud_model".to_string(), serde_json::Value::String(sm.to_string())); }
+  if let Some(sp) = map.get("stt_cloud_provider").and_then(|x| x.as_str()) { obj.insert("stt_cloud_provider".to_string(), serde_json::Value::String(sp.to_string())); }
   if let Some(sk) = map.get("stt_cloud_api_key").and_then(|x| x.as_str()) { obj.insert("stt_cloud_api_key".to_string(), serde_json::Value::String(sk.to_string())); }
   if let Some(did) = map.get("stt_input_device_id").and_then(|x| x.as_str()) { obj.insert("stt_input_device_id".to_string(), serde_json::Value::String(did.to_string())); }
   // Microphone audio processing. Absent keys keep the webview defaults, so a

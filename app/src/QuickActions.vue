@@ -4,7 +4,7 @@ import { getCurrentWebviewWindow, WebviewWindow } from '@tauri-apps/api/webviewW
 import { LogicalSize } from '@tauri-apps/api/dpi'
 import { invoke } from '@tauri-apps/api/core'
 import { emit as emitTauri, listen } from '@tauri-apps/api/event'
-import { startRecording as sttStart, stopRecording as sttStop, isRecording as sttIsRecording, transcodeToWav16kMono, getRecordingDurationMs } from './stt'
+import { startRecording as sttStart, stopRecording as sttStop, isRecording as sttIsRecording, transcodeToWav16kMono, getRecordingDurationMs, sttNeedsWav } from './stt'
 import { register, unregister } from '@tauri-apps/plugin-global-shortcut'
 
 // Debug helper (enable by setting sessionStorage.setItem('qa_debug', '1'))
@@ -245,10 +245,7 @@ async function stopCommandModeAndRun(): Promise<void> {
     let payloadMime: string = mime
     try {
       const settings = await invoke<any>('get_settings')
-      const engine = String(settings?.stt_engine || 'openai')
-      const baseUrl = String(settings?.stt_cloud_base_url || 'https://api.openai.com').trim()
-      const isOpenAi = baseUrl.startsWith('https://api.openai.com')
-      const shouldTranscode = engine === 'local' || (engine !== 'local' && !isOpenAi)
+      const shouldTranscode = sttNeedsWav(settings)
       if (shouldTranscode) {
         payloadBytes = await transcodeToWav16kMono(blob)
         payloadMime = 'audio/wav'
@@ -717,10 +714,7 @@ async function stopSTTAndTranscribe(): Promise<void> {
       let payloadMime: string = mime
       try {
         const settings = await invoke<any>('get_settings')
-        const engine = String(settings?.stt_engine || 'openai')
-        const baseUrl = String(settings?.stt_cloud_base_url || 'https://api.openai.com').trim()
-        const isOpenAi = baseUrl.startsWith('https://api.openai.com')
-        const shouldTranscode = engine === 'local' || (engine !== 'local' && !isOpenAi)
+        const shouldTranscode = sttNeedsWav(settings)
         if (shouldTranscode) {
           payloadBytes = await transcodeToWav16kMono(blob)
           payloadMime = 'audio/wav'

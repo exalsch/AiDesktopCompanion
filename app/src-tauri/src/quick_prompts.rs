@@ -5,7 +5,7 @@ use std::{thread, time::Duration};
 use arboard::Clipboard;
 use tauri::{Manager, Emitter};
 
-use crate::config::{get_api_key_from_settings_or_env, get_model_from_settings_or_env, get_temperature_from_settings_or_env};
+use crate::config::{get_model_from_settings_or_env, get_temperature_from_settings_or_env};
 
 pub fn quick_prompts_config_path() -> Option<PathBuf> {
   #[cfg(target_os = "windows")]
@@ -170,7 +170,6 @@ async fn complete_quick_prompt(app: &tauri::AppHandle, index: u8, selection: &st
   };
   let system_content = if base.is_empty() { template.clone() } else { format!("{base}\n\n{template}") };
 
-  let key = get_api_key_from_settings_or_env()?;
   // Prefer dedicated quick_prompt_model; fallback to global chat model
   let model = {
     let s = settings
@@ -181,6 +180,7 @@ async fn complete_quick_prompt(app: &tauri::AppHandle, index: u8, selection: &st
       .to_string();
     if s.is_empty() { get_model_from_settings_or_env() } else { s }
   };
+  let endpoint = crate::llm_provider::chat_endpoint_for_model(&model)?;
   let temp = get_temperature_from_settings_or_env();
 
   let mut body = serde_json::json!({
@@ -202,8 +202,8 @@ async fn complete_quick_prompt(app: &tauri::AppHandle, index: u8, selection: &st
     .build()
     .unwrap_or_else(|_| reqwest::Client::new());
   let resp = client
-    .post("https://api.openai.com/v1/chat/completions")
-    .bearer_auth(key)
+    .post(&endpoint.url)
+    .bearer_auth(&endpoint.key)
     .json(&body)
     .send()
     .await
@@ -212,7 +212,7 @@ async fn complete_quick_prompt(app: &tauri::AppHandle, index: u8, selection: &st
   if !resp.status().is_success() {
     let status = resp.status();
     let body_text = resp.text().await.unwrap_or_default();
-    return Err(format!("OpenAI error: {status} {body_text}"));
+    return Err(format!("{} error: {status} {body_text}", endpoint.provider.label()));
   }
 
   let v: serde_json::Value = resp.json().await.map_err(|e| format!("json error: {e}"))?;

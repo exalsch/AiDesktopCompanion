@@ -535,10 +535,17 @@ async fn tts_selection_inner(app: tauri::AppHandle, safe_mode: Option<bool>) -> 
   let rate = settings.get("tts_rate").and_then(|x| x.as_i64()).unwrap_or(-2).clamp(-10, 10) as i32;
   let vol = settings.get("tts_volume").and_then(|x| x.as_i64()).unwrap_or(100).clamp(0, 100) as u8;
 
-  if engine == "openai" {
-    let voice = settings.get("tts_openai_voice").and_then(|x| x.as_str()).unwrap_or("alloy").to_string();
-    let model = settings.get("tts_openai_model").and_then(|x| x.as_str()).unwrap_or("gpt-4o-mini-tts").to_string();
-    let wav = crate::tts_openai_synthesize_wav(selection.clone(), Some(voice), Some(model), Some(rate), Some(vol)).await?;
+  if engine == "openai" || engine == "gemini" {
+    let wav = if engine == "gemini" {
+      let voice = settings.get("tts_gemini_voice").and_then(|x| x.as_str()).map(|s| s.to_string());
+      let model = settings.get("tts_gemini_model").and_then(|x| x.as_str()).map(|s| s.to_string());
+      let key = crate::config::get_gemini_api_key_from_settings_or_env()?;
+      crate::tts_gemini::gemini_synthesize_wav(key, selection.clone(), voice, model, Some(rate), Some(vol)).await?
+    } else {
+      let voice = settings.get("tts_openai_voice").and_then(|x| x.as_str()).unwrap_or("alloy").to_string();
+      let model = settings.get("tts_openai_model").and_then(|x| x.as_str()).unwrap_or("gpt-4o-mini-tts").to_string();
+      crate::tts_openai_synthesize_wav(selection.clone(), Some(voice), Some(model), Some(rate), Some(vol)).await?
+    };
     #[cfg(target_os = "windows")]
     { crate::utils::play_wav_blocking_windows(&app, &wav)?; }
     #[cfg(not(target_os = "windows"))]

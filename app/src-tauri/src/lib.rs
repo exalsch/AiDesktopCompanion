@@ -114,6 +114,8 @@ pub fn run() {
       tts_synthesize_wav,
       tts_openai_synthesize_wav,
       tts_openai_synthesize_file,
+      tts_gemini_synthesize_file,
+      settings::list_gemini_tts_models,
       tts_openai_stream_start,
       tts_openai_stream_stop,
       tts_create_stream_session,
@@ -149,6 +151,7 @@ pub fn run() {
       get_settings,
       save_settings,
       settings::list_openai_models,
+      settings::list_chat_models,
       load_conversation_state,
       save_conversation_state,
       clear_conversations,
@@ -180,6 +183,8 @@ pub fn run() {
       mcp_ping,
       mcp_is_connected,
       realtime_create_ephemeral_token,
+      gemini_live_create_token,
+      settings::list_gemini_live_models,
       realtime_build_tools,
       realtime_call_tool,
       media::media_hold,
@@ -222,6 +227,7 @@ mod config;
 mod quick_prompts;
 mod mcp;
 mod tts_openai;
+mod tts_gemini;
 mod tts_win_native;
 mod tts_utils;
 pub mod tts_mod;
@@ -233,6 +239,7 @@ mod stt_session;
 mod stt_file;
 mod capture;
 mod chat;
+mod llm_provider;
 mod settings;
 mod quick_actions;
 mod command_hook;
@@ -468,6 +475,14 @@ async fn tts_openai_synthesize_file(text: String, voice: Option<String>, model: 
   tts_openai::openai_synthesize_file(key, text, voice, model, format, rate, volume, instructions).await
 }
 
+/// Synthesize speech via Gemini and return a temp WAV path. Takes no tone:
+/// see the module docs of `tts_gemini`.
+#[tauri::command]
+async fn tts_gemini_synthesize_file(text: String, voice: Option<String>, model: Option<String>, rate: Option<i32>, volume: Option<u8>) -> Result<String, String> {
+  let key = config::get_gemini_api_key_from_settings_or_env()?;
+  tts_gemini::gemini_synthesize_wav(key, text, voice, model, rate, volume).await
+}
+
 /// Start a chunked download stream from OpenAI audio/speech and emit chunks to the frontend.
 /// NOTE: This streams raw container bytes (e.g., MP3 or OGG/Opus). Frontend must handle playback.
 #[tauri::command]
@@ -551,20 +566,44 @@ async fn maybe_post_process_stt_text(text: String, prompt_override: Option<Strin
     };
   }
 
-  let key = match config::get_api_key_from_settings_or_env() {
-    Ok(v) => v,
-    Err(_) => match config::get_stt_cloud_api_key_from_settings_or_env() {
-      Some(v) => v,
-      None => {
+  let model = config::get_stt_post_process_model_from_settings_or_env();
+  // A Gemini model goes to Google regardless of the STT base URL, which only
+  // describes where transcription runs. Anything else keeps using that base
+  // URL, so a custom or local OpenAI-compatible server still gets the cleanup.
+  let (chat_url, key) = if llm_provider::provider_for_model(&model) == llm_provider::Provider::Gemini {
+    match llm_provider::chat_endpoint_for_model(&model) {
+      Ok(ep) => (ep.url, ep.key),
+      Err(e) => {
         return SttPostProcessOutcome {
           final_text: original,
           applied: false,
-          error: Some("STT post-processing skipped: API key not configured (openai_api_key/OPENAI_API_KEY or stt_cloud_api_key).".to_string()),
+          error: Some(format!("STT post-processing skipped: {e}.")),
         };
       }
-    },
+    }
+  } else {
+    let key = match config::get_api_key_from_settings_or_env() {
+      Ok(v) => v,
+      Err(_) => match config::get_stt_cloud_api_key_from_settings_or_env() {
+        Some(v) => v,
+        None => {
+          return SttPostProcessOutcome {
+            final_text: original,
+            applied: false,
+            error: Some("STT post-processing skipped: API key not configured (openai_api_key/OPENAI_API_KEY or stt_cloud_api_key).".to_string()),
+          };
+        }
+      },
+    };
+    let base_url = config::get_stt_cloud_base_url_from_settings_or_env();
+    let b = base_url.trim().trim_end_matches('/');
+    let chat_url = if b.ends_with("/v1") {
+      format!("{}/chat/completions", b)
+    } else {
+      format!("{}/v1/chat/completions", b)
+    };
+    (chat_url, key)
   };
-  let model = config::get_stt_post_process_model_from_settings_or_env();
   let prompt = prompt_override
     .map(|s| s.trim().to_string())
     .filter(|s| !s.is_empty())
@@ -631,14 +670,6 @@ async fn maybe_post_process_stt_text(text: String, prompt_override: Option<Strin
     .connect_timeout(std::time::Duration::from_secs(10))
     .build()
     .unwrap_or_else(|_| reqwest::Client::new());
-  // Use the configured base URL for post-processing (respects custom/local LLM endpoints)
-  let base_url = config::get_stt_cloud_base_url_from_settings_or_env();
-  let b = base_url.trim().trim_end_matches('/');
-  let chat_url = if b.ends_with("/v1") {
-    format!("{}/chat/completions", b)
-  } else {
-    format!("{}/v1/chat/completions", b)
-  };
   let resp = match client
     .post(&chat_url)
     .bearer_auth(&key)
@@ -761,6 +792,10 @@ async fn stt_transcribe_inner(audio: Vec<u8>, mime: String, apply_post_process: 
     tokio::task::spawn_blocking(move || tauri::async_runtime::block_on(transcribe_local_wrapper(audio, mime)))
       .await
       .map_err(|e| format!("local transcription task failed: {e}"))??
+  } else if llm_provider::provider_for_model(&config::get_stt_cloud_model_from_settings_or_env()) == llm_provider::Provider::Gemini {
+    // A Gemini model goes to Google whatever the base URL says, like the
+    // cleanup step does.
+    stt::transcribe_gemini(config::get_stt_cloud_model_from_settings_or_env(), audio, mime).await?
   } else {
     let base_url = config::get_stt_cloud_base_url_from_settings_or_env();
     let model = config::get_stt_cloud_model_from_settings_or_env();
@@ -891,10 +926,10 @@ fn cleanup_stale_tts_wavs(max_age_minutes: Option<u64>) -> Result<u32, String> {
 
 #[tauri::command]
 async fn chat_complete(app: tauri::AppHandle, messages: Vec<chat::ChatMessage>) -> Result<String, String> {
-  let key = settings::get_api_key_from_settings_or_env()?;
   let model = settings::get_model_from_settings_or_env();
+  let endpoint = llm_provider::chat_endpoint_for_model(&model)?;
   let temp = settings::get_temperature_from_settings_or_env();
-  chat::chat_complete_with_mcp(app, messages, key, model, temp, &MCP_CLIENTS).await
+  chat::chat_complete_with_mcp(app, messages, endpoint, model, temp, &MCP_CLIENTS).await
 }
 
 // ---------------------------
@@ -908,6 +943,45 @@ async fn chat_complete(app: tauri::AppHandle, messages: Vec<chat::ChatMessage>) 
 /// preview id; it has since been retired and no longer appears in `/v1/models`,
 /// which is how this whole feature ended up failing.
 const DEFAULT_REALTIME_MODEL: &str = "gpt-realtime";
+
+/// Mint a single-use ephemeral token for a Gemini Live session.
+///
+/// The Gemini counterpart to `realtime_create_ephemeral_token`: the WebView
+/// opens the Live WebSocket with this as `access_token`, so the API key stays
+/// here. The token may open one session, within a minute; a resumed session
+/// (settings change, `goAway`) asks for a fresh one.
+#[tauri::command]
+async fn gemini_live_create_token() -> Result<String, String> {
+  let key = config::get_gemini_api_key_from_settings_or_env()?;
+  let now = chrono::Utc::now();
+  let body = serde_json::json!({
+    "uses": 1,
+    "expireTime": (now + chrono::Duration::minutes(30)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+    "newSessionExpireTime": (now + chrono::Duration::minutes(1)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+  });
+  let client = reqwest::Client::builder()
+    .timeout(std::time::Duration::from_secs(15))
+    .connect_timeout(std::time::Duration::from_secs(10))
+    .build()
+    .unwrap_or_else(|_| reqwest::Client::new());
+  let resp = client
+    .post("https://generativelanguage.googleapis.com/v1beta/auth_tokens")
+    .header("x-goog-api-key", key)
+    .json(&body)
+    .send()
+    .await
+    .map_err(|e| format!("request failed: {e}"))?;
+  if !resp.status().is_success() {
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    return Err(format!("Gemini error: {status} {text}"));
+  }
+  let v: serde_json::Value = resp.json().await.map_err(|e| format!("json error: {e}"))?;
+  v.get("name")
+    .and_then(|x| x.as_str())
+    .map(|s| s.to_string())
+    .ok_or_else(|| "Gemini returned no token".to_string())
+}
 
 /// Mint an ephemeral client secret for an OpenAI Realtime WebRTC session.
 ///

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, reactive, ref, watch, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { useAssistantRealtime } from '../../composables/useAssistantRealtime'
+import { useAssistantRealtime, type ConnectParams } from '../../composables/useAssistantRealtime'
+import { useAssistantGeminiLive, isGeminiLiveModel, DEFAULT_GEMINI_LIVE_VOICE } from '../../composables/useAssistantGeminiLive'
 import { useSettings } from '../../composables/useSettings'
 import { useCallTones } from '../../composables/useCallTones'
 import { useCallHistory, titleFor, type CallDraft } from '../../composables/useCallHistory'
@@ -267,8 +268,17 @@ const DEFAULT_REALTIME_MODEL = 'gpt-realtime-2'
 
 const models = ref<string[]>([...FALLBACK_REALTIME_MODELS])
 
+// Gemini Live models, current as of 2026-10. `refreshModels` replaces the list
+// with what the Gemini key can reach.
+const FALLBACK_GEMINI_LIVE_MODELS = [
+  'gemini-3.8-live',
+  'gemini-3.1-flash-live-preview',
+  'gemini-2.5-flash-native-audio-latest',
+]
+const geminiModels = ref<string[]>([...FALLBACK_GEMINI_LIVE_MODELS])
+
 /**
- * Replace the model list with the realtime models this API key can reach.
+ * Replace the model lists with the realtime models these API keys can reach.
  *
  * `-translate` and `-whisper` are realtime-family ids that are not
  * speech-to-speech models, so they would only fail if picked.
@@ -283,13 +293,29 @@ async function refreshModels() {
   } catch {
     // Offline or no key yet - the fallback list still lets the panel render.
   }
+  try {
+    const live = await invoke<string[]>('list_gemini_live_models')
+    if (Array.isArray(live) && live.length) geminiModels.value = live
+  } catch {
+    // No Gemini key - keep the fallback list.
+  }
 }
 
 // Voices accepted by the realtime API. `aria` and `tenor` used to be listed
 // here and are not OpenAI voices at all; a session minted with one is rejected.
-const voices = [
+const OPENAI_VOICES = [
   'alloy','ash','ballad','cedar','coral','echo','marin','sage','shimmer','verse'
 ]
+
+// Gemini Live speaks with the same thirty prebuilt voices as Gemini TTS.
+const GEMINI_VOICES = [
+  'Achernar','Achird','Algenib','Algieba','Alnilam','Aoede','Autonoe','Callirrhoe','Charon','Despina',
+  'Enceladus','Erinome','Fenrir','Gacrux','Iapetus','Kore','Laomedeia','Leda','Orus','Puck',
+  'Pulcherrima','Rasalgethi','Sadachbia','Sadaltager','Schedar','Sulafat','Umbriel','Vindemiatrix','Zephyr','Zubenelgenubi',
+]
+
+const modelIsGemini = computed(() => isGeminiLiveModel(session.model))
+const voices = computed(() => modelIsGemini.value ? GEMINI_VOICES : OPENAI_VOICES)
 
 // Effort levels the realtime API accepts. Only the reasoning-capable models
 // take the field at all, which is why the control is disabled for the others.
@@ -356,6 +382,15 @@ async function syncSession() {
 }
 
 watch(() => session.supervisorMode, syncSession)
+
+// The two providers have disjoint voices, so switching the model across them
+// has to move the voice too, or the next call is minted with one the other
+// side rejects.
+watch(() => session.model, () => {
+  if (!voices.value.includes(session.voice)) {
+    session.voice = modelIsGemini.value ? DEFAULT_GEMINI_LIVE_VOICE : 'alloy'
+  }
+})
 
 // The pill shows its hold-to-talk button only in push-to-talk, so a mode change
 // mid-call has to reach it or the button lingers or stays missing.
@@ -434,19 +469,7 @@ async function recordCall() {
   if (id !== null) void historyRef.value?.reload?.()
 }
 
-const realtime = useAssistantRealtime({
-  getEphemeralToken: async () => {
-    try {
-      return await invoke<string>('realtime_create_ephemeral_token', { model: session.model, voice: session.voice })
-    } catch (e: any) {
-      // Report what actually failed. This used to append "Backend command
-      // realtime_create_ephemeral_token is missing" to every error - a command
-      // that has always been registered - so a live OpenAI error was presented
-      // as a missing-command bug.
-      const msg = typeof e === 'string' ? e : (e?.message || 'Ephemeral token request failed')
-      throw new Error('Could not mint a realtime token: ' + msg)
-    }
-  },
+const callbacks = {
   // The clock the history records starts here rather than at `activate`, so a
   // slow token mint or ICE negotiation is not billed to the call's duration.
   onConnected: () => { ui.connected = true; ui.connecting = false; ui.error = null; statusText.value = 'Connected'; startElapsed(); syncPill('live'); tones.stopRingback(); if (session.callTones) tones.readyBeep(); callStartedMs = Date.now(); callRecorded = false },
@@ -467,7 +490,58 @@ const realtime = useAssistantRealtime({
     void scrollDebugToBottomIfEnabled()
   },
   onRateLimits: (limits: any[]) => { rateLimits.value = limits },
+}
+
+const openaiClient = useAssistantRealtime({
+  ...callbacks,
+  getEphemeralToken: async () => {
+    try {
+      return await invoke<string>('realtime_create_ephemeral_token', { model: session.model, voice: session.voice })
+    } catch (e: any) {
+      // Report what actually failed. This used to append "Backend command
+      // realtime_create_ephemeral_token is missing" to every error - a command
+      // that has always been registered - so a live OpenAI error was presented
+      // as a missing-command bug.
+      const msg = typeof e === 'string' ? e : (e?.message || 'Ephemeral token request failed')
+      throw new Error('Could not mint a realtime token: ' + msg)
+    }
+  },
 })
+
+const geminiClient = useAssistantGeminiLive({
+  ...callbacks,
+  getToken: async () => {
+    try {
+      return await invoke<string>('gemini_live_create_token')
+    } catch (e: any) {
+      const msg = typeof e === 'string' ? e : (e?.message || 'Token request failed')
+      throw new Error('Could not mint a Gemini Live token: ' + msg)
+    }
+  },
+})
+
+/**
+ * Which client the current (or last) call runs on. Decided at connect from the
+ * model and left alone after, so changing the model mid-call cannot route the
+ * hang-up to the wrong one.
+ */
+const callOnGemini = ref(false)
+const client = () => (callOnGemini.value ? geminiClient : openaiClient)
+
+// Same surface as either client, so the rest of the panel stays provider-blind.
+const realtime = {
+  connect: (p: ConnectParams) => { callOnGemini.value = isGeminiLiveModel(p.model); return client().connect(p) },
+  disconnect: () => client().disconnect(),
+  attachAudioElement: (el: HTMLAudioElement) => openaiClient.attachAudioElement(el),
+  updateSession: (p: ConnectParams) => client().updateSession(p),
+  setMicEnabled: (enabled: boolean) => client().setMicEnabled(enabled),
+  startTalking: () => client().startTalking(),
+  stopTalking: () => client().stopTalking(),
+  get micEnabled() { return client().micEnabled },
+  get status() { return client().status },
+  get transcript() { return client().transcript },
+  get usage() { return client().usage },
+}
 
 // Declared after `realtime`: watch() evaluates its source immediately, and
 // this one reads through to the composable.
@@ -532,7 +606,7 @@ onMounted(async () => {
       // Retired preview ids were persisted by older versions and no longer
       // exist, so a stale value has to be dropped rather than sent.
       if (typeof ar.model === 'string' && ar.model && !ar.model.includes('-preview')) session.model = ar.model
-      if (typeof ar.voice === 'string' && voices.includes(ar.voice)) session.voice = ar.voice
+      if (typeof ar.voice === 'string' && voices.value.includes(ar.voice)) session.voice = ar.voice
       if (typeof ar.supervisor_mode === 'string') session.supervisorMode = (String(ar.supervisor_mode).toLowerCase() === 'needed') ? 'needed' : 'always'
       if (typeof ar.instructions === 'string') session.instructions = ar.instructions
       if (typeof ar.silence_duration_ms === 'number') session.silenceDurationMs = ar.silence_duration_ms
@@ -733,9 +807,17 @@ onBeforeUnmount(() => {
       <div class="field">
         <label class="field-label">Model</label>
         <select class="input" v-model="session.model">
-          <option v-for="m in models" :key="m" :value="m">{{ m }}</option>
+          <optgroup label="OpenAI Realtime">
+            <option v-for="m in models" :key="m" :value="m">{{ m }}</option>
+          </optgroup>
+          <optgroup label="Google Gemini Live">
+            <option v-for="m in geminiModels" :key="m" :value="m">{{ m }}</option>
+          </optgroup>
         </select>
-        <p class="field-hint">Applied when you connect. Restart the session to change it.</p>
+        <p class="field-hint">
+          Applied when you connect. Restart the session to change it.
+          <template v-if="modelIsGemini">Uses the Gemini API key. Cost is not estimated for Gemini.</template>
+        </p>
       </div>
 
       <div class="field">
@@ -833,7 +915,10 @@ onBeforeUnmount(() => {
           :value="session.idleTimeoutMs ?? ''"
           @change="(e:any) => { const v = e?.target?.value; session.idleTimeoutMs = v === '' ? null : Number(v); syncSession() }"
         />
-        <p class="field-hint">Milliseconds of quiet after which the model takes its turn anyway. Blank for none; the API maximum is 30000.</p>
+        <p class="field-hint">
+          Milliseconds of quiet after which the model takes its turn anyway. Blank for none; the API maximum is 30000.
+          <template v-if="modelIsGemini">Not available on Gemini.</template>
+        </p>
       </div>
 
       <div class="field">
@@ -852,7 +937,7 @@ onBeforeUnmount(() => {
       <input type="checkbox" v-model="session.inputAudioNoiseReduction" @change="syncSession" />
       <span class="switch-text">
         <span class="switch-label">Input audio noise reduction</span>
-        <span class="switch-hint">Server-side cleanup tuned for a close microphone.</span>
+        <span class="switch-hint">Server-side cleanup tuned for a close microphone. OpenAI only.</span>
       </span>
     </label>
   </CollapsibleCard>

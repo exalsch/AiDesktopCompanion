@@ -73,3 +73,78 @@ pub async fn transcribe(key: Option<String>, base_url: String, model: String, au
   let text = String::from_utf8_lossy(&body).to_string();
   Ok(text)
 }
+
+/// Inline audio in a Gemini request counts toward its 20 MB request limit, and
+/// base64 grows it by a third. Past this the request would be rejected anyway;
+/// failing here says why. About ten minutes of the 16 kHz mono WAV the
+/// frontend records.
+const GEMINI_MAX_AUDIO_BYTES: usize = 14 * 1024 * 1024;
+
+/// Transcribe with a Gemini model.
+///
+/// Gemini's OpenAI-compatible endpoint has no `/audio/transcriptions` (it
+/// answers 404), but its chat completions accept audio as an `input_audio`
+/// part, so transcription is a chat request with an instruction. The
+/// instruction sits in the user turn rather than a system message because
+/// some audio models reject system instructions outright.
+pub async fn transcribe_gemini(model: String, audio: Vec<u8>, mime: String) -> Result<String, String> {
+  if audio.is_empty() { return Err("Audio data is empty".into()); }
+  let endpoint = crate::llm_provider::chat_endpoint_for_model(&model)?;
+  let m = mime.to_ascii_lowercase();
+  let format = if m.contains("wav") {
+    "wav"
+  } else if m.contains("mpeg") || m.contains("mp3") {
+    "mp3"
+  } else {
+    return Err(format!("Gemini transcription needs WAV or MP3 audio, got {mime}"));
+  };
+  if audio.len() > GEMINI_MAX_AUDIO_BYTES {
+    return Err(format!(
+      "Recording is too long for Gemini transcription ({} MB, limit about {} MB). Use a shorter recording or a local engine.",
+      audio.len() / (1024 * 1024),
+      GEMINI_MAX_AUDIO_BYTES / (1024 * 1024)
+    ));
+  }
+
+  let mut instruction = "Transcribe this audio verbatim, in the language that is spoken. Return only the transcript: no commentary, no labels, no timestamps. If there is no speech, return nothing.".to_string();
+  let vocabulary = crate::config::get_stt_vocabulary_hint();
+  if !vocabulary.is_empty() {
+    instruction.push_str(&format!(" Names and terms that may occur, spelled correctly: {vocabulary}. Use these spellings only where the audio actually says them."));
+  }
+
+  let b64 = {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(&audio)
+  };
+  let body = serde_json::json!({
+    "model": model,
+    "temperature": 0,
+    "messages": [{
+      "role": "user",
+      "content": [
+        { "type": "input_audio", "input_audio": { "data": b64, "format": format } },
+        { "type": "text", "text": instruction }
+      ]
+    }]
+  });
+
+  let resp = CLIENT
+    .post(&endpoint.url)
+    .bearer_auth(&endpoint.key)
+    .json(&body)
+    .send()
+    .await
+    .map_err(|e| format!("request failed: {e}"))?;
+  if !resp.status().is_success() {
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    return Err(format!("STT error (Gemini): {status} {body}"));
+  }
+  let v: serde_json::Value = resp.json().await.map_err(|e| format!("json error: {e}"))?;
+  Ok(v
+    .pointer("/choices/0/message/content")
+    .and_then(|t| t.as_str())
+    .unwrap_or("")
+    .trim()
+    .to_string())
+}
