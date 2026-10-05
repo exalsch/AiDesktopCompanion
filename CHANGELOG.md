@@ -9,6 +9,8 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
+## 0.1.27 - 2026-10-05
+
 ### Use Google Gemini for chat, speech, and the voice assistant
 
 kind: feat
