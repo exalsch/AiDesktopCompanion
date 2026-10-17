@@ -9,6 +9,20 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
+### The assistant can look at screenshots from your MCP tools
+
+kind: fix
+
+When a tool such as windows-commander's `capture_screen` returns a screenshot,
+the model now actually sees it. Ask "what is on my screen?" in a voice call or
+in the Prompt section and it can read and describe it. Before, the picture was
+passed on as a long block of encoded text that the model could not use, and a
+large screenshot could break the request.
+
+This works with OpenAI and Gemini models. The older
+`gemini-2.5-flash-native-audio` voice model sometimes starts guessing before
+the picture arrives and then corrects itself; the 3.x Live models wait for it.
+
 ## 0.1.27 - 2026-10-05
 
 ### Use Google Gemini for chat, speech, and the voice assistant

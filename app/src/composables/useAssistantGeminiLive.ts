@@ -6,6 +6,7 @@ import {
   SUPERVISOR_TOOL, SUPERVISOR_TOOL_NAME, askSupervisorChat,
   type AssistantRealtimeOptions, type ConnectParams, type HistoryTurn,
 } from './useAssistantRealtime'
+import { callMcpTool, type ToolImage } from './toolImages'
 
 // Served from public/ as a real file. Imported through Vite it was inlined as a
 // data: URL, which the CSP's script-src 'self' refuses to load as a worklet.
@@ -188,6 +189,7 @@ export function useAssistantGeminiLive(opts: Omit<AssistantRealtimeOptions, 'get
     if (overLimit) log(`[tools] round limit (${MAX_TOOL_ROUNDS}) reached, refusing further calls`)
     toolRounds += 1
     const epoch = supervisorEpoch
+    const images: Array<{ tool: string, image: ToolImage }> = []
     for (const c of calls) {
       const id = String(c?.id || '')
       const name = String(c?.name || '')
@@ -205,11 +207,9 @@ export function useAssistantGeminiLive(opts: Omit<AssistantRealtimeOptions, 'get
           output = JSON.stringify({ error: e?.message || String(e) })
         }
       } else {
-        try {
-          output = await invoke<string>('realtime_call_tool', { name, argsJson })
-        } catch (e: any) {
-          output = JSON.stringify({ error: e?.message || String(e) })
-        }
+        const res = await callMcpTool(name, argsJson)
+        output = res.output
+        if (!cancelledCalls.has(id)) for (const image of res.images) images.push({ tool: name, image })
       }
       log(`[tools] <- ${name} ${output.slice(0, 200)}`)
       history.value.push({ role: 'tool', content: `${name} ${output.slice(0, 300)}` })
@@ -222,6 +222,22 @@ export function useAssistantGeminiLive(opts: Omit<AssistantRealtimeOptions, 'get
     }
     if (epoch !== supervisorEpoch) { log('[tools] results discarded, the user interrupted that turn'); return }
     if (responses.length) send({ toolResponse: { functionResponses: responses } })
+    // Images go after the tool response, as a completed user turn. Measured
+    // against the alternatives on all three Live models: inline in the
+    // function response worked on 3.x but not on 2.5, and an image turn sent
+    // before the tool response was ignored everywhere - with the model then
+    // describing a screenshot it never saw. The tool output tells the model the
+    // image is coming, which keeps the 3.x models quiet until it arrives; 2.5
+    // can still speak a guess first and correct it once the image lands.
+    if (images.length) {
+      const parts: any[] = []
+      for (const { tool, image } of images) {
+        parts.push({ text: `Image returned by ${tool}:` })
+        parts.push({ inlineData: { mimeType: image.mimeType, data: image.data } })
+      }
+      const ok = send({ clientContent: { turns: [{ role: 'user', parts }], turnComplete: true } })
+      log(`[tools] ${images.length} image(s) ${ok ? 'sent' : 'NOT sent'} to the model`)
+    }
   }
 
   // ---- session config -------------------------------------------------------
