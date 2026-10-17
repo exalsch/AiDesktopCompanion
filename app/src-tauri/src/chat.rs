@@ -148,6 +148,7 @@ pub async fn chat_complete_with_mcp(
       msgs_for_oai.push(serde_json::Value::Object(assistant_msg));
 
       // Dispatch each tool call sequentially and append tool results
+      let mut tool_images: Vec<mcp::ToolImage> = Vec::new();
       for tc in tool_calls.into_iter() {
         let id = tc.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
         let fname = tc.get("function").and_then(|f| f.get("name")).and_then(|x| x.as_str()).unwrap_or("").to_string();
@@ -175,6 +176,10 @@ pub async fn chat_complete_with_mcp(
               if let Some(args) = arg_map_opt { params = params.with_arguments(args); }
               match svc.call_tool(params).await {
                 Ok(res) => {
+                  // Images go to the model as images after the tool turn, not
+                  // as base64 inside the tool message.
+                  let (res, images) = mcp::split_tool_images(serde_json::to_value(&res).unwrap_or(serde_json::Value::Null));
+                  tool_images.extend(images);
                   tool_result_text = serde_json::to_string(&serde_json::json!({ "serverId": server_id, "tool": tool_name, "result": res })).unwrap_or_else(|_| "{}".to_string());
                   let _ = app.emit("chat:tool-result", serde_json::json!({ "id": id, "function": fname, "serverId": server_id, "tool": tool_name, "ok": true, "result": res }));
                 }
@@ -196,6 +201,16 @@ pub async fn chat_complete_with_mcp(
           let _ = app.emit("chat:tool-result", serde_json::json!({ "id": id, "function": fname, "ok": false, "error": format!("Unsupported tool function: {}", fname) }));
           msgs_for_oai.push(serde_json::json!({ "role": "tool", "tool_call_id": id, "content": tool_result_text }));
         }
+      }
+      // A tool message can only carry text, so the images the tools returned
+      // follow as one user message, after every tool result (the API wants the
+      // results directly behind the call).
+      if !tool_images.is_empty() {
+        let mut parts = vec![serde_json::json!({ "type": "text", "text": "Images returned by the tool calls above:" })];
+        for img in tool_images {
+          parts.push(serde_json::json!({ "type": "image_url", "image_url": { "url": format!("data:{};base64,{}", img.mime_type, img.data) } }));
+        }
+        msgs_for_oai.push(serde_json::json!({ "role": "user", "content": parts }));
       }
       // Continue loop for next assistant turn
       continue;

@@ -397,3 +397,78 @@ pub async fn build_openai_tools_from_mcp(
   if let Ok(mut rmap) = FN_REVERSE_MAP.lock() { *rmap = new_reverse_map; }
   out
 }
+
+// --- Images in tool results ---
+
+/// An image an MCP tool returned, lifted out of its result.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolImage {
+  pub mime_type: String,
+  /// Base64, as the MCP image block carried it.
+  pub data: String,
+}
+
+/// Take the image blocks out of a serialized MCP tool result.
+///
+/// Tool results reach the models as text. An image block left in place would
+/// arrive as its base64 - a screenshot from windows-commander is a few hundred
+/// thousand characters - which the model cannot see as a picture and which can
+/// overflow the request on its own. Each image is replaced by a short note and
+/// returned separately, so the caller can hand it over the way its provider
+/// accepts images. The note says the image follows in the next message: told
+/// nothing, the models were measured describing an invented screenshot while
+/// they waited for the real one.
+pub fn split_tool_images(mut result: serde_json::Value) -> (serde_json::Value, Vec<ToolImage>) {
+  let mut images = Vec::new();
+  if let Some(items) = result.get_mut("content").and_then(|c| c.as_array_mut()) {
+    for item in items.iter_mut() {
+      if item.get("type").and_then(|t| t.as_str()) != Some("image") { continue; }
+      let Some(data) = item.get("data").and_then(|d| d.as_str()) else { continue; };
+      let mime_type = item
+        .get("mimeType")
+        .or_else(|| item.get("mime_type"))
+        .and_then(|m| m.as_str())
+        .unwrap_or("image/png")
+        .to_string();
+      let kb = data.len() * 3 / 4 / 1024;
+      images.push(ToolImage { mime_type: mime_type.clone(), data: data.to_string() });
+      *item = serde_json::json!({
+        "type": "text",
+        "text": format!("[{mime_type} image, {kb} KB: sent to you as the next user message. Say nothing about what it shows until you have it.]")
+      });
+    }
+  }
+  (result, images)
+}
+
+#[cfg(test)]
+mod tool_image_tests {
+  use super::*;
+
+  #[test]
+  fn lifts_images_and_leaves_text() {
+    let res = serde_json::json!({
+      "content": [
+        { "type": "image", "data": "iVBORw0KGgo=", "mimeType": "image/png" },
+        { "type": "text", "text": "{\"monitorId\":1}" }
+      ],
+      "isError": false
+    });
+    let (stripped, images) = split_tool_images(res);
+    assert_eq!(images, vec![ToolImage { mime_type: "image/png".into(), data: "iVBORw0KGgo=".into() }]);
+    let content = stripped["content"].as_array().unwrap();
+    assert_eq!(content[0]["type"], "text");
+    assert!(content[0]["text"].as_str().unwrap().contains("next user message"));
+    assert_eq!(content[1]["text"], "{\"monitorId\":1}");
+    assert!(!stripped.to_string().contains("iVBORw0KGgo="));
+  }
+
+  #[test]
+  fn leaves_results_without_images_alone() {
+    let res = serde_json::json!({ "content": [{ "type": "text", "text": "hi" }] });
+    let (stripped, images) = split_tool_images(res.clone());
+    assert!(images.is_empty());
+    assert_eq!(stripped, res);
+  }
+}

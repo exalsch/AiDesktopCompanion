@@ -1078,25 +1078,43 @@ async fn realtime_build_tools() -> Result<serde_json::Value, String> {
 /// here it arrives over the data channel, but both have to resolve the mangled
 /// `mcp__server__tool` name back to a live client.
 ///
-/// Always returns Ok with a JSON string, because the value is fed straight back
-/// to the model as a `function_call_output` - a failed tool still has to produce
-/// output, or the model waits forever for a turn that never completes.
+/// Always returns Ok, because `output` is fed straight back to the model as the
+/// tool's result - a failed tool still has to produce output, or the model
+/// waits forever for a turn that never completes.
+///
+/// Images the tool returned (a windows-commander screenshot, say) come back in
+/// `images` rather than inside `output`; see `mcp::split_tool_images`. The voice
+/// clients send them on as images in the next message.
 #[tauri::command]
-async fn realtime_call_tool(name: String, args_json: Option<String>) -> Result<String, String> {
+async fn realtime_call_tool(name: String, args_json: Option<String>) -> Result<RealtimeToolOutput, String> {
   let args: serde_json::Value = args_json
     .filter(|s| !s.trim().is_empty())
     .and_then(|s| serde_json::from_str(&s).ok())
     .unwrap_or_else(|| serde_json::json!({}));
   let Some((server_id, tool_name)) = mcp::parse_mcp_fn_call_name(&name) else {
-    return Ok(serde_json::json!({ "error": format!("unknown tool: {name}") }).to_string());
+    return Ok(RealtimeToolOutput::text(serde_json::json!({ "error": format!("unknown tool: {name}") })));
   };
   match mcp::call_tool(&MCP_CLIENTS, &server_id, &tool_name, args).await {
-    Ok(res) => Ok(
-      serde_json::json!({ "serverId": server_id, "tool": tool_name, "result": res }).to_string()
-    ),
-    Err(e) => Ok(
-      serde_json::json!({ "serverId": server_id, "tool": tool_name, "error": e }).to_string()
-    ),
+    Ok(res) => {
+      let (res, images) = mcp::split_tool_images(res);
+      Ok(RealtimeToolOutput {
+        output: serde_json::json!({ "serverId": server_id, "tool": tool_name, "result": res }).to_string(),
+        images,
+      })
+    }
+    Err(e) => Ok(RealtimeToolOutput::text(serde_json::json!({ "serverId": server_id, "tool": tool_name, "error": e }))),
+  }
+}
+
+#[derive(serde::Serialize)]
+struct RealtimeToolOutput {
+  output: String,
+  images: Vec<mcp::ToolImage>,
+}
+
+impl RealtimeToolOutput {
+  fn text(v: serde_json::Value) -> Self {
+    Self { output: v.to_string(), images: Vec::new() }
   }
 }
 

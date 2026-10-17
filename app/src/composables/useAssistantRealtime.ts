@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useRealtimeUsage } from './useRealtimeUsage'
 import { buildAudioConstraints, isVoiceIsolationSupported } from '../audioConstraints'
+import { callMcpTool, shrinkImageToFit, type ToolImage } from './toolImages'
 
 // Where the SDP offer is exchanged for an answer. The beta endpoint this used
 // to post to, `POST /v1/realtime?model=...`, was removed with the rest of the
@@ -388,6 +389,7 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     }
     toolRounds += 1
 
+    const images: Array<{ tool: string, image: ToolImage }> = []
     for (const c of calls) {
       const name = String(c?.name || '')
       const callId = String(c?.call_id || '')
@@ -406,11 +408,9 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
           output = JSON.stringify({ error: (e?.message || String(e)) })
         }
       } else {
-        try {
-          output = await invoke<string>('realtime_call_tool', { name, argsJson })
-        } catch (e: any) {
-          output = JSON.stringify({ error: (e?.message || String(e)) })
-        }
+        const res = await callMcpTool(name, argsJson)
+        output = res.output
+        for (const image of res.images) images.push({ tool: name, image })
       }
       log(`[tools] <- ${name} ${output.slice(0, 200)}`)
       history.value.push({ role: 'tool', content: `${name} ${output.slice(0, 300)}` })
@@ -419,8 +419,48 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
         item: { type: 'function_call_output', call_id: callId, output }
       })
     }
+    // Images a tool returned follow as a user message, after every result: a
+    // function_call_output can only carry text. The output itself tells the
+    // model to wait for them.
+    if (images.length) await sendToolImages(images)
     // One response for the whole batch: the model now has every result.
     requestResponse()
+  }
+
+  /**
+   * Hand tool images to the model as `input_image` content.
+   *
+   * Each goes in its own event, shrunk to fit the data channel's message cap;
+   * an image that cannot be made to fit is reported instead of sent, so the
+   * model says it could not see it rather than guessing.
+   */
+  async function sendToolImages(images: Array<{ tool: string, image: ToolImage }>) {
+    const cap = Math.min((pcRef.value as any)?.sctp?.maxMessageSize || 262144, 262144)
+    // Room for the JSON around the base64.
+    const budget = cap - 2048
+    for (const { tool, image } of images) {
+      const fitted = await shrinkImageToFit(image, budget)
+      if (!fitted) {
+        log(`[tools] image from ${tool} is too large for the data channel, not sent`)
+        send({
+          type: 'conversation.item.create',
+          item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: `The image returned by ${tool} was too large to send, so you cannot see it. Say so.` }] },
+        })
+        continue
+      }
+      const ok = send({
+        type: 'conversation.item.create',
+        item: {
+          type: 'message',
+          role: 'user',
+          content: [
+            { type: 'input_text', text: `Image returned by ${tool}:` },
+            { type: 'input_image', image_url: `data:${fitted.mimeType};base64,${fitted.data}` },
+          ],
+        },
+      })
+      log(`[tools] image from ${tool} ${ok ? 'sent' : 'NOT sent'} (${Math.round(fitted.data.length * 0.75 / 1024)} KB ${fitted.mimeType})`)
+    }
   }
 
   function handleServerEvent(raw: string) {
