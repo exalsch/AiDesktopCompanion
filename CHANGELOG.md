@@ -9,6 +9,8 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
+## 0.1.28 - 2026-10-18
+
 ### The assistant can look at screenshots from your MCP tools
 
 kind: fix
