@@ -190,6 +190,11 @@ async function refreshCommandModeState(): Promise<void> {
   }
 }
 
+function reportStartError(label: string, err: unknown): void {
+  const detail = (err && typeof err === 'object' && 'message' in err) ? String((err as any).message) : String(err || 'Recording failed')
+  void invoke('busy_report_error', { label, detail }).catch(() => {})
+}
+
 async function startCommandMode(): Promise<void> {
   if (!commandEnabled.value || commandRunning.value || commandRecording.value || commandPending.value) return
   if (sttRecording.value || sttPending.value) return
@@ -216,6 +221,7 @@ async function startCommandMode(): Promise<void> {
   } catch (err) {
     console.error('[command-mode] start failed', err)
     await hidePopup('command-start-failed', true)
+    reportStartError('Command mode', err)
   } finally {
     commandPending.value = false
   }
@@ -662,8 +668,10 @@ async function startSTT(): Promise<void> {
     }
   } catch (err) {
     console.error('[stt] start failed', err)
-    // Close popup so user can retry
+    // Close popup so user can retry, and say why on the busy pill: the popup
+    // is gone by then, so the error would otherwise vanish with it.
     await hidePopup()
+    reportStartError('Speech to text', err)
   }
   finally {
     sttPending.value = false

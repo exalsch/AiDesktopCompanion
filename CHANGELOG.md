@@ -9,6 +9,15 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
+### The popup tells you when the microphone is blocked
+
+kind: fix
+
+Holding S (or C for Command mode) in the Quick Actions popup with microphone
+access turned off in Windows used to just close the popup. The status pill now
+shows why, and points at Windows Settings > Privacy & security > Microphone.
+The STT section in the main window shows the same clearer message.
+
 ## 0.1.28 - 2026-10-18
 
 ### The assistant can look at screenshots from your MCP tools

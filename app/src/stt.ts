@@ -36,7 +36,11 @@ export async function startRecording(
     inputDeviceId,
     isVoiceIsolationSupported(),
   )
-  mediaStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint })
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint })
+  } catch (e) {
+    throw new Error(describeMicError(e))
+  }
   chunks = []
   try {
     recorder = new MediaRecorder(mediaStream, { mimeType: mime })
@@ -54,6 +58,28 @@ export async function startRecording(
   } catch (e) {
     cleanup()
     throw e
+  }
+}
+
+// getUserMedia rejects with a DOMException whose message ("Permission denied",
+// "Requested device not found") does not say what to do about it. Most of these
+// come from Windows itself, so point at the setting that fixes them.
+export function describeMicError(e: unknown): string {
+  const name = (e && typeof e === 'object' && 'name' in e) ? String((e as any).name) : ''
+  switch (name) {
+    case 'NotAllowedError':
+    case 'SecurityError':
+      return 'Microphone access denied. Allow it in Windows Settings > Privacy & security > Microphone.'
+    case 'NotFoundError':
+    case 'OverconstrainedError':
+      return 'No microphone found. Check the input device in the STT settings.'
+    case 'NotReadableError':
+    case 'AbortError':
+      return 'The microphone could not be opened. It may be in use or disabled.'
+    default: {
+      const msg = (e && typeof e === 'object' && 'message' in e) ? String((e as any).message) : String(e || '')
+      return msg ? `Microphone error: ${msg}` : 'Microphone error'
+    }
   }
 }
 
