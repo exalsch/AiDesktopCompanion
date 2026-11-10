@@ -9,6 +9,25 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
+### Two more accurate Parakeet models for local speech-to-text
+
+kind: feat
+
+Settings > Speech-to-text > Parakeet now offers two fine-tunes of Parakeet V3
+next to the original. Both understand the same 25 languages, German included,
+and make fewer mistakes than V3:
+
+- **Parakeet Ultra** (Moondream) has the largest gain, most of all in noisy
+  rooms and in languages other than English.
+- **Orukeet** (Oruk AI) is more accurate than V3 on most test sets.
+
+Like V3, both are a download of about 670 MB and run at a similar speed.
+
+Pick one and press Download; V3 stays the default. Local file transcription
+uses whichever Parakeet model is selected. Model downloads are now checked
+against a known checksum, so a broken download is reported instead of failing
+later with an unclear error.
+
 ## 0.1.28 - 2026-10-18
 
 ### The assistant can look at screenshots from your MCP tools

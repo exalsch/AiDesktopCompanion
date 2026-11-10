@@ -68,6 +68,8 @@ base64 = "0.23"
 rmcp = { version = "3.1", features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
 tokio = { version = "1", features = ["process", "rt-multi-thread", "macros", "sync"] }
 futures-util = "0.3"
+# Verifies downloaded model files against the hashes pinned in stt_parakeet.rs.
+sha2 = "0.10"
 # Only the TTS streaming server uses hyper, and only as an HTTP/1 server on
 # 127.0.0.1. `hyper-util` supplies the tokio IO adapter that hyper 1.x no longer
 # ships itself; `http-body-util` supplies the body types that replaced 0.14's
