@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog'
-import { useSettings } from '../composables/useSettings'
+import { useSettings, parakeetModelLabel } from '../composables/useSettings'
 import { useSttFileJob, speakerLabel, clock, type ExportFormat } from '../composables/useSttFileJob'
 
 const emit = defineEmits<{
@@ -84,7 +84,7 @@ const progressValue = computed(() => {
 const resultDesc = computed(() => {
   const r = state.result
   if (!r) return ''
-  const engine = r.engine === 'parakeet' ? 'Parakeet V3' : 'Whisper'
+  const engine = r.engine === 'parakeet' ? parakeetModelLabel(String(settings.stt_local_model || '')) : 'Whisper'
   const parts = [clock(r.duration_s), engine]
   if (r.diarized) parts.push(r.speaker_count === 1 ? '1 speaker' : `${r.speaker_count} speakers`)
   return parts.join(' · ')
@@ -151,7 +151,7 @@ async function onSave() {
       <div class="field">
         <label class="field-label">Engine</label>
         <select v-model="state.engine" class="input w-md" :disabled="state.running">
-          <option value="parakeet">Parakeet V3 (fast, 25 languages)</option>
+          <option value="parakeet">{{ parakeetModelLabel(String(settings.stt_local_model || '')) }} (fast, 25 languages)</option>
           <option value="whisper">Whisper (model chosen in Settings)</option>
         </select>
       </div>

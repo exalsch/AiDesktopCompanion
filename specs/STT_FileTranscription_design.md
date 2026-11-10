@@ -84,7 +84,8 @@ and the other way round. Only one file job runs at a time.
 ## UI (`SttFilePanel.vue`)
 
 - Pick a file (dialog filter: mp3, m4a, mp4, aac, wav, flac, ogg, oga).
-- Engine: Parakeet V3 or Whisper (the Whisper model configured in Settings).
+- Engine: Parakeet (the Parakeet model selected in Settings, V3 when Whisper is
+  selected there) or Whisper (the Whisper model configured in Settings).
   Defaults to whichever local model Settings has selected.
 - **Identify speakers** checkbox. When the speaker model is missing, a
   download button with progress appears next to it.

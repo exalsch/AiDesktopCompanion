@@ -24,6 +24,24 @@ export type ClipboardHandling = (typeof CLIPBOARD_HANDLINGS)[number]
 /// Ceiling for `paste_delay_ms`, matching MAX_PASTE_DELAY_MS in config.rs.
 export const MAX_PASTE_DELAY_MS = 2000
 
+/// Local Parakeet models the backend can download and run, matching MODELS in
+/// stt_parakeet.rs. Settings naming any other Parakeet id migrate to V3.
+export const LOCAL_PARAKEET_MODEL_IDS: readonly string[] = [
+  'parakeet-tdt-0.6b-v3',
+  'parakeet-ultra',
+  'parakeet-orukeet-v0.1.0',
+]
+
+/// Display name of the Parakeet model a local transcription uses. Anything
+/// that is not a known Parakeet id (Whisper, a retired model) runs as V3.
+export function parakeetModelLabel(localModel: string): string {
+  switch (String(localModel || '').trim().toLowerCase()) {
+    case 'parakeet-ultra': return 'Parakeet Ultra'
+    case 'parakeet-orukeet-v0.1.0': return 'Orukeet'
+    default: return 'Parakeet V3'
+  }
+}
+
 // Module-singleton state to ensure all components share the same settings instance
 const DEFAULT_SYSTEM_PROMPT = (
   'For every user prompt, follow these steps internally before responding:\n' +
@@ -262,11 +280,13 @@ export function useSettings() {
       }
       if (typeof (v as any).stt_local_model === 'string' && String((v as any).stt_local_model).trim()) {
         const stored = String((v as any).stt_local_model).trim()
-        // Parakeet V2 was English-only and has been removed. A profile still
-        // naming it is migrated to V3 rather than left pointing at a backend
-        // that no longer exists.
-        const retiredParakeet = stored.toLowerCase().includes('parakeet') && !stored.toLowerCase().includes('v3')
-        settings.stt_local_model = retiredParakeet ? 'parakeet-tdt-0.6b-v3' : stored
+        // Parakeet V2 was English-only and has been removed. A profile naming
+        // it, or any other Parakeet id the backend does not know, is migrated
+        // to V3 rather than left pointing at a model that no longer exists.
+        // Keep this list in step with MODELS in stt_parakeet.rs.
+        const lower = stored.toLowerCase()
+        const unknownParakeet = lower.includes('parakeet') && !LOCAL_PARAKEET_MODEL_IDS.includes(lower)
+        settings.stt_local_model = unknownParakeet ? 'parakeet-tdt-0.6b-v3' : stored
       }
       if (typeof (v as any).stt_parakeet_has_cuda === 'boolean') {
         settings.stt_parakeet_has_cuda = (v as any).stt_parakeet_has_cuda === true
