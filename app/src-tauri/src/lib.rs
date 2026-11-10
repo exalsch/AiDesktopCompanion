@@ -195,6 +195,7 @@ pub fn run() {
       updater::open_release_page,
       busy::busy_get_state,
       busy::busy_hide,
+      busy::busy_report_error,
       busy::busy_cancel,
       call_history::call_history_save,
       call_history::call_history_list,

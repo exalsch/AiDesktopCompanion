@@ -255,6 +255,16 @@ pub fn busy_get_state() -> Result<BusyState, String> {
   Ok(BUSY_STATE.lock().map(|s| s.clone()).unwrap_or_default())
 }
 
+/// Show an error on the indicator for a failure the frontend hit on its own,
+/// such as the microphone being denied when the popup starts recording. The
+/// popup closes at that point, so without this the failure has no visible trace.
+#[tauri::command]
+pub fn busy_report_error(app: tauri::AppHandle, label: String, detail: String) -> Result<(), String> {
+  start(&app, &label);
+  finish(&app, Err(detail));
+  Ok(())
+}
+
 /// Hide the indicator (used by the window itself to dismiss an error).
 #[tauri::command]
 pub fn busy_hide(app: tauri::AppHandle) -> Result<(), String> {
