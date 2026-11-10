@@ -156,8 +156,12 @@ const localSttProviders = [
   { label: 'Parakeet', value: 'parakeet', hint: 'On-device Parakeet. Downloads ONNX model files.' },
 ]
 
+// Values must stay in LOCAL_PARAKEET_MODEL_IDS (useSettings.ts) and MODELS
+// (stt_parakeet.rs). All three cover the same 25 languages, including German.
 const parakeetVariants = [
-  { label: 'Parakeet V3', value: 'parakeet-tdt-0.6b-v3', hint: 'Multilingual - 25 languages including German.' },
+  { label: 'Parakeet V3', value: 'parakeet-tdt-0.6b-v3', hint: 'NVIDIA original. 25 languages including German. Int8, about 670 MB.' },
+  { label: 'Parakeet Ultra', value: 'parakeet-ultra', hint: 'Moondream fine-tune of V3, fewer errors on every benchmark, most in noise and other languages. Int8, about 670 MB, similar speed to V3.' },
+  { label: 'Orukeet', value: 'parakeet-orukeet-v0.1.0', hint: 'Oruk AI fine-tune of V3, more accurate than V3 on most test sets. Int8, about 670 MB, similar speed to V3. CC-BY-SA-4.0.' },
 ]
 
 // Models offered for the cloud endpoint. Only models that answer POST
@@ -778,7 +782,7 @@ function infoTitle(v: string): string {
 
       <div class="field-hint">
         Default folder:
-        <code>%APPDATA%/AiDesktopCompanion/models/parakeet/parakeet-tdt-0.6b-v3</code>
+        <code>%APPDATA%/AiDesktopCompanion/models/parakeet/{{ props.settings.stt_local_model }}</code>
       </div>
       <div class="field-hint" v-if="localModelStatusError">{{ localModelStatusError }}</div>
       <div class="field-hint" v-else>

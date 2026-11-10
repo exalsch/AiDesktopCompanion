@@ -504,13 +504,9 @@ async fn transcribe_local_wrapper(audio: Vec<u8>, mime: String) -> Result<String
   let t = lm.trim().to_lowercase();
   if t.contains("parakeet") {
     let has_cuda = config::get_stt_parakeet_has_cuda_from_settings_or_env();
-    // Parakeet v2 is English-only; only v3 is multilingual. Which one ran is
-    // otherwise invisible, and a wrong-language result looks like a bad
-    // recording rather than a model choice.
-    let multilingual = t.contains("v3");
-    println!(
-      "[stt] engine=local provider=parakeet model={lm} cuda={has_cuda} multilingual={multilingual}"
-    );
+    // Every Parakeet model offered locally (V3 and its fine-tunes) covers the
+    // same 25 languages; the retired English-only V2 falls through to V3.
+    println!("[stt] engine=local provider=parakeet model={lm} cuda={has_cuda}");
     let out = stt_parakeet::transcribe_local(audio, mime, has_cuda, lm).await;
     if let Ok(text) = &out {
       println!("[stt] transcript chars={}", text.chars().count());
