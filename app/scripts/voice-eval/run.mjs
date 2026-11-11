@@ -87,10 +87,20 @@ const wcTools = JSON.parse(fs.readFileSync(path.join(fixtures, 'windows-commande
 const robTools = JSON.parse(fs.readFileSync(path.join(fixtures, 'rob-tools.json'), 'utf8'))
 const profile = JSON.parse(fs.readFileSync(path.join(appDir, 'src-tauri', 'voice_tool_profile.json'), 'utf8'))
 
+// Copy of background_ask.rs voice_description(); keep the two in step.
+const voiceAskDescription = (d) => `${d} IN THIS VOICE CALL it runs in the background: it returns at once, you say in a few words that Claude Code is on it and carry on, and the answer arrives later as a [Claude Code] message. Never call it twice for the same question.`
+
 function toolsFor(variant) {
-  const wc = variant === 'baseline' ? wcTools : wcTools.filter((t) => profile.windows_commander_screen.includes(t.name))
-  return [...wc.map((t) => toolDecl('windows-commander', t)), ...robTools.map((t) => toolDecl('Rob', t))]
+  if (variant === 'baseline') return [...wcTools.map((t) => toolDecl('windows-commander', t)), ...robTools.map((t) => toolDecl('Rob', t))]
+  const wc = wcTools.filter((t) => profile.windows_commander_screen.includes(t.name))
+  // As realtime_build_tools: no claude_result, ask_claude runs in the background.
+  const rob = robTools.filter((t) => t.name !== 'claude_result').map((t) => toolDecl('Rob', t))
+    .map((d) => (d.name.endsWith('__ask_claude') ? { ...d, description: voiceAskDescription(d.description) } : d))
+  return [...wc.map((t) => toolDecl('windows-commander', t)), ...rob]
 }
+
+/** What background_ask.rs returns at once for ask_claude in a call. */
+const ASK_STARTED = { status: 'started', job_id: 'cc-1', note: 'Claude Code is working on it in the background. Tell the user in a few words that Claude Code is on it, then carry on. Do not guess the answer and do not call ask_claude again for this question: the answer is added to the conversation as a [Claude Code] message when it is ready.' }
 
 // ---- instructions -----------------------------------------------------------
 
@@ -116,6 +126,8 @@ function toolOutput(name, args, ctx, variant) {
   if (variant !== 'baseline' && server === 'windows-commander' && !profile.windows_commander_screen.includes(tool)) {
     return { error: `${tool} is not available in voice sessions.` }
   }
+  if (variant !== 'baseline' && tool === 'ask_claude') { ctx.asked = args; return ASK_STARTED }
+  if (variant !== 'baseline' && tool === 'claude_result') return { error: 'Not needed in a voice call.' }
   const res = cannedResult(tool, args, { ...ctx, appLayer: variant !== 'baseline' })
   if (res && res.error) return { serverId: server, tool, result: { content: [{ type: 'text', text: res.error }], isError: true } }
   return { serverId: server, tool, result: { content: [{ type: 'text', text: JSON.stringify(res) }] } }
@@ -151,7 +163,8 @@ async function geminiSession(instructions, tools, onTool) {
   ws.send(JSON.stringify({ setup }))
   await Promise.race([ready, timeout(20000, 'setup')])
 
-  async function turn(userText, ctxText) {
+  async function turn(userText, ctxText, injected = null) {
+    if (injected) userText = [injected.text, injected.speak].join(String.fromCharCode(10, 10))
     if (ctxText) ws.send(JSON.stringify({ clientContent: { turns: [{ role: 'user', parts: [{ text: ctxText }] }], turnComplete: false } }))
     const calls = []
     let text = ''
@@ -203,9 +216,10 @@ async function openaiSession(instructions, tools, onTool) {
   send({ type: 'session.update', session: { type: 'realtime', output_modalities: ['text'], instructions, tools: tools.map((t) => ({ type: 'function', ...t })), tool_choice: 'auto' } })
   await Promise.race([updated, timeout(20000, 'session.update')])
 
-  async function turn(userText, ctxText) {
+  async function turn(userText, ctxText, injected = null) {
     if (ctxText) send({ type: 'conversation.item.create', item: { type: 'message', role: 'system', content: [{ type: 'input_text', text: ctxText }] } })
-    send({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: userText }] } })
+    if (injected) send({ type: 'conversation.item.create', item: { type: 'message', role: 'system', content: [{ type: 'input_text', text: injected.text }] } })
+    else send({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: userText }] } })
     const calls = []
     let text = ''
     let rounds = 0
@@ -235,7 +249,7 @@ async function openaiSession(instructions, tools, onTool) {
       }
       listeners.add(l)
     })
-    send({ type: 'response.create' })
+    send(injected ? { type: 'response.create', response: { instructions: injected.speak } } : { type: 'response.create' })
     await Promise.race([done, timeout(60000, 'turn')])
     return { calls, text: text.replace(/\s+/g, ' ').trim() }
   }
@@ -254,12 +268,16 @@ async function runScenario(sc, variant) {
   try {
     for (let i = 0; i < sc.turns.length; i++) {
       ctx.turn = i
-      const ctxText = variant === 'baseline' ? contextItem(sc.world, i, 'old') : variant === 'new' ? contextItem(sc.world, i, 'new') : null
-      const t = await session.turn(sc.turns[i], ctxText)
+      const step = sc.turns[i]
+      // A string is the user speaking; { inject, speak } is a message the app
+      // adds (a background answer arriving), with no new screen context.
+      const injected = typeof step === 'object' ? { text: step.inject, speak: step.speak } : null
+      const ctxText = injected ? null : variant === 'baseline' ? contextItem(sc.world, i, 'old') : variant === 'new' ? contextItem(sc.world, i, 'new') : null
+      const t = await session.turn(injected ? '' : step, ctxText, injected)
       // Curly apostrophes ("can’t") would slip past the checks' patterns.
       t.text = t.text.replace(/[‘’]/g, "'")
       turns.push(t)
-      if (verbose) console.log(`    [${sc.id}/${variant}] T${i + 1} user: ${sc.turns[i]}\n      calls: ${t.calls.map((c) => `${bare(c.name)}(${JSON.stringify(c.args).slice(0, 80)})`).join(', ') || '-'}\n      said: ${t.text}`)
+      if (verbose) console.log(`    [${sc.id}/${variant}] T${i + 1} user: ${typeof sc.turns[i] === 'object' ? '[app] ' + sc.turns[i].inject.split(String.fromCharCode(10))[0] : sc.turns[i]}\n      calls: ${t.calls.map((c) => `${bare(c.name)}(${JSON.stringify(c.args).slice(0, 80)})`).join(', ') || '-'}\n      said: ${t.text}`)
     }
   } finally { session.close() }
   const results = sc.checks.map((c) => { const r = c.fn(turns); return { name: c.name, ok: r === true || r?.ok === true, why: r?.why } })
@@ -268,13 +286,16 @@ async function runScenario(sc, variant) {
 }
 
 const scenarios = SCENARIOS.filter((s) => !only || only.split(',').includes(s.id))
+// Scenarios that test behaviour only the new app layer has (background Claude
+// Code) are skipped for the baseline.
+const runsFor = (sc, variant) => (sc.newOnly && variant === 'baseline' ? 0 : runs)
 const all = []
 console.log(`provider ${provider}, model ${model}, variants ${variants.join('/')}, runs ${runs}`)
 for (const variant of variants) {
   const tools = toolsFor(variant)
   console.log(`\n== ${variant}: ${tools.length} tools, instructions ${instructionsFor(variant, tools).length} chars`)
   for (const sc of scenarios) {
-    for (let r = 0; r < runs; r++) {
+    for (let r = 0; r < runsFor(sc, variant); r++) {
       let res
       // OpenAI orgs on a low tier hit their tokens-per-minute limit after a
       // few sessions; a rate-limited run measures nothing, so it is retried.

@@ -141,4 +141,39 @@ export const SCENARIOS = [
       }),
     ],
   },
+  {
+    // Call 18 (11.11.2026): Claude Code took 216 s and the answer came after
+    // the hang-up. In a call it now runs in the background (background_ask.rs):
+    // the tool returns at once and the app injects the answer when it lands.
+    id: 'claude_background',
+    world: 'outlook',
+    newOnly: true,
+    turns: [
+      'Do we need to prepare for this event?',
+      'Any result yet?',
+      {
+        inject: "[Claude Code] The question you asked is answered.\nQuestion: Do I need to prepare for the Steering Committee HYDS meeting today at 14:00?\nResult: Yes. Paul Weber's agenda asks for the go-live status and the open budget points, so bring the status slide.",
+        // Copy of resultSpeakInstructions() in screenPresence.ts.
+        speak: 'Claude Code just finished; its result is the last [Claude Code] message. Tell the user in one or two short sentences, in the language of the conversation, starting with what it was about. Do not read out URLs, IDs or markup.',
+      },
+    ],
+    checks: [
+      check('turn 1 reads the screen, then asks Claude Code with the event name', (t) => {
+        const s = firstIndex(t[0], (n) => SCREEN_TOOLS.has(n))
+        const a = t[0].calls.findIndex((c) => bare(c.name) === 'ask_claude')
+        if (s < 0 || a < 0 || s > a) return { ok: false, why: `calls: ${t[0].calls.map((c) => bare(c.name)).join(', ') || 'none'}` }
+        return /steering|hyds/i.test(String(t[0].calls[a].args?.question || '')) || { ok: false, why: `question: ${t[0].calls[a].args?.question}` }
+      }),
+      check('turn 1 and 2 do not invent the answer', (t) => {
+        const bad = /(agenda|slide|budget|go-live|nothing to prepare|no need to prepare|you don't need)/i
+        const hit = [t[0], t[1]].find((x) => bad.test(x.text || ''))
+        return !hit || { ok: false, why: `answer before it arrived: "${hit.text}"` }
+      }),
+      check('turn 2 says it is still working and does not ask again', (t) => {
+        if (called(t[1], 'ask_claude')) return { ok: false, why: 'asked Claude Code again' }
+        return /(still|working|not yet|noch|on it|waiting)/i.test(t[1].text || '') || { ok: false, why: `answer: "${t[1].text}"` }
+      }),
+      check('the arriving answer is given', (t) => (/slide|go-live|budget|status/i.test(t[2].text || '') && !called(t[2], 'ask_claude')) || { ok: false, why: `answer: "${t[2].text}"` }),
+    ],
+  },
 ]
