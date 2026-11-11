@@ -758,9 +758,16 @@ watch(() => props.autostart, (n, old) => {
 
 function deliverHermes(o: HermesOutcome, respond: boolean): boolean {
   if (!ui.connected) return false
-  const ok = realtime.injectContext(hermesResultText(o), respond, respond ? resultSpeakInstructions(o) : undefined)
+  // The user's own words pin the reply language; see replyLanguageRule.
+  const userTexts = transcript.value.filter((t) => t.role === 'user').map((t) => t.content)
+  const ok = realtime.injectContext(hermesResultText(o), respond, respond ? resultSpeakInstructions(o, userTexts) : undefined)
   if (ok) {
     debugLines.value.push(`[${agentOf(o)}] ${o.status}: ${o.task.slice(0, 80)}`)
+    // The arrival is a step the user should see in the transcript, the call
+    // pill and the call history, like a tool call.
+    const result = o.status === 'completed' ? (o.output || '(no text)') : `${o.status}: ${o.error || 'unknown'}`
+    const line = `${agentOf(o)} answered -> ${result.replace(/\s+/g, ' ').slice(0, 157)}${result.length > 157 ? '…' : ''}`
+    try { (realtime as any).transcript?.value?.push({ role: 'tool', content: line }) } catch {}
     void invoke('hermes_ack_result', { runId: o.runId }).catch(() => {})
   }
   return ok

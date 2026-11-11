@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { buildVoiceInstructions, voiceToolNote, arrangementNote, SCREEN_CONTEXT_PREFIX } from '../src/composables/voiceInstructions.ts'
+import { buildVoiceInstructions, voiceToolNote, arrangementNote, SCREEN_CONTEXT_PREFIX, guessLanguage, replyLanguageRule } from '../src/composables/voiceInstructions.ts'
 import { toolTraceLine, bareToolName } from '../src/composables/toolTrace.ts'
 
 const SCREEN = [
@@ -33,6 +33,22 @@ test('Claude Code is described as a background job, only when it is offered', ()
   assert.match(voiceToolNote(SCREEN), /runs in the background in this call/)
   assert.match(voiceToolNote(SCREEN), /\[Claude Code\] message/)
   assert.doesNotMatch(voiceToolNote(SCREEN.filter((n) => !n.endsWith('ask_claude'))), /Claude Code/)
+})
+
+test('the reply language comes from what the user said', () => {
+  assert.equal(guessLanguage(['This meeting I am looking at, is there anything I should prepare for?']), 'English')
+  assert.equal(guessLanguage(['Was muss ich für diesen Termin vorbereiten?']), 'German')
+  // The last turn counts most.
+  assert.equal(guessLanguage(['Was ist das?', 'Can you check this meeting for me please?']), 'English')
+  // Call 19: Gemini transcribed the user as Spanish. Neither shows: English.
+  assert.equal(guessLanguage(['¿Qué debo preparar para esta reunión?']), null)
+  assert.match(replyLanguageRule(null), /English only/)
+  assert.match(replyLanguageRule('German'), /Antworte auf Deutsch/)
+})
+
+test('trace line: a background job shows as started', () => {
+  assert.equal(toolTraceLine('mcp__Rob__ask_claude', '{"question":"Prepare?"}', '{"status":"started","job_id":"cc-1","note":"..."}'),
+    'ask_claude (Prepare?) -> started in the background')
 })
 
 test('rules for missing tools are left out', () => {

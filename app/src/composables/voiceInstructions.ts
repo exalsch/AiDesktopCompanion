@@ -151,6 +151,40 @@ export function arrangementNote(arrangement: VoiceArrangement): string {
   }
 }
 
+const GERMAN_WORDS = /\b(ich|und|nicht|das|ist|was|wie|bitte|kannst|du|mir|mein|meine|der|die|den|dem|ein|eine|zu|mit|auf|für|vorbereiten|termin|besprechung|hier|jetzt|noch|schon|wo|welche[nrs]?)\b/gi
+const ENGLISH_WORDS = /\b(i|you|the|and|is|what|how|please|can|my|me|this|that|to|with|on|for|prepare|meeting|here|now|still|where|which|do|does)\b/gi
+
+/**
+ * German or English, from what the user said last (newest first counts most).
+ * null when neither shows, for example when the speech model transcribed the
+ * user as Spanish (call 19). Only these two: the voice session is configured
+ * for a user who speaks them, and guessing a third language is what went
+ * wrong in the first place.
+ */
+export function guessLanguage(userTexts: string[]): 'German' | 'English' | null {
+  let de = 0
+  let en = 0
+  userTexts.slice(-3).forEach((t, i, arr) => {
+    const weight = i === arr.length - 1 ? 2 : 1
+    const text = String(t || '')
+    de += weight * ((text.match(GERMAN_WORDS) || []).length + (/[äöüß]/i.test(text) ? 2 : 0))
+    en += weight * (text.match(ENGLISH_WORDS) || []).length
+  })
+  if (!de && !en) return null
+  return de > en ? 'German' : 'English'
+}
+
+/**
+ * The sentence that pins the language of a spoken reply to an injected
+ * message. Gemini Live gets those messages as text, and with only "the
+ * language of the conversation" to go on it answered a Claude Code result in
+ * Spanish, Italian and once in Chinese (calls 19 and 20, 11.11.2026).
+ */
+export function replyLanguageRule(language: 'German' | 'English' | null): string {
+  if (language === 'German') return 'Antworte auf Deutsch. Reply in German only, never in any other language.'
+  return 'Reply in English only, never in any other language.'
+}
+
 /**
  * The full system instructions: the user's own text (kept as written), then
  * the tool rules, then the arrangement note.

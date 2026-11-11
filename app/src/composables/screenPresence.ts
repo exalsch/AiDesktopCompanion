@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { guessLanguage, replyLanguageRule } from './voiceInstructions'
 
 // Screen presence for the voice session: what windows-commander says the user
 // is looking at, and Hermes results coming back. Shared by the OpenAI Realtime and Gemini Live
@@ -52,10 +53,13 @@ export function hermesResultText(o: HermesOutcome): string {
   return `[${agent}] ${what} did not finish (${o.status}).\n${label}: ${o.task}\nReason: ${o.error || 'unknown'}`
 }
 
-/** How the model is asked to speak a result that just arrived. */
-export function resultSpeakInstructions(o: HermesOutcome): string {
+/**
+ * How the model is asked to speak a result that just arrived. `userTexts` are
+ * the user's transcribed turns, for the language (voiceInstructions.ts).
+ */
+export function resultSpeakInstructions(o: HermesOutcome, userTexts: string[] = []): string {
   const agent = agentOf(o)
-  return `${agent} just finished; its result is the last [${agent}] message. Tell the user in one or two short sentences, in the language of the conversation, starting with what it was about. Do not read out URLs, IDs or markup.`
+  return `${agent} just finished; its result is the last [${agent}] message. Tell the user in one or two short sentences, starting with what it was about. Do not read out URLs, IDs or markup. ${replyLanguageRule(guessLanguage(userTexts))}`
 }
 
 /** Resolves with `p`, or with null after `ms`. */

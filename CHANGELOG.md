@@ -20,6 +20,12 @@ have already hung up, a desktop notification shows the answer and the next
 call picks it up. Before, a slow answer (over three minutes for a "do I need
 to prepare" check) could arrive after the call ended and was lost.
 
+The answer is spoken in the language you speak (German or English) rather
+than in whatever language the voice model picks; Gemini answered in Spanish,
+Italian and once in Chinese. While Claude Code works, its progress pill sits
+above the call pill instead of behind it, and its answer shows as a line in
+the call transcript.
+
 ### The voice assistant looks before it answers and shows you what it did
 
 kind: fix
