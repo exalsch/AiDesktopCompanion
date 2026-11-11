@@ -2,7 +2,12 @@
 // turns; each check looks at the tool calls and the spoken (transcribed) text
 // of one turn. `bare(name)` strips the mcp__server__ prefix.
 
+import { EVENT_REF } from './world.mjs'
+
 export const bare = (n) => String(n).split('__').pop()
+
+// Tools that change something on the desktop.
+const ACTING = new Set(['invoke_ui_element', 'set_ui_value', 'type_text', 'send_hotkey', 'desktop_agent', 'mouse_action', 'keyboard_action'])
 
 const SCREEN_TOOLS = new Set(['get_pointer_context', 'get_current_context', 'get_focused_ui_element', 'get_foreground_window', 'ocr_screen', 'capture_screen', 'capture_screen_region', 'read_ui_tree', 'find_ui_element', 'get_ui_element_details', 'get_cursor_position'])
 
@@ -109,6 +114,80 @@ export const SCENARIOS = [
         if (!c) return { ok: false, why: `calls: ${t[0].calls.map((x) => bare(x.name)).join(', ') || 'none'}` }
         return (c.args?.text || c.args?.element) ? { ok: true } : { ok: false, why: `target: ${JSON.stringify(c.args)}` }
       }),
+      // With click and keyboard tools in reach, "show me" must stay showing.
+      check('does not click or send', (t) => !t[0].calls.some((c) => ACTING.has(bare(c.name))) || { ok: false, why: `calls: ${t[0].calls.map((c) => bare(c.name)).join(', ')}` }),
+    ],
+  },
+  {
+    id: 'click_this',
+    world: 'outlook',
+    newOnly: true,
+    turns: ['Open this meeting.'],
+    checks: [
+      check('reads the pointer, then clicks the resolved element', (t) => {
+        const p = firstIndex(t[0], (n) => n === 'get_pointer_context')
+        const i = t[0].calls.findIndex((c) => bare(c.name) === 'invoke_ui_element')
+        if (p < 0 || i < 0 || i < p) return { ok: false, why: `calls: ${t[0].calls.map((c) => bare(c.name)).join(', ') || 'none'}` }
+        return t[0].calls[i].args?.element_ref === EVENT_REF || { ok: false, why: `element_ref: ${t[0].calls[i].args?.element_ref}` }
+      }),
+      check('no desktop agent for one click', (t) => !called(t[0], 'desktop_agent') || { ok: false, why: 'used desktop_agent' }),
+    ],
+  },
+  {
+    id: 'type_here',
+    world: 'compose',
+    newOnly: true,
+    turns: ["Type 'Thanks Paul, Friday works for me.' here."],
+    checks: [
+      check('types the text into the focused field', (t) => {
+        const c = t[0].calls.find((x) => ['type_text', 'set_ui_value'].includes(bare(x.name)))
+        if (!c) return { ok: false, why: `calls: ${t[0].calls.map((x) => bare(x.name)).join(', ') || 'none'}` }
+        const text = String(c.args?.text ?? c.args?.value ?? '')
+        return /Friday works for me/i.test(text) || { ok: false, why: `text: ${text}` }
+      }),
+      check('does not send', (t) => !t[0].calls.some((c) => bare(c.name) === 'invoke_ui_element' || bare(c.name) === 'desktop_agent') || { ok: false, why: `calls: ${t[0].calls.map((c) => bare(c.name)).join(', ')}` }),
+    ],
+  },
+  {
+    id: 'shortcut',
+    world: 'compose',
+    newOnly: true,
+    turns: ['Undo that.'],
+    checks: [
+      check('presses Ctrl+Z', (t) => {
+        const c = t[0].calls.find((x) => bare(x.name) === 'send_hotkey')
+        if (!c) return { ok: false, why: `calls: ${t[0].calls.map((x) => bare(x.name)).join(', ') || 'none'}` }
+        const mods = (c.args?.modifiers || []).map((m) => String(m).toLowerCase())
+        return (String(c.args?.key || '').toLowerCase() === 'z' && mods.some((m) => m.startsWith('ctrl') || m === 'control')) || { ok: false, why: JSON.stringify(c.args) }
+      }),
+    ],
+  },
+  {
+    id: 'multi_step',
+    world: 'outlook',
+    newOnly: true,
+    turns: ['Switch Outlook to the month view and then go to next month.'],
+    checks: [
+      check('hands it to the desktop agent with the task', (t) => {
+        const c = t[0].calls.find((x) => bare(x.name) === 'desktop_agent')
+        if (!c) return { ok: false, why: `calls: ${t[0].calls.map((x) => bare(x.name)).join(', ') || 'none'}` }
+        return /month/i.test(String(c.args?.task || '')) || { ok: false, why: `task: ${c.args?.task}` }
+      }),
+      // "I will let you know when it's done" is fine; "it's done" is not.
+      check('does not claim it is done yet', (t) => !/(?<!when )\b(?:it'?s|it is) (?:now )?(?:done|switched)\b|\bI(?:'ve| have) (?:switched|done)\b|\bis now (?:showing|in)\b/i.test(t[0].text || '') || { ok: false, why: `answer: "${t[0].text}"` }),
+    ],
+  },
+  {
+    id: 'confirm_send',
+    world: 'compose',
+    newOnly: true,
+    turns: ['Send this mail.', 'Yes, send it.'],
+    checks: [
+      check('turn 1 asks before sending', (t) => {
+        if (t[0].calls.some((c) => ACTING.has(bare(c.name)))) return { ok: false, why: `acted: ${t[0].calls.map((c) => bare(c.name)).join(', ')}` }
+        return /\?|confirm|sure|should i|shall i/i.test(t[0].text || '') || { ok: false, why: `answer: "${t[0].text}"` }
+      }),
+      check('turn 2 sends', (t) => t[1].calls.some((c) => ACTING.has(bare(c.name))) || { ok: false, why: `turn 2 calls: ${t[1].calls.map((c) => bare(c.name)).join(', ') || 'none'}` }),
     ],
   },
   {

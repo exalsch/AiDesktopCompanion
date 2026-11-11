@@ -15,7 +15,7 @@
 const OLK_HWND = 67564
 const OLK_TITLE = 'Calendar - Sam Example - Outlook'
 export const EVENT_NAME = 'Steering Committee HYDS, 14:00 to 15:00, Wednesday, November 11, 2026, Microsoft Teams Meeting, By Paul Weber, Busy'
-const EVENT_REF = 'NDIuNjc3NDQuNC42LjQuOTk5OQ=='
+export const EVENT_REF = 'NDIuNjc3NDQuNC42LjQuOTk5OQ=='
 
 const SCREEN2 = { monitorId: 'screen-2', bounds: { x: 1920, y: 0, width: 2560, height: 1440, right: 4480, bottom: 1440 }, workingArea: { x: 1920, y: 0, width: 2560, height: 1392, right: 4480, bottom: 1392 }, dpiScale: 1 }
 
@@ -149,6 +149,14 @@ export function cannedResult(tool, args, ctx) {
       return { id: `a${ctx.annotations = (ctx.annotations || 0) + 1}`, resolved: { x: 2000, y: 132, width: 64, height: 32 } }
     }
     case 'clear_annotations': return { cleared: [], count: 0 }
+    case 'invoke_ui_element':
+      if (!args?.element_ref) return { error: 'element_ref is required.' }
+      return { ok: true, element_ref: args.element_ref, action: args.action || 'invoke' }
+    case 'set_ui_value':
+      if (!args?.element_ref) return { error: 'element_ref is required.' }
+      return { ok: true, element_ref: args.element_ref }
+    case 'type_text': return { ok: true, typed: String(args?.text || '').length }
+    case 'send_hotkey': return { ok: true, keys: [...(args?.modifiers || []), args?.key].join('+') }
     case 'ask_claude': {
       const q = String(args?.question || '')
       if (/steering|hyds/i.test(q)) return { answer: 'The Steering Committee HYDS today at 14:00 is with Paul Weber. The agenda asks for the go-live status and the open budget points, so bring the status slide.' }

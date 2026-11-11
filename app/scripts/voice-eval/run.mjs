@@ -87,12 +87,22 @@ const wcTools = JSON.parse(fs.readFileSync(path.join(fixtures, 'windows-commande
 const robTools = JSON.parse(fs.readFileSync(path.join(fixtures, 'rob-tools.json'), 'utf8'))
 const profile = JSON.parse(fs.readFileSync(path.join(appDir, 'src-tauri', 'voice_tool_profile.json'), 'utf8'))
 
+// The voice profile "screen": screen tools plus single-step actions.
+const voiceWc = [...profile.windows_commander_screen, ...(profile.windows_commander_actions || [])]
+
+// Copy of desktop_agent.rs tool_definition(); keep the two in step.
+const DESKTOP_AGENT = {
+  name: 'desktop_agent',
+  description: "Hand a task on the user's Windows desktop that needs several steps to an agent that has every tool: mouse, keyboard, windows, UI Automation, apps, files. Use it for things like 'switch Outlook to month view and open next Tuesday' or 'find the latest invoice PDF and open it'. For one click, one field or one shortcut, use the direct tools instead. Pass a complete, standalone task that includes what you read from the screen (window, element names). Say in a few words that you are on it; it can take a while.",
+  parameters: { type: 'object', properties: { task: { type: 'string', description: 'The complete task as a standalone instruction, with every detail from the conversation and the screen. The agent cannot hear the call.' } }, required: ['task'], additionalProperties: false },
+}
+
 function toolsFor(variant) {
   if (variant === 'baseline') return [...wcTools.map((t) => toolDecl('windows-commander', t)), ...robTools.map((t) => toolDecl('Rob', t))]
-  const wc = wcTools.filter((t) => profile.windows_commander_screen.includes(t.name))
+  const wc = wcTools.filter((t) => voiceWc.includes(t.name))
   // As realtime_build_tools: no claude_result (background_tools.rs collects tickets).
   const rob = robTools.filter((t) => t.name !== 'claude_result').map((t) => toolDecl('Rob', t))
-  return [...wc.map((t) => toolDecl('windows-commander', t)), ...rob]
+  return [...wc.map((t) => toolDecl('windows-commander', t)), ...rob, DESKTOP_AGENT]
 }
 
 /**
@@ -123,10 +133,12 @@ function instructionsFor(variant, tools) {
 function toolOutput(name, args, ctx, variant) {
   const tool = bare(name)
   const server = name.startsWith('mcp__Rob__') ? 'Rob' : 'windows-commander'
-  if (variant !== 'baseline' && server === 'windows-commander' && !profile.windows_commander_screen.includes(tool)) {
+  if (variant !== 'baseline' && server === 'windows-commander' && name.startsWith('mcp__') && !voiceWc.includes(tool)) {
     return { error: `${tool} is not available in voice sessions.` }
   }
   if (variant !== 'baseline' && tool === 'ask_claude') { ctx.asked = args; return ASK_STARTED }
+  // A multi-step agent run takes longer than BACKGROUND_AFTER.
+  if (variant !== 'baseline' && tool === 'desktop_agent') return { ...ASK_STARTED, note: ASK_STARTED.note.replace(/ask_claude/g, 'desktop_agent') }
   if (variant !== 'baseline' && tool === 'claude_result') return { error: 'Not needed in a voice call.' }
   const res = cannedResult(tool, args, { ...ctx, appLayer: variant !== 'baseline' })
   if (res && res.error) return { serverId: server, tool, result: { content: [{ type: 'text', text: res.error }], isError: true } }
