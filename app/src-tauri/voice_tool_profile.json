@@ -1,5 +1,5 @@
 {
-  "comment": "Tools a voice session gets from windows-commander when assistant_realtime.voice_tool_profile is \"screen\" (the default). Read by voice_tools.rs (include_str!) and by scripts/voice-eval. Chosen with the eval; see specs/ScreenPresence_design.md, section 5.",
+  "comment": "Tools a voice session gets from windows-commander. Profile \"screen\" (the default) = windows_commander_screen + windows_commander_actions; \"screen_only\" = windows_commander_screen; \"all\" = every tool. Read by voice_tools.rs (include_str!) and by scripts/voice-eval. Chosen with the eval; see specs/ScreenPresence_design.md, sections 5 and 11.",
   "windows_commander_screen": [
     "get_current_context",
     "get_pointer_context",
@@ -11,5 +11,11 @@
     "mark_area",
     "highlight_element",
     "clear_annotations"
+  ],
+  "windows_commander_actions": [
+    "invoke_ui_element",
+    "set_ui_value",
+    "type_text",
+    "send_hotkey"
   ]
 }

@@ -266,6 +266,7 @@ mod screen_layer;
 mod hermes;
 mod voice_tools;
 mod background_tools;
+mod desktop_agent;
 
 use rmcp::{
   service::{RoleClient, RunningService},
@@ -1103,6 +1104,11 @@ async fn realtime_build_tools() -> Result<serde_json::Value, String> {
   if hermes::config_from_settings_or_env().enabled {
     flat.push(hermes::tool_definition());
   }
+  // Multi-step desktop work goes to an agent with every tool
+  // (desktop_agent.rs); pointless without any MCP server connected.
+  if desktop_agent::config_from_settings().enabled && !map.is_empty() {
+    flat.push(desktop_agent::tool_definition());
+  }
   let names: Vec<&str> = flat.iter().filter_map(|t| t.get("name").and_then(|n| n.as_str())).collect();
   log::info!("voice session tools ({:?} profile, {}): {}", profile, names.len(), names.join(", "));
   Ok(serde_json::Value::Array(flat))
@@ -1135,6 +1141,16 @@ async fn realtime_call_tool(app: tauri::AppHandle, name: String, args_json: Opti
     // something to Hermes. Off together with the screen context setting.
     let ctx = screen_layer::current_context_text(&MCP_CLIENTS).await;
     return Ok(RealtimeToolOutput::text(hermes::delegate(&app, task, speak, ctx).await));
+  }
+  if name == desktop_agent::TOOL_NAME {
+    let task = args.get("task").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let ctx = screen_layer::current_context_text(&MCP_CLIENTS).await;
+    let work = desktop_agent::run(app.clone(), &MCP_CLIENTS, task, ctx);
+    return Ok(match background_tools::call_or_background(&app, &MCP_CLIENTS, "app".into(), desktop_agent::TOOL_NAME.into(), &args, work).await {
+      background_tools::Outcome::Done(Ok(res)) => RealtimeToolOutput::text(serde_json::json!({ "tool": desktop_agent::TOOL_NAME, "result": res })),
+      background_tools::Outcome::Done(Err(e)) => RealtimeToolOutput::text(serde_json::json!({ "tool": desktop_agent::TOOL_NAME, "error": e })),
+      background_tools::Outcome::Background(v) => RealtimeToolOutput::text(v),
+    });
   }
   let wc = screen_layer::wc_server_id();
   if !voice_tools::allowed(&name, &wc, voice_tools::profile_from_settings()) {

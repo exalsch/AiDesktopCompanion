@@ -25,7 +25,11 @@ use crate::mcp::ClientMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Profile {
-  /// Only `SCREEN_TOOLS` from windows-commander (default).
+  /// Only the screen tools: look, find, read, point.
+  ScreenOnly,
+  /// The screen tools plus single-step actions (default): click an element,
+  /// set a field, type into the focused field, press a shortcut. Multi-step
+  /// work goes to desktop_agent.rs.
   Screen,
   /// Every windows-commander tool, as before.
   All,
@@ -34,19 +38,26 @@ pub enum Profile {
 #[derive(serde::Deserialize)]
 struct ProfileFile {
   windows_commander_screen: Vec<String>,
+  #[serde(default)]
+  windows_commander_actions: Vec<String>,
 }
 
-/// The shared list (also read by the eval), compiled in.
-static SCREEN_TOOLS: Lazy<Vec<String>> = Lazy::new(|| {
+/// The shared lists (also read by the eval), compiled in.
+static PROFILE_FILE: Lazy<ProfileFile> = Lazy::new(|| {
   serde_json::from_str::<ProfileFile>(include_str!("../voice_tool_profile.json"))
-    .map(|f| f.windows_commander_screen)
-    .unwrap_or_default()
+    .unwrap_or(ProfileFile { windows_commander_screen: Vec::new(), windows_commander_actions: Vec::new() })
 });
 
 pub fn screen_tools() -> &'static [String] {
-  &SCREEN_TOOLS
+  &PROFILE_FILE.windows_commander_screen
 }
 
+pub fn action_tools() -> &'static [String] {
+  &PROFILE_FILE.windows_commander_actions
+}
+
+/// `"screen"` or anything unknown is the default. `"screen"` meant screen
+/// tools only before the actions were added (same day, never released).
 pub fn profile_from(settings: &serde_json::Value) -> Profile {
   match settings
     .get("assistant_realtime")
@@ -54,6 +65,7 @@ pub fn profile_from(settings: &serde_json::Value) -> Profile {
     .and_then(|x| x.as_str())
   {
     Some("all") => Profile::All,
+    Some("screen_only") => Profile::ScreenOnly,
     _ => Profile::Screen,
   }
 }
@@ -69,7 +81,8 @@ pub fn allowed(fn_name: &str, wc_server_id: &str, profile: Profile) -> bool {
   if profile == Profile::All { return true; }
   let prefix = format!("mcp__{}__", crate::mcp::sanitize_fn_component(wc_server_id));
   if !fn_name.starts_with(&prefix) { return true; }
-  screen_tools().iter().any(|t| crate::mcp::mangled_tool_name(wc_server_id, t) == fn_name)
+  let is = |list: &[String]| list.iter().any(|t| crate::mcp::mangled_tool_name(wc_server_id, t) == fn_name);
+  is(screen_tools()) || (profile == Profile::Screen && is(action_tools()))
 }
 
 /// Keep the flat realtime tool definitions the profile allows.
@@ -232,6 +245,18 @@ mod tests {
     assert_eq!(profile_from(&json!({})), Profile::Screen);
     assert_eq!(profile_from(&json!({ "assistant_realtime": { "voice_tool_profile": "all" } })), Profile::All);
     assert_eq!(profile_from(&json!({ "assistant_realtime": { "voice_tool_profile": "bogus" } })), Profile::Screen);
+    assert_eq!(profile_from(&json!({ "assistant_realtime": { "voice_tool_profile": "screen_only" } })), Profile::ScreenOnly);
+  }
+
+  #[test]
+  fn actions_only_in_the_default_profile() {
+    assert!(action_tools().iter().any(|x| x == "invoke_ui_element"));
+    let click = "mcp__windows-commander__invoke_ui_element";
+    assert!(allowed(click, "windows-commander", Profile::Screen));
+    assert!(!allowed(click, "windows-commander", Profile::ScreenOnly));
+    assert!(allowed("mcp__windows-commander__point_at", "windows-commander", Profile::ScreenOnly));
+    // Mouse, PowerShell and files stay with chat and the desktop agent.
+    assert!(!allowed("mcp__windows-commander__mouse_action", "windows-commander", Profile::Screen));
   }
 
   #[test]
