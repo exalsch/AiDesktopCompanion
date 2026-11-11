@@ -95,18 +95,19 @@ function hermesRule(toolNames: string[]): string {
 }
 
 /**
- * Claude Code in a call runs in the background (background_ask.rs): the tool
- * returns at once and the answer arrives as a [Claude Code] message. Without
- * this rule the model waited, polled, or answered before the answer existed.
+ * Any voice tool call that takes longer than a few seconds carries on in the
+ * background (background_tools.rs): the tool returns `status: "started"` at
+ * once and the result arrives as a message that starts with the tool's name.
+ * Without this rule the model waited, polled, or answered before the result
+ * existed.
  */
-function claudeRule(toolNames: string[]): string {
-  if (!hasTool(toolNames, 'ask_claude')) return ''
+function backgroundRule(): string {
   return [
-    'Claude Code (' + nameOf(toolNames, 'ask_claude') + ') runs in the background in this call.',
-    '- It returns at once. Say in a few words that Claude Code is on it, then carry on with the user.',
-    '- Do not guess or invent its answer, and do not ask it the same question again.',
-    '- Its answer arrives later as a [Claude Code] message. Give it in your own short words, starting with what it was about.',
-    '- If the user asks whether it is done and no [Claude Code] message has arrived, say it is still working.',
+    'Tools that take longer',
+    '- A tool result with status "started" means the work continues in the background. Say in a few words that it is running, then carry on with the user.',
+    '- Do not guess or invent its result, and do not call the same tool again for the same request.',
+    '- Its result arrives later as a message that starts with [tool name]. Give it in your own short words, starting with what it was about.',
+    '- If the user asks whether it is done and no such message has arrived, say it is still running.',
   ].join('\n')
 }
 
@@ -130,7 +131,7 @@ function examples(toolNames: string[]): string {
  */
 export function voiceToolNote(toolNames: string[]): string {
   if (!toolNames.length) return ''
-  const blocks = [HONESTY_RULES, screenRules(toolNames), contextRule(toolNames), claudeRule(toolNames), hermesRule(toolNames), examples(toolNames)]
+  const blocks = [HONESTY_RULES, screenRules(toolNames), contextRule(toolNames), backgroundRule(), hermesRule(toolNames), examples(toolNames)]
   return ['# Tools', ...blocks.filter(Boolean)].join('\n\n')
 }
 

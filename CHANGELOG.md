@@ -9,21 +9,23 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
-### Claude Code answers in a voice call arrive by themselves
+### Slow tools no longer hold a voice call
 
 kind: fix
 
-A question the voice assistant hands to Claude Code no longer holds the call
-open until the answer is there. The assistant says Claude Code is on it and
-you can keep talking; when the answer comes, the assistant tells you. If you
-have already hung up, a desktop notification shows the answer and the next
-call picks it up. Before, a slow answer (over three minutes for a "do I need
-to prepare" check) could arrive after the call ended and was lost.
+A tool that takes longer than a few seconds (an MCP server that asks another
+agent, searches, or runs a job) now carries on in the background. The
+assistant says it is running and you can keep talking; when the result comes,
+the assistant tells you. If you have already hung up, a desktop notification
+shows the result and the next call picks it up. Before, the call waited for
+the tool, and a slow answer (over three minutes for a "do I need to prepare"
+check) could arrive after the call ended and was lost. Fast tools answer in
+the same turn as before.
 
-The answer is spoken in the language you speak (German or English) rather
+The result is spoken in the language you speak (German or English) rather
 than in whatever language the voice model picks; Gemini answered in Spanish,
-Italian and once in Chinese. While Claude Code works, its progress pill sits
-above the call pill instead of behind it, and its answer shows as a line in
+Italian and once in Chinese. While the tool works, its progress pill sits
+above the call pill instead of behind it, and its result shows as a line in
 the call transcript.
 
 ### The voice assistant looks before it answers and shows you what it did

@@ -9,11 +9,12 @@ import { guessLanguage, replyLanguageRule } from './voiceInstructions'
 export { HERMES_TOOL_NAME } from './voiceInstructions'
 
 /**
- * A finished background job, as hermes.rs emits it: a Hermes run, or a Claude
- * Code question from a voice call (background_ask.rs). `agent` names which.
+ * A finished background job, as hermes.rs emits it: a Hermes run, or a voice
+ * tool call that took longer and went to the background (background_tools.rs).
+ * `agent` names which.
  */
 export interface HermesOutcome {
-  /** "Hermes" or "Claude Code"; missing from results older than the field. */
+  /** "Hermes" or the tool's name; missing from results older than the field. */
   agent?: string
   runId: string
   task: string
@@ -45,10 +46,10 @@ export function agentOf(o: HermesOutcome): string {
 /** What the model is told when a background job ends. */
 export function hermesResultText(o: HermesOutcome): string {
   const agent = agentOf(o)
-  const what = agent === 'Hermes' ? 'The task you handed over' : 'The question you asked'
-  const label = agent === 'Hermes' ? 'Task' : 'Question'
+  const what = agent === 'Hermes' ? 'The task you handed over' : `The ${agent} call you started earlier`
+  const label = agent === 'Hermes' ? 'Task' : 'Request'
   if (o.status === 'completed') {
-    return `[${agent}] ${what} is answered.\n${label}: ${o.task}\nResult: ${o.output || '(no text returned)'}`
+    return `[${agent}] ${what} has finished.\n${label}: ${o.task}\nResult: ${o.output || '(no text returned)'}`
   }
   return `[${agent}] ${what} did not finish (${o.status}).\n${label}: ${o.task}\nReason: ${o.error || 'unknown'}`
 }

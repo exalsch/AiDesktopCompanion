@@ -29,10 +29,13 @@ test('the rules name the exact tool names of the session', () => {
   assert.ok(note.includes(SCREEN_CONTEXT_PREFIX))
 })
 
-test('Claude Code is described as a background job, only when it is offered', () => {
-  assert.match(voiceToolNote(SCREEN), /runs in the background in this call/)
-  assert.match(voiceToolNote(SCREEN), /\[Claude Code\] message/)
-  assert.doesNotMatch(voiceToolNote(SCREEN.filter((n) => !n.endsWith('ask_claude'))), /Claude Code/)
+test('background tools are described generically, without naming any server', () => {
+  const note = voiceToolNote(SCREEN)
+  assert.match(note, /status "started" means the work continues in the background/)
+  assert.match(note, /starts with \[tool name\]/)
+  // The rules must not depend on one user's tools.
+  assert.doesNotMatch(note, /Claude Code|ask_claude/)
+  assert.match(voiceToolNote(['mcp__files__search']), /Tools that take longer/)
 })
 
 test('the reply language comes from what the user said', () => {

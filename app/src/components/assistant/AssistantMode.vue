@@ -749,10 +749,10 @@ watch(() => props.autostart, (n, old) => {
   if (typeof n === 'number' && typeof old === 'number' && n > old) void activate()
 })
 
-// ---- Hermes and Claude Code results (hermes.rs, background_ask.rs) --------
+// ---- Background results (hermes.rs, background_tools.rs) ------------------
 //
-// A finished run (or a Claude Code question asked in a call, which runs in
-// the background the same way) is emitted to this window. A live call takes it into the
+// A finished Hermes run, or a voice tool call that took longer and went to
+// the background, is emitted to this window. A live call takes it into the
 // conversation and acknowledges it; without one, Rust shows a notification and
 // keeps the result for the next call, which picks it up on connect.
 
