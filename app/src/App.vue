@@ -21,6 +21,7 @@ import { useToast } from './composables/useToast'
 import { useQuickPrompts } from './composables/useQuickPrompts'
 import { useSettings } from './composables/useSettings'
 import { useMcp } from './composables/useMcp'
+import { WINDOWS_COMMANDER_AUTH } from './composables/utils'
 import { useTtsBackground } from './composables/useTtsBackground'
 import { useAppEvents } from './composables/useAppEvents'
 import { useThemeStyle } from './composables/useThemeStyle'
@@ -257,6 +258,11 @@ function addMcpServer() {
     env: {},
     envJson: '{ "LOG_LEVEL": "info" }',
     auto_connect: false,
+    auth: '',
+    fallback_command: '',
+    headers: {},
+    headerRows: [],
+    headersShown: false,
     status: 'disconnected',
     connecting: false,
     error: null,
@@ -334,11 +340,16 @@ async function autoConnectServers() {
       const want = s.auto_connect === true
       if (!want) continue
       if (s.connecting || s.status === 'connected') continue
-      if (!s || !s.id || !s.command) continue
+      // A windows-commander entry has no command of its own: the URL comes
+      // from the discovery record and the fallback exe from settings.
+      const wc = s?.auth === WINDOWS_COMMANDER_AUTH
+      if (!s || !s.id || (!s.command && !wc)) continue
       // Fire-and-forget connect; backend events will update state on success/failure
       try { connectServer(s) } catch {}
-      // Timeout guard to avoid indefinite "connecting" state
-      const timeoutMs = 10000
+      // Timeout guard to avoid indefinite "connecting" state. windows-commander
+      // may first wait for the app to start its shared instance, then try HTTP
+      // and only then fall back to stdio.
+      const timeoutMs = wc ? 40000 : 10000
       setTimeout(() => {
         if (s.connecting) {
           s.connecting = false

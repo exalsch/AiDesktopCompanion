@@ -9,6 +9,60 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
+### The voice assistant knows what is on your screen and can point at it
+
+kind: feat
+
+With windows-commander connected and MCP tools on, each turn of a voice call
+now starts with a few lines about your screen: the app and window in front,
+its web address, the focused control, what is under the mouse and where you
+were just before. "What does this button do?" or "reply to this mail" now
+mean something to the assistant. The lines are text only, sent again only
+when something changed, and windows on windows-commander's block list
+(password managers, private browsing) show as "details withheld".
+
+The assistant is also told it can show you things: it draws an arrow or a
+frame on your screen and clears it when you move on. Switch the screen lines
+off under Assistant > Screen presence and Hermes.
+
+### The app keeps one shared windows-commander running for every client
+
+kind: feat
+
+At start-up the app now checks for the shared windows-commander instance and
+starts it in the background when it is not running, without a console
+window. Claude Code, Hermes and this app then share one activity timeline and
+one set of on-screen arrows. Quitting the app leaves it running, because the
+others still use it; Settings > MCP Servers > Screen layer shows whether it
+runs, its version and address, and has a button to stop it.
+
+Your existing windows-commander server entry moves to the shared instance
+automatically. Its address and access token are read when it connects and are
+never stored in the settings file. When the shared instance cannot be reached,
+the entry falls back to starting windows-commander itself, as before.
+
+### HTTP MCP servers can send their own headers
+
+kind: feat
+
+An HTTP server in Settings > MCP Servers now has a list of headers to send
+with every request, for servers that need an API key or a bearer token. The
+values are hidden until you choose to show them.
+
+### Hand long jobs to Hermes from a voice call
+
+kind: feat
+
+Turn on "Delegate long jobs to Hermes" under Assistant > Screen presence and
+Hermes, enter the address and API key of your Hermes API server, and press
+Test connection. In a call, ask for something that takes a while - research,
+work through your mail - and the assistant hands it to Hermes and keeps
+talking. The pill in the corner shows that Hermes is working. When the job is
+done, the assistant tells you the result; if no call is open, a notification
+does, and the next call picks it up. When Hermes needs your approval, you get
+a notification with what it wants to do; the app never approves anything for
+you. Hermes receives what is on your screen as text, never a screenshot.
+
 ### Two more accurate Parakeet models for local speech-to-text
 
 kind: feat

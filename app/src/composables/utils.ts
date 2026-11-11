@@ -106,3 +106,56 @@ export function normalizeEnvInput(input: any): Record<string, string> {
   } catch {}
   return {}
 }
+
+/** `auth` value of an MCP entry that reads url and token from the
+ *  windows-commander discovery record (see screen_layer.rs / mcp.rs). */
+export const WINDOWS_COMMANDER_AUTH = 'windows-commander'
+
+export interface HeaderRow { name: string, value: string }
+
+/** Header object -> editable rows (order kept). */
+export function headersToRows(headers: any): HeaderRow[] {
+  if (!headers || typeof headers !== 'object' || Array.isArray(headers)) return []
+  return Object.entries(headers).map(([name, value]) => ({ name, value: String(value ?? '') }))
+}
+
+/** Editable rows -> header object. Rows without a name are dropped. */
+export function rowsToHeaders(rows: any): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (!Array.isArray(rows)) return out
+  for (const r of rows) {
+    const name = String(r?.name ?? '').trim()
+    if (name) out[name] = String(r?.value ?? '')
+  }
+  return out
+}
+
+/**
+ * The persisted shape of one MCP server entry: everything the backend reads,
+ * nothing that only exists for the UI. Shared by the manual save and the
+ * autosave, which previously each had their own copy of this mapping - and
+ * any field missing from either copy was silently dropped on save.
+ */
+export function serializeMcpServer(s: any): Record<string, any> {
+  let args: string[] = []
+  if (typeof s.argsText === 'string' && s.argsText.trim()) {
+    args = parseArgs(s.argsText)
+  } else if (Array.isArray(s.args)) {
+    args = s.args.filter((x: any) => typeof x === 'string')
+  }
+  const env = normalizeEnvInput(typeof s.envJson === 'string' ? s.envJson : s.env)
+  const out: Record<string, any> = {
+    id: String(s.id || ''),
+    transport: (s.transport === 'http' || s.transport === 'sse') ? 'http' : 'stdio',
+    command: String(s.command || ''),
+    args,
+    cwd: typeof s.cwd === 'string' ? s.cwd : '',
+    env,
+    disabled_tools: Array.isArray(s.disabled_tools) ? s.disabled_tools.filter((x: any) => typeof x === 'string') : [],
+    auto_connect: s.auto_connect === true,
+    headers: Array.isArray(s.headerRows) ? rowsToHeaders(s.headerRows) : (s.headers && typeof s.headers === 'object' ? s.headers : {}),
+  }
+  if (typeof s.auth === 'string' && s.auth) out.auth = s.auth
+  if (typeof s.fallback_command === 'string' && s.fallback_command.trim()) out.fallback_command = s.fallback_command.trim()
+  return out
+}

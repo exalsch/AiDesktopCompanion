@@ -7,6 +7,7 @@ import {
   type AssistantRealtimeOptions, type ConnectParams, type HistoryTurn,
 } from './useAssistantRealtime'
 import { callMcpTool, type ToolImage } from './toolImages'
+import { fetchTurnContext, screenPresenceNote } from './screenPresence'
 
 // Served from public/ as a real file. Imported through Vite it was inlined as a
 // data: URL, which the CSP's script-src 'self' refuses to load as a worklet.
@@ -104,6 +105,45 @@ export function useAssistantGeminiLive(opts: Omit<AssistantRealtimeOptions, 'get
   const cancelledCalls = new Set<string>()
 
   function log(msg: string) { try { opts.onLog?.(msg) } catch {} }
+
+  // ---- screen context and injected messages (screenPresence.ts) ------------
+
+  let contextReset = true
+  // True from the first piece of a model turn until turnComplete. Gemini
+  // drops the current answer when clientContent arrives, so an injected
+  // message waits for the model to finish speaking.
+  let responding = false
+
+  /** Text into the conversation as a user-role part; Live has no system role
+   *  mid-session. `turnComplete: false` adds context without asking for a reply. */
+  function sendText(text: string, complete: boolean): boolean {
+    return send({ clientContent: { turns: [{ role: 'user', parts: [{ text }] }], turnComplete: complete } })
+  }
+
+  function beginTurnContext() {
+    const reset = contextReset
+    contextReset = false
+    void fetchTurnContext(reset).then((text) => {
+      if (!text || !connected || !setupDone) return
+      const ok = sendText(text, false)
+      log(`[screen] context ${ok ? 'sent' : 'NOT sent'} (${text.length} chars)`)
+    })
+  }
+
+  /**
+   * A message from outside a turn (a Hermes result). With `respond` the model
+   * answers it; either way it waits until the model is not speaking and the
+   * user is not holding the talk key, for up to a minute.
+   */
+  function injectContext(text: string, respond = false, instructions?: string, attempt = 0): boolean {
+    if (!connected) return false
+    if ((responding || playing.size > 0 || talkStartedAt) && attempt < 40) {
+      setTimeout(() => { injectContext(text, respond, instructions, attempt + 1) }, 1500)
+      return true
+    }
+    const body = respond && instructions ? `${text}\n\n${instructions}` : text
+    return sendText(body, respond)
+  }
 
   function resetAutoClose() {
     if (autoCloseTimer) { clearTimeout(autoCloseTimer); autoCloseTimer = 0 }
@@ -276,6 +316,7 @@ export function useAssistantGeminiLive(opts: Omit<AssistantRealtimeOptions, 'get
 
   async function buildSetup() {
     const { declarations, note, count } = await buildTools()
+    const presence = screenPresenceNote(declarations.map((d) => d.name))
     const instructions = (params.instructions && params.instructions.trim())
       ? params.instructions.trim()
       : 'You are an assistant in Assistant Mode. Speak clearly and concisely. IMPORTANT: Always reply in the same language the user is speaking. If you are unsure, reply in English.'
@@ -289,7 +330,7 @@ export function useAssistantGeminiLive(opts: Omit<AssistantRealtimeOptions, 'get
         responseModalities: ['AUDIO'],
         speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: params.voice || DEFAULT_GEMINI_LIVE_VOICE } } },
       },
-      systemInstruction: { parts: [{ text: `${instructions}\n\n${note}` }] },
+      systemInstruction: { parts: [{ text: `${instructions}\n\n${presence ? `${presence}\n\n` : ''}${note}` }] },
       realtimeInputConfig: { automaticActivityDetection: activity },
       inputAudioTranscription: {},
       outputAudioTranscription: {},
@@ -406,9 +447,14 @@ export function useAssistantGeminiLive(opts: Omit<AssistantRealtimeOptions, 'get
     }
     const sc = m.serverContent
     if (!sc) return
-    if (sc.inputTranscription?.text) userBuf += sc.inputTranscription.text
+    if (sc.inputTranscription?.text) {
+      // Open mic has no key-down: the first words of a turn start it.
+      if (!userBuf && micMode === 'open') beginTurnContext()
+      userBuf += sc.inputTranscription.text
+    }
     const parts = sc.modelTurn?.parts
     if (Array.isArray(parts)) {
+      responding = true
       // The model answering means the user's turn is over.
       flushUser()
       for (const p of parts) {
@@ -424,6 +470,7 @@ export function useAssistantGeminiLive(opts: Omit<AssistantRealtimeOptions, 'get
       supervisorEpoch += 1
       log('[response] interrupted by the user')
     }
+    if (sc.interrupted || sc.turnComplete) responding = false
     if (sc.turnComplete) {
       flushUser()
       flushAssistant()
@@ -487,6 +534,7 @@ export function useAssistantGeminiLive(opts: Omit<AssistantRealtimeOptions, 'get
     interruptResponse()
     talkStartedAt = Date.now()
     send({ realtimeInput: { activityStart: {} } })
+    beginTurnContext()
     invoke<boolean>('media_hold', { reason: 'assistant' }).then((held) => { mediaHeld = held === true }).catch(() => {})
     if (talkTimeout) { clearTimeout(talkTimeout); talkTimeout = 0 }
     talkTimeout = setTimeout(() => {
@@ -519,6 +567,8 @@ export function useAssistantGeminiLive(opts: Omit<AssistantRealtimeOptions, 'get
     resumeHandle = null
     toolRounds = 0
     toolCalledThisTurn = false
+    contextReset = true
+    responding = false
     userBuf = ''; assistantBuf = ''; interrupted = false
     cancelledCalls.clear()
     connected = false
@@ -579,5 +629,5 @@ export function useAssistantGeminiLive(opts: Omit<AssistantRealtimeOptions, 'get
   // Gemini audio is played through Web Audio, not an <audio> element.
   function attachAudioElement(_el: HTMLAudioElement) {}
 
-  return { connect, disconnect, attachAudioElement, updateSession, setMicEnabled, startTalking, stopTalking, micEnabled, status: statusRef, transcript: history, usage }
+  return { connect, disconnect, attachAudioElement, updateSession, setMicEnabled, startTalking, stopTalking, injectContext, micEnabled, status: statusRef, transcript: history, usage }
 }

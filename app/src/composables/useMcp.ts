@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { UIStyle } from './useSettings'
-import { parseArgs, normalizeEnvInput, parseJsonObject } from './utils'
+import { parseArgs, normalizeEnvInput, parseJsonObject, rowsToHeaders, WINDOWS_COMMANDER_AUTH } from './utils'
 
 export function useMcp(settings: any, showToast: (msg: string, kind?: 'error' | 'success', ms?: number) => void) {
   function findServerById(id: string) {
@@ -11,20 +11,34 @@ export function useMcp(settings: any, showToast: (msg: string, kind?: 'error' | 
     if (!s || !s.id) { showToast('Server name is required', 'error'); return }
     try {
       s.connecting = true; s.error = null
-      const args = s.transport === 'stdio'
+      // A windows-commander entry is HTTP first, but keeps the stdio fields
+      // for its fallback, so they are sent along.
+      const wc = s.auth === WINDOWS_COMMANDER_AUTH
+      const stdioish = s.transport === 'stdio' || wc
+      const args = stdioish
         ? parseArgs(typeof s.argsText === 'string' ? s.argsText : (Array.isArray(s.args) ? s.args.join(' ') : ''))
         : []
-      const env = s.transport === 'stdio'
+      const env = stdioish
         ? normalizeEnvInput(typeof s.envJson === 'string' ? s.envJson : s.env)
+        : {}
+      const headers = s.transport === 'http'
+        ? (Array.isArray(s.headerRows) ? rowsToHeaders(s.headerRows) : (s.headers || {}))
         : {}
       const res = await invoke<string>('mcp_connect', {
         serverId: s.id,
         command: s.command,
         args,
-        cwd: s.transport === 'stdio' ? (s.cwd || null) : null,
+        cwd: stdioish ? (s.cwd || null) : null,
         env,
-        transport: s.transport
+        transport: s.transport,
+        headers,
+        auth: s.auth || null,
+        fallbackCommand: wc ? (s.fallback_command || null) : null,
       })
+      if (typeof res === 'string') {
+        const m = res.match(/\(([^)]+)\)/)
+        if (m) s.connectedMode = m[1]
+      }
       // If backend says it's already connected, we won't get another mcp:connected event.
       // Recover UI state immediately to avoid appearing disconnected.
       if (typeof res === 'string' && res.toLowerCase().includes('already connected')) {

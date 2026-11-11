@@ -1,6 +1,6 @@
 import { reactive } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { normalizeEnvInput } from './utils'
+import { normalizeEnvInput, headersToRows } from './utils'
 
 export type UIStyle = 'sidebar-dark' | 'sidebar-light'
 
@@ -85,6 +85,10 @@ const settings = reactive({
   // Floating status pill for background operations (quick prompts, TTS, STT)
   show_busy_indicator: true as boolean,
   mcp_servers: [] as Array<any>,
+  // The shared windows-commander instance this app starts (screen_layer.rs).
+  // An empty path means the default under %LOCALAPPDATA%\WindowsCommander\server.
+  screen_layer_autostart: true as boolean,
+  screen_layer_exe_path: '' as string,
   system_prompt: '' as string,
   quick_prompt_system_prompt: 'Give the direct response to the task.' as string,
   show_quick_prompt_result_in_popup: false as boolean,
@@ -174,6 +178,8 @@ export function useSettings() {
         const idx = Number((v as any).select_all_quick_prompt)
         settings.select_all_quick_prompt = Number.isFinite(idx) ? Math.min(9, Math.max(1, Math.trunc(idx))) : 1
       }
+      settings.screen_layer_autostart = (v as any).screen_layer_autostart !== false
+      settings.screen_layer_exe_path = typeof (v as any).screen_layer_exe_path === 'string' ? (v as any).screen_layer_exe_path : ''
       settings.show_busy_indicator = (typeof (v as any).show_busy_indicator === 'boolean')
         ? (v as any).show_busy_indicator
         : true
@@ -229,6 +235,12 @@ export function useSettings() {
             envJson: envJsonStr,
             auto_connect: s.auto_connect === true,
             disabled_tools: Array.isArray(s.disabled_tools) ? s.disabled_tools.filter((x: any) => typeof x === 'string') : [],
+            // windows-commander's shared instance: url and token come from its
+            // discovery record at connect time, never from here.
+            auth: typeof s.auth === 'string' ? s.auth : '',
+            fallback_command: typeof s.fallback_command === 'string' ? s.fallback_command : '',
+            headers: (s.headers && typeof s.headers === 'object' && !Array.isArray(s.headers)) ? s.headers : {},
+            headerRows: headersToRows(s.headers),
           }
           if (prev) {
             // Update config fields in place; preserve runtime fields like status/tools.
@@ -242,6 +254,11 @@ export function useSettings() {
             prev.envJson = config.envJson
             prev.auto_connect = config.auto_connect
             prev.disabled_tools = config.disabled_tools
+            prev.auth = config.auth
+            prev.fallback_command = config.fallback_command
+            prev.headers = config.headers
+            prev.headerRows = config.headerRows
+            if (typeof prev.headersShown !== 'boolean') prev.headersShown = false
             // Ensure required runtime fields exist
             if (typeof prev.status !== 'string') prev.status = 'disconnected'
             if (typeof prev.connecting !== 'boolean') prev.connecting = false
@@ -267,6 +284,7 @@ export function useSettings() {
               toolArgsError: null as string | null,
               toolResults: [] as Array<any>,
               envError: null as string | null,
+              headersShown: false,
             })
           }
         }
