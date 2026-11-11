@@ -35,6 +35,11 @@ function nameOf(toolNames: string[], tool: string): string {
   return toolNames.find((n) => n === tool || n.endsWith(`__${tool}`)) || tool
 }
 
+// Tool results and injected messages are English text; without this line the
+// Live models drifted into another language after them (calls 19 and 20, and
+// the eval's multi_step run, 12.11.2026).
+const LANGUAGE_RULE = "Language: reply in the language of the user's last spoken message, also right after a tool result or a message in another language."
+
 const HONESTY_RULES = [
   'Honesty',
   '- Never say you checked, looked, saw, ran, used or started something unless a tool call in this turn did it.',
@@ -84,6 +89,41 @@ function screenRules(toolNames: string[]): string {
   ].join('\n')
 }
 
+/**
+ * Single-step actions (voice_tools.rs profile "screen") and the desktop agent
+ * for anything longer (desktop_agent.rs). Only rules whose tools exist.
+ */
+function actionRules(toolNames: string[]): string {
+  const has = (t: string) => hasTool(toolNames, t)
+  const n = (t: string) => nameOf(toolNames, t)
+  const lines: string[] = []
+  if (has('invoke_ui_element')) {
+    if (has('get_pointer_context')) {
+      lines.push(`- "click / open / press this": call ${n('get_pointer_context')}, then ${n('invoke_ui_element')} with the element_ref of resolved_element (else of element) and action "invoke".`)
+    }
+    if (has('find_ui_element')) {
+      lines.push(`- "click the X button": call ${n('find_ui_element')} with name_contains "X" in the window in front, then ${n('invoke_ui_element')} with its element_ref.`)
+    }
+  }
+  if (has('type_text')) {
+    lines.push(`- "type ... here": call ${n('type_text')} with exactly that text; it types into the field that has the focus.` +
+      (has('set_ui_value') ? ` For a field you found by name, use ${n('set_ui_value')} with its element_ref.` : ''))
+  }
+  if (has('send_hotkey')) {
+    lines.push(`- Shortcuts (save, undo, new mail): call ${n('send_hotkey')}, for example modifiers ["ctrl"] and key "s".`)
+  }
+  if (has('desktop_agent')) {
+    lines.push(`- Anything with more than one step, or in an app that is not in front: call ${n('desktop_agent')} with a complete task that includes what you read from the screen.`)
+  }
+  if (!lines.length) return ''
+  return [
+    'Doing things',
+    ...lines,
+    '- Before anything that sends, deletes, submits, pays or posts: say in one sentence what will happen, ask whether to go ahead, and wait for a clear yes from the user. Only then do it.',
+    '- Say it is done only when the tool result says so. If it failed, say that.',
+  ].join('\n')
+}
+
 function contextRule(toolNames: string[]): string {
   if (!hasTool(toolNames, 'get_current_context') && !hasTool(toolNames, 'get_pointer_context')) return ''
   return `Messages that start with ${SCREEN_CONTEXT_PREFIX} are written by the app, not said by the user. They can be a few seconds old: use them as a hint, but call the tool for the cursor, the focus and "this". Never read them out.`
@@ -104,7 +144,7 @@ function hermesRule(toolNames: string[]): string {
 function backgroundRule(): string {
   return [
     'Tools that take longer',
-    '- A tool result with status "started" means the work continues in the background. Say in a few words that it is running, then carry on with the user.',
+    '- A tool result with status "started" means the work continues in the background. Say in a few words what is running, with the name of what it is about ("Checking the budget review for you."), then carry on with the user.',
     '- Do not guess or invent its result, and do not call the same tool again for the same request.',
     '- Its result arrives later as a message that starts with [tool name]. Give it in your own short words, starting with what it was about.',
     '- If the user asks whether it is done and no such message has arrived, say it is still running.',
@@ -121,6 +161,10 @@ function examples(toolNames: string[]): string {
     ex.push(`User: "No, the cursor is on the left." -> call ${n('get_pointer_context')} again -> answer from the new result.`)
   }
   if (has('point_at')) ex.push(`User: "Show me the save button." -> call ${n('point_at')} with text "Save" -> "There, the arrow points at it."`)
+  if (has('invoke_ui_element') && has('get_pointer_context')) {
+    ex.push(`User: "Open this one." -> call ${n('get_pointer_context')} -> call ${n('invoke_ui_element')} with its element_ref -> result ok -> "Done, it is open."`)
+  }
+  if (has('desktop_agent')) ex.push(`User: "Move my two o'clock to Friday." -> "That changes a meeting for others: move it to Friday at two?" -> User: "Yes." -> call ${n('desktop_agent')} with the full task`)
   ex.push('User: "Dim the lights." -> "I cannot do that. I have no tool for the lights."')
   return ['Examples', ...ex.map((e) => `- ${e}`)].join('\n')
 }
@@ -131,7 +175,7 @@ function examples(toolNames: string[]): string {
  */
 export function voiceToolNote(toolNames: string[]): string {
   if (!toolNames.length) return ''
-  const blocks = [HONESTY_RULES, screenRules(toolNames), contextRule(toolNames), backgroundRule(), hermesRule(toolNames), examples(toolNames)]
+  const blocks = [LANGUAGE_RULE, HONESTY_RULES, screenRules(toolNames), contextRule(toolNames), actionRules(toolNames), backgroundRule(), hermesRule(toolNames), examples(toolNames)]
   return ['# Tools', ...blocks.filter(Boolean)].join('\n\n')
 }
 

@@ -9,6 +9,23 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
+### The voice assistant can click, type and hand bigger jobs to a desktop agent
+
+kind: feat
+
+In a voice call the assistant can now do simple things itself: "open this
+one" clicks what is under your mouse, "type ... here" types into the field
+that has the focus, "undo that" presses the shortcut. Anything with several
+steps ("switch Outlook to the month view and go to next month") goes to a
+desktop agent: your chat model with every MCP tool, which works through the
+steps, asks on screen before anything that sends or deletes, and reports
+back. Before it sends, deletes or submits anything, the assistant asks you
+first. Each step shows in the call transcript.
+
+Choose under Assistant > Screen presence and Hermes: "Screen and simple
+actions" (new default), "Screen only" or "All tools", and switch the desktop
+agent on or off or give it its own model.
+
 ### Slow tools no longer hold a voice call
 
 kind: fix

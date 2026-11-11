@@ -356,7 +356,10 @@ const session = reactive({
   // Read in Rust (screen_layer.rs, hermes.rs) from this blob.
   screenContext: true,
   // Read in Rust (voice_tools.rs) by realtime_build_tools and realtime_call_tool.
-  voiceToolProfile: 'screen' as 'screen' | 'all',
+  voiceToolProfile: 'screen' as 'screen' | 'screen_only' | 'all',
+  // Read in Rust (desktop_agent.rs).
+  desktopAgent: true,
+  desktopAgentModel: '',
   hermesEnabled: false,
   hermesBaseUrl: 'http://127.0.0.1:8642',
   hermesApiKey: '',
@@ -668,7 +671,9 @@ onMounted(async () => {
       if (typeof ar.enable_tools === 'boolean') ui.enableTools = ar.enable_tools
       if (typeof ar.use_supervisor === 'boolean') ui.useSupervisor = ar.use_supervisor
       session.screenContext = ar.screen_context !== false
-      session.voiceToolProfile = ar.voice_tool_profile === 'all' ? 'all' : 'screen'
+      session.voiceToolProfile = ar.voice_tool_profile === 'all' || ar.voice_tool_profile === 'screen_only' ? ar.voice_tool_profile : 'screen'
+      session.desktopAgent = ar.desktop_agent !== false
+      if (typeof ar.desktop_agent_model === 'string') session.desktopAgentModel = ar.desktop_agent_model
       if (typeof ar.hermes_enabled === 'boolean') session.hermesEnabled = ar.hermes_enabled
       if (typeof ar.hermes_base_url === 'string' && ar.hermes_base_url.trim()) session.hermesBaseUrl = ar.hermes_base_url
       if (typeof ar.hermes_api_key === 'string') session.hermesApiKey = ar.hermes_api_key
@@ -697,7 +702,7 @@ watch([session, () => ui.enableTools, () => ui.useSupervisor, () => ui.showDebug
 // Hermes and the voice tool profile change the tool list, which
 // realtime_build_tools reads from the saved settings - so save first, then
 // resend the session.
-watch(() => [session.hermesEnabled, session.voiceToolProfile], async () => {
+watch(() => [session.hermesEnabled, session.voiceToolProfile, session.desktopAgent], async () => {
   await saveAssistantSettings()
   await syncSession()
 })
@@ -733,6 +738,8 @@ async function saveAssistantSettings() {
           // Read by screen_layer.rs and hermes.rs.
           screen_context: session.screenContext,
           voice_tool_profile: session.voiceToolProfile,
+          desktop_agent: session.desktopAgent,
+          desktop_agent_model: session.desktopAgentModel,
           hermes_enabled: session.hermesEnabled,
           hermes_base_url: session.hermesBaseUrl,
           hermes_api_key: session.hermesApiKey,
@@ -1095,15 +1102,34 @@ onBeforeUnmount(() => {
     <div class="field">
       <label class="field-label">Voice tools from windows-commander</label>
       <select class="input" v-model="session.voiceToolProfile">
-        <option value="screen">Screen only (recommended)</option>
+        <option value="screen">Screen and simple actions (recommended)</option>
+        <option value="screen_only">Screen only, no actions</option>
         <option value="all">All tools</option>
       </select>
       <p class="field-hint">
-        Screen only gives the call the tools that look at and point at the screen: current context, pointer context,
-        focused element, find element, OCR, screenshot, point at, mark area, highlight and clear. Realtime voice models
-        pick badly from a long list, so mouse, keyboard, PowerShell, files and registry stay with chat. Other MCP
-        servers keep their tools. Disabled tools stay off in both.
+        The call gets the tools that look at and point at the screen (current context, pointer context, focused
+        element, find element, OCR, screenshot, point at, mark area, highlight, clear) and, unless you pick "Screen
+        only", four single-step actions: click an element, set a field, type into the focused field, press a
+        shortcut. Realtime voice models pick badly from a long list, so mouse, PowerShell, files and registry stay
+        with chat and the desktop agent below. Other MCP servers keep their tools. Disabled tools stay off.
       </p>
+    </div>
+
+    <label class="switch row">
+      <input type="checkbox" v-model="session.desktopAgent" />
+      <span class="switch-text">
+        <span class="switch-label">Desktop agent for multi-step tasks</span>
+        <span class="switch-hint">
+          Gives the call one more tool that hands a task with several steps ("switch Outlook to month view and open
+          next Tuesday") to the chat model with every MCP tool. It asks on screen before anything that sends or
+          deletes. Its steps show in the transcript; it runs in the background when it takes longer.
+        </span>
+      </span>
+    </label>
+    <div class="field" v-if="session.desktopAgent">
+      <label class="field-label">Desktop agent model</label>
+      <input class="input" type="text" v-model.lazy="session.desktopAgentModel" placeholder="empty = the Prompt chat model" />
+      <p class="field-hint">A model that is good at tool use pays off here; the agent may take a dozen steps.</p>
     </div>
 
     <div class="divider"></div>

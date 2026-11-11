@@ -54,6 +54,22 @@ test('trace line: a background job shows as started', () => {
     'ask_claude (Prepare?) -> started in the background')
 })
 
+test('action rules: click by element_ref, confirm before outward actions, agent for many steps', () => {
+  const tools = [...SCREEN, 'mcp__windows-commander__invoke_ui_element', 'mcp__windows-commander__type_text', 'mcp__windows-commander__send_hotkey', 'mcp__windows-commander__find_ui_element', 'desktop_agent']
+  const note = voiceToolNote(tools)
+  assert.match(note, /mcp__windows-commander__invoke_ui_element with the element_ref of resolved_element/)
+  assert.match(note, /wait for a clear yes from the user/)
+  assert.match(note, /call desktop_agent with a complete task/)
+  // No action tools, no action rules.
+  assert.doesNotMatch(voiceToolNote(SCREEN), /Doing things/)
+})
+
+test('trace line: actions', () => {
+  const ok = JSON.stringify({ serverId: 'w', tool: 'send_hotkey', result: { content: [{ type: 'text', text: '{"ok":true}' }] } })
+  assert.equal(toolTraceLine('mcp__w__send_hotkey', '{"modifiers":["ctrl"],"key":"s"}', ok), 'send_hotkey (ctrl+s) -> done')
+  assert.equal(toolTraceLine('mcp__w__invoke_ui_element', '{"element_ref":"abc","action":"invoke"}', ok), 'invoke_ui_element (element) -> done')
+})
+
 test('rules for missing tools are left out', () => {
   const note = voiceToolNote(['mcp__Rob__ask_claude'])
   assert.doesNotMatch(note, /get_pointer_context/)

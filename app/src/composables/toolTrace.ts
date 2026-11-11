@@ -71,6 +71,11 @@ function summary(tool: string, v: any, text: string): string {
       return v.error ? `failed: ${v.error}` : 'drawn on screen'
     case 'clear_annotations':
       return 'cleared'
+    case 'invoke_ui_element':
+    case 'set_ui_value':
+    case 'type_text':
+    case 'send_hotkey':
+      return v.error ? `failed: ${v.error}` : 'done'
     case 'capture_screen':
     case 'capture_screen_region':
       return 'screenshot taken'
@@ -85,7 +90,11 @@ function summary(tool: string, v: any, text: string): string {
 /** The argument worth showing next to the name, if any. */
 function argHint(tool: string, args: any): string {
   if (!args || typeof args !== 'object') return ''
-  const a = args.text ?? args.question ?? args.task ?? args.name_contains ?? (args.element ? 'element' : undefined)
+  if (tool === 'send_hotkey' && args.key) {
+    const mods = Array.isArray(args.modifiers) ? args.modifiers.map(String) : []
+    return `(${[...mods, String(args.key)].join('+')})`
+  }
+  const a = args.text ?? args.value ?? args.question ?? args.task ?? args.name_contains ?? (args.element || args.element_ref ? 'element' : undefined)
   if (a !== undefined && a !== null && String(a).trim()) return `(${clip(String(a), 60)})`
   if (tool === 'ocr_screen' && args.region) return '(around the cursor)'
   return ''
