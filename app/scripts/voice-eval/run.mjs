@@ -87,20 +87,20 @@ const wcTools = JSON.parse(fs.readFileSync(path.join(fixtures, 'windows-commande
 const robTools = JSON.parse(fs.readFileSync(path.join(fixtures, 'rob-tools.json'), 'utf8'))
 const profile = JSON.parse(fs.readFileSync(path.join(appDir, 'src-tauri', 'voice_tool_profile.json'), 'utf8'))
 
-// Copy of background_ask.rs voice_description(); keep the two in step.
-const voiceAskDescription = (d) => `${d} IN THIS VOICE CALL it runs in the background: it returns at once, you say in a few words that Claude Code is on it and carry on, and the answer arrives later as a [Claude Code] message. Never call it twice for the same question.`
-
 function toolsFor(variant) {
   if (variant === 'baseline') return [...wcTools.map((t) => toolDecl('windows-commander', t)), ...robTools.map((t) => toolDecl('Rob', t))]
   const wc = wcTools.filter((t) => profile.windows_commander_screen.includes(t.name))
-  // As realtime_build_tools: no claude_result, ask_claude runs in the background.
+  // As realtime_build_tools: no claude_result (background_tools.rs collects tickets).
   const rob = robTools.filter((t) => t.name !== 'claude_result').map((t) => toolDecl('Rob', t))
-    .map((d) => (d.name.endsWith('__ask_claude') ? { ...d, description: voiceAskDescription(d.description) } : d))
   return [...wc.map((t) => toolDecl('windows-commander', t)), ...rob]
 }
 
-/** What background_ask.rs returns at once for ask_claude in a call. */
-const ASK_STARTED = { status: 'started', job_id: 'cc-1', note: 'Claude Code is working on it in the background. Tell the user in a few words that Claude Code is on it, then carry on. Do not guess the answer and do not call ask_claude again for this question: the answer is added to the conversation as a [Claude Code] message when it is ready.' }
+/**
+ * What background_tools.rs started_output() returns for a call that took
+ * longer than BACKGROUND_AFTER. The eval treats ask_claude as that slow tool,
+ * as it is in practice (16 s to 216 s measured).
+ */
+const ASK_STARTED = { status: 'started', job_id: 'bg-1', note: 'ask_claude takes longer and continues in the background. Tell the user in a few words that it is running, then carry on. Do not guess its result and do not call ask_claude again for this request: the result is added to the conversation as a [ask_claude] message when it is ready.' }
 
 // ---- instructions -----------------------------------------------------------
 

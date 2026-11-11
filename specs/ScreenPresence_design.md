@@ -220,9 +220,10 @@ exact mangled names.
 - **Hermes** only when the tool exists, for long jobs.
 - **Examples** use names that are not in the eval fixtures (a unit test checks
   it).
-- **Claude Code** (when `ask_claude` is offered): it runs in the background
-  (section 10); say it is on it, carry on, never guess its answer, say "still
-  working" when asked, give the answer when the `[Claude Code]` message comes.
+- **Tools that take longer** (any tool, section 10): a result with status
+  "started" continues in the background; say it is running, carry on, never
+  guess its result, say "still running" when asked, give the result when the
+  `[tool name]` message comes.
 - **Arrangement note** for tools: screen tools are fast, so call them without
   announcing; background tools return at once and answer later as their own
   messages. The old note ("Some take up to a minute, so say you
@@ -328,36 +329,41 @@ column above is from before section 10.
   the stored line is the readable trace instead of 300 characters of raw JSON.
   No schema change, so no migration.
 
-## 10. Claude Code in the background (`background_ask.rs`)
+## 10. Slow tools go to the background (`background_tools.rs`)
 
-- **Why.** The companion bridge (MCP server "Rob") answers `ask_claude`
-  synchronously for up to `defaultTimeoutSeconds` = 300 before it hands back a
-  ticket. The 300 s are deliberate (bridge commit d771c5a, 25.08.2026): with 55
-  s, voice models did not collect tickets and answers were lost. In call 18
-  (11.11.2026) a "do we need to prepare" question took 216 s; the tool call was
-  open the whole time, the user hung up after 201 s and the answer arrived 25 s
-  later, into nothing. The transcript had no `ask_claude` line because the
-  call never returned.
-- **Now.** In a voice call `realtime_call_tool` answers `ask_claude` at once
-  with `{status: "started", job_id, note}` and runs the real call in a task:
-  the ask with `timeout_seconds: 900` (the bridge's maximum), then
-  `claude_result` every 15 s for up to 15 minutes if a ticket comes back
-  (`pending_ticket` reads both bridge phrasings). The busy pill shows
-  "Claude Code: <question>".
-- **Delivery** is the Hermes path (`hermes::deliver`), now with an `agent`
-  field on `RunOutcome`: the result is emitted as `hermes:run-finished`, a live
-  call injects `[Claude Code] The question you asked is answered. Question:
-  ... Result: ...` and speaks it; with no call (or no acknowledgement within
-  4 s) a desktop notification "Claude Code finished" shows it, and the next
-  call picks it up on connect.
-- **One at a time.** The bridge answers one question per lane, so a second
-  `ask_claude` while one runs gets an error that names the running question
-  and says its answer is coming.
-- **The model** no longer sees `claude_result` in a call (refused if named),
-  `ask_claude`'s description gains "IN THIS VOICE CALL it runs in the
-  background ...", and the rules (section 6) say: say Claude Code is on it,
-  carry on, never guess the answer, say "still working" when asked, give the
-  answer when the `[Claude Code]` message arrives.
+- **Why.** A realtime session waits for every tool result before it can
+  speak again, so one slow MCP tool holds the call. The case that showed it:
+  the companion bridge (the author's MCP server "Rob", not part of this repo)
+  answers `ask_claude` synchronously for up to 300 s before it hands back a
+  ticket. In call 18 (11.11.2026) a "do we need to prepare" question took
+  216 s; the user hung up after 201 s and the answer arrived 25 s later, into
+  nothing. The transcript had no `ask_claude` line because the call never
+  returned.
+- **Generic, no server named.** Every MCP tool call of a voice session runs
+  as a task (`call_or_background`). Finished within `BACKGROUND_AFTER` (8 s):
+  the result goes back in the same turn, images included, exactly as before.
+  Screen tools always do (the WebView2 lookup takes up to 5 s). Past 8 s the
+  model gets `{status: "started", job_id, note}` and the task carries on; the
+  busy pill shows "<tool>: <request>".
+- **Delivery** is the Hermes path (`hermes::deliver`), with an `agent` field on
+  `RunOutcome` (the tool's name, or "Hermes"): emitted as
+  `hermes:run-finished`; a live call injects `[<tool>] The <tool> call you
+  started earlier has finished. Request: ... Result: ...` and speaks it; with
+  no call (or no acknowledgement within 4 s) a desktop notification "<tool>
+  finished" shows it, and the next call picks it up on connect. A result that
+  went to the background loses its images (text only).
+- **One at a time per tool.** A second call of the same tool while one runs
+  gets an error that names the running request and says its result is coming.
+- **Ticket adapter.** A result that reads "still working ... ticket X" (the
+  bridge's hand-back) is collected with the same server's `claude_result`
+  every 15 s for up to 15 minutes. That is the only bridge-shaped code, it is
+  keyed on the reply text, and a server without such a tool is not affected.
+  `claude_result` is not offered to a voice session (refused if named), so the
+  model cannot invent tickets as it did in call 16.
+- **The rules** (section 6) say: a result with status "started" continues in
+  the background; say it is running, carry on, never guess its result, do not
+  call the tool again for the same request, say "still running" when asked,
+  give the result when the `[tool name]` message arrives. They name no server.
 - **Reply language.** The answer reaches Gemini as user-role text with an
   instruction to speak it. With "in the language of the conversation" the
   model answered in Spanish, Italian and once Chinese (calls 19 and 20; in 19
@@ -370,10 +376,10 @@ column above is from before section 10.
   (probed 11.11.2026). A repro with SAPI-spoken English audio stayed English
   in 5/5 runs with either text, but once mixed a Hindi word into an English
   answer, so the drift is the model's and the rule only narrows it.
-- **Visible.** The arriving answer adds a transcript line
-  `Claude Code answered -> ...` (also on the call pill and in calls.db); the
-  start shows as `ask_claude (...) -> started in the background`.
-- **Pills.** The busy pill showing "Claude Code: ..." appeared during the call
+- **Visible.** The arriving result adds a transcript line
+  `<tool> answered -> ...` (also on the call pill and in calls.db); the start
+  shows as `<tool> (...) -> started in the background`.
+- **Pills.** The busy pill of a background call appeared during the call
   and landed behind the call pill, which only moved up for a busy pill that
   was already there. Now the call pill keeps the corner and `busy.rs` places
   the busy pill right above it while it is visible; `assistant_pill_set` calls
@@ -415,8 +421,11 @@ column above is from before section 10.
   hovered one is.
 - No UI to answer a Hermes approval from this app; by design for now.
 - Supervisor modes do not get `delegate_to_hermes`.
-- A Claude Code question that is still running when the app quits is lost
-  (the task dies with the app; the bridge finishes it but nobody collects it).
-- Claude Code itself is slow for calendar-plus-mail questions (216 s in call
-  18, Sonnet lane `rob`); this section only stops the wait from blocking the
-  call.
+- A background tool call that is still running when the app quits is lost
+  (the task dies with the app; the server may finish it but nobody collects
+  it).
+- `BACKGROUND_AFTER` (8 s) is a constant, not a setting.
+- The author's Claude Code lane is slow for calendar-plus-mail questions (216 s
+  in call 18); section 10 only stops the wait from blocking the call. In call
+  21 the voice model chose that bridge's `desk` lane, which needed a retired
+  board; the lane was removed from the bridge config (outside this repo).

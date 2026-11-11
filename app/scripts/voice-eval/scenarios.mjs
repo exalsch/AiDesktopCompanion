@@ -143,8 +143,8 @@ export const SCENARIOS = [
   },
   {
     // Call 18 (11.11.2026): Claude Code took 216 s and the answer came after
-    // the hang-up. In a call it now runs in the background (background_ask.rs):
-    // the tool returns at once and the app injects the answer when it lands.
+    // the hang-up. A slow call now goes to the background (background_tools.rs):
+    // the tool returns "started" and the app injects the result when it lands.
     id: 'claude_background',
     world: 'outlook',
     newOnly: true,
@@ -152,9 +152,9 @@ export const SCENARIOS = [
       'Do we need to prepare for this event?',
       'Any result yet?',
       {
-        inject: "[Claude Code] The question you asked is answered.\nQuestion: Do I need to prepare for the Steering Committee HYDS meeting today at 14:00?\nResult: Yes. Paul Weber's agenda asks for the go-live status and the open budget points, so bring the status slide.",
-        // Copy of resultSpeakInstructions() in screenPresence.ts.
-        speak: 'Claude Code just finished; its result is the last [Claude Code] message. Tell the user in one or two short sentences, in the language of the conversation, starting with what it was about. Do not read out URLs, IDs or markup.',
+        // As hermesResultText() and resultSpeakInstructions() in screenPresence.ts build them.
+        inject: "[ask_claude] The ask_claude call you started earlier has finished.\nRequest: Do I need to prepare for the Steering Committee HYDS meeting today at 14:00?\nResult: Yes. Paul Weber's agenda asks for the go-live status and the open budget points, so bring the status slide.",
+        speak: 'ask_claude just finished; its result is the last [ask_claude] message. Tell the user in one or two short sentences, starting with what it was about. Do not read out URLs, IDs or markup. Reply in English only, never in any other language.',
       },
     ],
     checks: [
