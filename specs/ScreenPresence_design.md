@@ -392,6 +392,59 @@ column above is from before section 10.
   before it arrives, "still working" without asking again, the answer given
   when it lands.
 
+## 11. Actions and the desktop agent (`voice_tools.rs`, `desktop_agent.rs`)
+
+Three layers, so the voice model gets clicking and typing without carrying
+all ~70 tools:
+
+| Layer | Tools | For |
+|---|---|---|
+| Voice, direct | the 10 screen tools + 4 actions: `invoke_ui_element`, `set_ui_value`, `type_text`, `send_hotkey` | one step: "open this one", "type ... here", "undo that" |
+| Voice → agent | `desktop_agent` (app tool, not MCP) | several steps or an app that is not in front |
+| Safety | the voice rules (ask "go ahead?" and wait for a yes before anything that sends, deletes, submits, pays or posts); the agent prompt (`request_user_confirmation` before such steps); every step in the transcript | |
+
+- **Profiles** (`assistant_realtime.voice_tool_profile`): `"screen"` (default)
+  = screen + `windows_commander_actions` from `voice_tool_profile.json`;
+  `"screen_only"` = the screen tools; `"all"` = everything. `"screen"` meant
+  screen-only for a few hours on 11.11.2026 (never released), so saved
+  settings move to the new default. Mouse, `keyboard_action`, PowerShell,
+  files and registry stay out of the call; the agent has them.
+- **`desktop_agent`** (`assistant_realtime.desktop_agent`, default on; offered
+  only when an MCP server is connected): runs `chat_complete_with_mcp_opts`
+  with the Prompt chat model or `desktop_agent_model`, every connected MCP
+  tool, up to 12 rounds, and a system prompt (UI Automation first, check each
+  step, confirm before outward actions, stop after three or four failed tries
+  and say what was found, end with one or two plain sentences) plus the
+  current screen context text. `LoopOptions.trace` makes the loop quiet (no
+  `chat:tool-*` events into the Prompt chat view) and collects one line per
+  step; the result is the answer plus "Steps: ...". It goes through
+  `call_or_background`, so a run past 8 s is a background job (section 10).
+- **Rules** (section 6, "Doing things"): "click / open / press this" ->
+  `get_pointer_context` then `invoke_ui_element` with the `element_ref` of
+  `resolved_element`; "click the X button" -> `find_ui_element` then invoke;
+  "type ... here" -> `type_text` (or `set_ui_value` on a found field);
+  shortcuts -> `send_hotkey`; several steps -> `desktop_agent`; ask before
+  outward actions; done only when the result says so. A language line now
+  opens the rules: reply in the language of the user's last spoken message,
+  also after a tool result (the eval's `multi_step` answered an English
+  request in German before it).
+- **Eval** (Gemini, 2 runs, 12.11.2026): new 27/30 then, after naming the
+  subject in the "started" sentence and fixing a false positive, the affected
+  scenarios 9/9. New scenarios: `click_this` (pointer then invoke with the
+  resolved ref, no agent for one click), `type_here`, `shortcut` (Ctrl+Z),
+  `multi_step` (agent with the task, no "done" claim), `confirm_send` (turn 1
+  asks and does not act, turn 2 acts); `show_send` now also checks it does not
+  click. OpenAI not run: the account had no credits.
+- **Agent smoke test** (read only, outside the app: the same prompt and loop
+  shape against `gemini-flash-lite-latest` with all 69 tools, only reading
+  tools executed): "which window is in front and what is under the mouse"
+  took 2 rounds and was right. An impossible task (no calendar window open)
+  ran all 12 rounds without an answer on three models before the stop rule;
+  with it, the agent stopped after 3 to 4 rounds and said what blocked it.
+- **Not tested live:** a real multi-step run that changes something (it would
+  act on the user's desktop), and whether `invoke_ui_element` accepts the
+  `element_ref`s of the Outlook WebView2 content window.
+
 ## Privacy
 
 - **The block list lives in windows-commander**, not here. Blocked windows
@@ -425,6 +478,12 @@ column above is from before section 10.
   (the task dies with the app; the server may finish it but nobody collects
   it).
 - `BACKGROUND_AFTER` (8 s) is a constant, not a setting.
+- In a dev run started from a process that sits in a job object without
+  breakaway rights (here: a Claude Code background job), the shared
+  windows-commander instance ends with the app: a watcher restart at 12.11.2026
+  00:1x killed it, and the restarted app's `--status` check ran before it was
+  gone. An installed app started from the Start menu is not affected. A
+  re-check after start-up (or on the first failed connect) would cover it.
 - The author's Claude Code lane is slow for calendar-plus-mail questions (216 s
   in call 18); section 10 only stops the wait from blocking the call. In call
   21 the voice model chose that bridge's `desk` lane, which needed a retired
