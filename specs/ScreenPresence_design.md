@@ -358,6 +358,26 @@ column above is from before section 10.
   background ...", and the rules (section 6) say: say Claude Code is on it,
   carry on, never guess the answer, say "still working" when asked, give the
   answer when the `[Claude Code]` message arrives.
+- **Reply language.** The answer reaches Gemini as user-role text with an
+  instruction to speak it. With "in the language of the conversation" the
+  model answered in Spanish, Italian and once Chinese (calls 19 and 20; in 19
+  Gemini had also transcribed the English question as Spanish). The speak
+  instruction now names the language: `guessLanguage` reads the user's last
+  three transcribed turns (German or English, newest counts double, English
+  when neither shows) and `replyLanguageRule` adds "Reply in English only" /
+  "Antworte auf Deutsch". `speechConfig.languageCode` does not help: Live
+  accepts `en-US` and `de-DE` and still answers an Italian prompt in Italian
+  (probed 11.11.2026). A repro with SAPI-spoken English audio stayed English
+  in 5/5 runs with either text, but once mixed a Hindi word into an English
+  answer, so the drift is the model's and the rule only narrows it.
+- **Visible.** The arriving answer adds a transcript line
+  `Claude Code answered -> ...` (also on the call pill and in calls.db); the
+  start shows as `ask_claude (...) -> started in the background`.
+- **Pills.** The busy pill showing "Claude Code: ..." appeared during the call
+  and landed behind the call pill, which only moved up for a busy pill that
+  was already there. Now the call pill keeps the corner and `busy.rs` places
+  the busy pill right above it while it is visible; `assistant_pill_set` calls
+  `busy::reposition` when the call pill shows or hides.
 - **Unchanged:** the bridge and its config; chat, which calls the bridge
   directly; `claude_status`.
 - **Eval:** scenario `claude_background` (new variants only): ask about the
