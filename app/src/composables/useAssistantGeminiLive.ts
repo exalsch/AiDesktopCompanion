@@ -7,7 +7,9 @@ import {
   type AssistantRealtimeOptions, type ConnectParams, type HistoryTurn,
 } from './useAssistantRealtime'
 import { callMcpTool, type ToolImage } from './toolImages'
-import { fetchTurnContext, screenPresenceNote } from './screenPresence'
+import { fetchTurnContext, withinMs } from './screenPresence'
+import { buildVoiceInstructions, type VoiceArrangement } from './voiceInstructions'
+import { toolTraceLine } from './toolTrace'
 
 // Served from public/ as a real file. Imported through Vite it was inlined as a
 // data: URL, which the CSP's script-src 'self' refuses to load as a worklet.
@@ -120,13 +122,37 @@ export function useAssistantGeminiLive(opts: Omit<AssistantRealtimeOptions, 'get
     return send({ clientContent: { turns: [{ role: 'user', parts: [{ text }] }], turnComplete: complete } })
   }
 
+  // The key-down fetch, so the key-up refresh can run after it rather than
+  // race it (two items in the wrong order would leave the stale one last).
+  let turnContext: Promise<unknown> | null = null
+  // The activityEnd of a released key, while it waits for the refresh.
+  let pendingEnd: (() => void) | null = null
+
   function beginTurnContext() {
     const reset = contextReset
     contextReset = false
-    void fetchTurnContext(reset).then((text) => {
+    turnContext = fetchTurnContext(reset).then((text) => {
       if (!text || !connected || !setupDone) return
       const ok = sendText(text, false)
       log(`[screen] context ${ok ? 'sent' : 'NOT sent'} (${text.length} chars)`)
+    })
+  }
+
+  /**
+   * Fetch the context again right before the turn ends, so "this" means what
+   * the cursor is on when the user finishes speaking, not when they started.
+   * Sent only when it changed (Rust compares with the last item).
+   */
+  function refreshTurnContext(stillOpen: () => boolean): Promise<unknown> {
+    const first = turnContext ?? Promise.resolve()
+    turnContext = null
+    return first.then(() => fetchTurnContext(false)).then((text) => {
+      // Too late: the turn has ended and the model may be answering, and
+      // clientContent arriving now would make Gemini drop that answer.
+      if (!stillOpen()) { if (text) log('[screen] key-up context came too late, dropped'); return }
+      if (!text || !connected || !setupDone) return
+      const ok = sendText(text, false)
+      log(`[screen] context refreshed at key-up ${ok ? '' : '(NOT sent) '}(${text.length} chars)`)
     })
   }
 
@@ -252,7 +278,7 @@ export function useAssistantGeminiLive(opts: Omit<AssistantRealtimeOptions, 'get
         if (!cancelledCalls.has(id)) for (const image of res.images) images.push({ tool: name, image })
       }
       log(`[tools] <- ${name} ${output.slice(0, 200)}`)
-      history.value.push({ role: 'tool', content: `${name} ${output.slice(0, 300)}` })
+      history.value.push({ role: 'tool', content: toolTraceLine(name, argsJson, output) })
       if (cancelledCalls.has(id)) { cancelledCalls.delete(id); log(`[tools] ${name} was cancelled by the server, result dropped`); continue }
       // `response` must be an object; a tool's JSON object is passed as is,
       // anything else is wrapped.
@@ -282,7 +308,7 @@ export function useAssistantGeminiLive(opts: Omit<AssistantRealtimeOptions, 'get
 
   // ---- session config -------------------------------------------------------
 
-  async function buildTools(): Promise<{ declarations: any[], note: string, count: number }> {
+  async function buildTools(): Promise<{ declarations: any[], arrangement: VoiceArrangement, count: number }> {
     const supervisorOn = params.useSupervisor === true
     const supervisorMode = params.supervisorMode === 'needed' ? 'needed' : 'always'
     const includeTools = params.enableTools === true && !supervisorOn
@@ -297,13 +323,11 @@ export function useAssistantGeminiLive(opts: Omit<AssistantRealtimeOptions, 'get
         log('[warn] realtime_build_tools failed: ' + (e?.message || e))
       }
     }
-    const note = supervisorOn
-      ? (supervisorMode === 'always'
-        ? `For every request the user makes, call ${SUPERVISOR_TOOL_NAME} with it and read its answer back word for word. Do not answer on your own, and do not describe this arrangement to the user.`
-        : `Call ${SUPERVISOR_TOOL_NAME} whenever a question needs current information, the user's files or applications, or careful reasoning, and read its answer back. It is the only tool you have; there are no others in this session.`)
-      : includeTools
-        ? 'There is no supervisor in this session, so do not mention one or wait for one. You have tools of your own: call them yourself when a question needs them. Some take up to a minute, so say you are checking before you call one, then give the answer when it arrives.'
-        : 'There is no supervisor and no tools in this session. Answer from your own knowledge, and say plainly when something is beyond it.'
+    // Gemini has no way to hold the model silent, so the supervisor's "always"
+    // mode is the escalation tool plus an instruction to use it every turn.
+    const arrangement: VoiceArrangement = supervisorOn
+      ? (supervisorMode === 'always' ? 'supervisor-always' : 'supervisor-needed')
+      : (includeTools && flat.length ? 'tools' : 'no-tools')
     // Gemini takes the JSON Schema as is through `parametersJsonSchema`, so the
     // MCP tools' schemas need no conversion.
     const declarations = flat.map((t: any) => ({
@@ -311,15 +335,15 @@ export function useAssistantGeminiLive(opts: Omit<AssistantRealtimeOptions, 'get
       description: String(t?.description || t?.function?.description || ''),
       parametersJsonSchema: t?.parameters || t?.function?.parameters || { type: 'object', properties: {} },
     })).filter((d) => d.name)
-    return { declarations, note, count: declarations.length }
+    return { declarations, arrangement, count: declarations.length }
   }
 
   async function buildSetup() {
-    const { declarations, note, count } = await buildTools()
-    const presence = screenPresenceNote(declarations.map((d) => d.name))
-    const instructions = (params.instructions && params.instructions.trim())
-      ? params.instructions.trim()
-      : 'You are an assistant in Assistant Mode. Speak clearly and concisely. IMPORTANT: Always reply in the same language the user is speaking. If you are unsure, reply in English.'
+    const { declarations, arrangement, count } = await buildTools()
+    // Shared with the OpenAI client and the eval (voiceInstructions.ts): the
+    // user's instructions as written, then the tool rules, then the
+    // arrangement note.
+    const systemText = buildVoiceInstructions(params.instructions, declarations.map((d) => d.name), arrangement)
     const ptt = params.micMode === 'ptt'
     const activity: Record<string, any> = ptt
       ? { disabled: true }
@@ -330,7 +354,7 @@ export function useAssistantGeminiLive(opts: Omit<AssistantRealtimeOptions, 'get
         responseModalities: ['AUDIO'],
         speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: params.voice || DEFAULT_GEMINI_LIVE_VOICE } } },
       },
-      systemInstruction: { parts: [{ text: `${instructions}\n\n${presence ? `${presence}\n\n` : ''}${note}` }] },
+      systemInstruction: { parts: [{ text: systemText }] },
       realtimeInputConfig: { automaticActivityDetection: activity },
       inputAudioTranscription: {},
       outputAudioTranscription: {},
@@ -352,7 +376,8 @@ export function useAssistantGeminiLive(opts: Omit<AssistantRealtimeOptions, 'get
     log('[setup] ' + JSON.stringify({
       model: setup.model, voice: params.voice, turn_detection: ptt ? 'manual (push-to-talk)' : 'automatic',
       silence_ms: ptt ? null : activity.silenceDurationMs, tool_count: count,
-      tool_names_sample: declarations.slice(0, 8).map((d) => d.name),
+      arrangement, instructions_chars: systemText.length,
+      tools: declarations.map((d) => d.name),
     }))
     return { setup, key }
   }
@@ -531,6 +556,9 @@ export function useAssistantGeminiLive(opts: Omit<AssistantRealtimeOptions, 'get
 
   function startTalking() {
     if (!connected || micMode !== 'ptt') return
+    // A key-up still waiting for its context refresh ends its turn now, so
+    // its activityEnd cannot land after this activityStart and close it.
+    pendingEnd?.()
     interruptResponse()
     talkStartedAt = Date.now()
     send({ realtimeInput: { activityStart: {} } })
@@ -553,9 +581,17 @@ export function useAssistantGeminiLive(opts: Omit<AssistantRealtimeOptions, 'get
     const heldMs = Date.now() - talkStartedAt
     talkStartedAt = 0
     // activityEnd is sent even for a stray tap: an activityStart left open
-    // would hold the next turn hostage.
-    send({ realtimeInput: { activityEnd: {} } })
-    log(heldMs < MIN_TALK_MS ? `[mic] hold of ${heldMs}ms is very short` : `[mic] turn ended after ${heldMs}ms`)
+    // would hold the next turn hostage. It waits up to 400 ms for the fresh
+    // screen context, so the model answers with what is under the cursor now.
+    const end = () => {
+      if (pendingEnd !== end) return
+      pendingEnd = null
+      send({ realtimeInput: { activityEnd: {} } })
+      log(heldMs < MIN_TALK_MS ? `[mic] hold of ${heldMs}ms is very short` : `[mic] turn ended after ${heldMs}ms`)
+    }
+    pendingEnd = end
+    if (heldMs < MIN_TALK_MS) { turnContext = null; end(); return }
+    void withinMs(refreshTurnContext(() => pendingEnd === end), 400).then(end)
   }
 
   // ---- lifecycle ------------------------------------------------------------
@@ -604,6 +640,8 @@ export function useAssistantGeminiLive(opts: Omit<AssistantRealtimeOptions, 'get
     supervisorEpoch += 1
     resumeHandle = null
     toolRounds = 0
+    turnContext = null
+    pendingEnd = null
     try { opts.onDisconnected?.() } catch {}
   }
 

@@ -1,13 +1,11 @@
 import { invoke } from '@tauri-apps/api/core'
 
 // Screen presence for the voice session: what windows-commander says the user
-// is looking at, the note that tells the model it can point at things, and
-// Hermes results coming back. Shared by the OpenAI Realtime and Gemini Live
+// is looking at, and Hermes results coming back. Shared by the OpenAI Realtime and Gemini Live
 // clients so both say the same thing.
 
-export const HERMES_TOOL_NAME = 'delegate_to_hermes'
-
-const ANNOTATION_TOOLS = ['point_at', 'mark_area', 'highlight_element', 'clear_annotations']
+// The instructions about tools and the screen live in voiceInstructions.ts.
+export { HERMES_TOOL_NAME } from './voiceInstructions'
 
 /** A finished Hermes run, as hermes.rs emits it. */
 export interface HermesOutcome {
@@ -17,36 +15,6 @@ export interface HermesOutcome {
   output: string
   error: string
   speakResult: boolean
-}
-
-/**
- * Lines appended to the system instructions, depending on which tools this
- * session actually has. Tool names arrive mangled (`mcp__server__point_at`),
- * so they are matched by suffix.
- */
-export function screenPresenceNote(toolNames: string[]): string {
-  const has = (t: string) => toolNames.some((n) => n === t || n.endsWith(`__${t}`))
-  const lines: string[] = []
-  if (ANNOTATION_TOOLS.some(has)) {
-    lines.push(
-      'You can point at things on the user\'s screen: point_at draws an arrow with a short label, mark_area and highlight_element frame something. ' +
-      'Prefer an element target (an element_ref from get_pointer_context or the screen context) or a text target over raw coordinates. ' +
-      'Use it when showing beats describing, keep labels to a few words, and call clear_annotations when you are done or the user moves on.'
-    )
-  }
-  if (has('get_current_context') || has('get_pointer_context')) {
-    lines.push(
-      'Messages that start with [Screen context] describe what is on the user\'s screen right now. They come from the system, not from the user. ' +
-      'Use them to resolve "this", "here" or "that window", never read them out, and do not mention them unless it helps.'
-    )
-  }
-  if (has(HERMES_TOOL_NAME)) {
-    lines.push(
-      `For anything that takes more than a few seconds or many steps (research, mail and calendar work, multi-step jobs), call ${HERMES_TOOL_NAME} with a complete, standalone task. ` +
-      'It returns at once: say in a few words that Hermes is on it, then carry on. Its result arrives later as a [Hermes] message; report it briefly in your own words.'
-    )
-  }
-  return lines.join('\n')
 }
 
 /**

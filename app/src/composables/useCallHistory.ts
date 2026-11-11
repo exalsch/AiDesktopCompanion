@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { TOOL_LINE_PREFIX } from './toolTrace'
 
 /**
  * The saved record of past Assistant Mode calls.
@@ -115,11 +116,17 @@ export function parseTranscript(json: string): TranscriptTurn[] {
   }
 }
 
-/** The conversation as plain text, tool calls left out. */
-export function transcriptToText(turns: TranscriptTurn[]): string {
+/**
+ * The conversation as plain text. Tool calls stay in as `[tool] name -> result`
+ * lines: they are how a reader tells an assistant that looked from one that
+ * only said it did. `withTools: false` leaves them out.
+ */
+export function transcriptToText(turns: TranscriptTurn[], withTools = true): string {
   return turns
-    .filter((t) => t.role !== 'tool')
-    .map((t) => `${t.role === 'user' ? 'You' : 'Assistant'}: ${t.content}`)
+    .filter((t) => withTools || t.role !== 'tool')
+    .map((t) => t.role === 'tool'
+      ? `${TOOL_LINE_PREFIX} ${t.content}`
+      : `${t.role === 'user' ? 'You' : 'Assistant'}: ${t.content}`)
     .join('\n\n')
 }
 

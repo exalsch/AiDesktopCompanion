@@ -3,7 +3,9 @@ import { invoke } from '@tauri-apps/api/core'
 import { useRealtimeUsage } from './useRealtimeUsage'
 import { buildAudioConstraints, isVoiceIsolationSupported } from '../audioConstraints'
 import { callMcpTool, shrinkImageToFit, type ToolImage } from './toolImages'
-import { fetchTurnContext, screenPresenceNote, withinMs } from './screenPresence'
+import { fetchTurnContext, withinMs } from './screenPresence'
+import { buildVoiceInstructions, SUPERVISOR_TOOL_NAME, type VoiceArrangement } from './voiceInstructions'
+import { toolTraceLine } from './toolTrace'
 
 // Where the SDP offer is exchanged for an answer. The beta endpoint this used
 // to post to, `POST /v1/realtime?model=...`, was removed with the rest of the
@@ -41,7 +43,7 @@ const MIN_TALK_MS = 200
 // Escalation to the supervisor, expressed as something the model can choose to
 // do. This replaces a keyword list that only recognised English - the model
 // knows when a question is beyond it regardless of the language it is asked in.
-export const SUPERVISOR_TOOL_NAME = 'consult_supervisor'
+export { SUPERVISOR_TOOL_NAME }
 export const SUPERVISOR_TOOL = {
   type: 'function',
   name: SUPERVISOR_TOOL_NAME,
@@ -451,7 +453,7 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
         for (const image of res.images) images.push({ tool: name, image })
       }
       log(`[tools] <- ${name} ${output.slice(0, 200)}`)
-      history.value.push({ role: 'tool', content: `${name} ${output.slice(0, 300)}` })
+      history.value.push({ role: 'tool', content: toolTraceLine(name, argsJson, output) })
       send({
         type: 'conversation.item.create',
         item: { type: 'function_call_output', call_id: callId, output }
@@ -848,14 +850,17 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     // this note wholesale, which meant a prompt mentioning "the supervisor"
     // outlived the supervisor being switched off, and a supervisor session lost
     // the one sentence that tells the model to escalate at all.
-    const arrangementNote = supervisorNeeded
-      ? `Call ${SUPERVISOR_TOOL_NAME} whenever a question needs current information, the user's files or applications, or careful reasoning, and read its answer back. It is the only tool you have; there are no others in this session.`
+    const arrangement: VoiceArrangement = supervisorNeeded
+      ? 'supervisor-needed'
       : params.useSupervisor
-        ? 'A supervisor model answers on your behalf. Do not describe that arrangement to the user.'
-        : includeTools
-          ? 'There is no supervisor in this session, so do not mention one or wait for one. You have tools of your own: call them yourself when a question needs them. Some take up to a minute, so say you are checking before you call one, then give the answer when it arrives.'
-          : 'There is no supervisor and no tools in this session. Answer from your own knowledge, and say plainly when something is beyond it.'
-    const presenceNote = screenPresenceNote(toolsToSend.map((t: any) => String(t?.name || t?.function?.name || '')))
+        ? 'supervisor-voice-only'
+        : (includeTools && toolsToSend.length ? 'tools' : 'no-tools')
+    // Shared with the Gemini client and the eval (voiceInstructions.ts).
+    const systemText = buildVoiceInstructions(
+      params.instructions,
+      toolsToSend.map((t: any) => String(t?.name || t?.function?.name || '')),
+      arrangement,
+    )
 
     const turnDetection: Record<string, any> = {
       type: 'server_vad',
@@ -915,11 +920,7 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
         output_modalities: ['audio'],
         // The arrangement note goes last so it wins on recency, and it is
         // appended to custom instructions rather than replaced by them.
-        instructions: `${
-          (params.instructions && params.instructions.trim().length > 0)
-            ? params.instructions.trim()
-            : 'You are an assistant in Assistant Mode. Speak clearly and concisely. IMPORTANT: Always reply in the same language the user is speaking/writing. If you are unsure, reply in English. Do not switch languages mid-conversation unless the user clearly switches.'
-        }\n\n${presenceNote ? `${presenceNote}\n\n` : ''}${arrangementNote}`,
+        instructions: systemText,
         tools: toolsToSend,
         tool_choice: 'auto',
         audio,
@@ -932,7 +933,7 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
     }
 
     try {
-      const toolNames = toolsToSend.map((t: any) => t?.name || t?.function?.name || '').filter(Boolean).slice(0, 8)
+      const toolNames = toolsToSend.map((t: any) => t?.name || t?.function?.name || '').filter(Boolean)
       log('[session.update] ' + JSON.stringify({
         voice: audio.output?.voice ?? '(unchanged)',
         turn_detection: micMode === 'ptt' ? 'manual (push-to-talk)' : 'server_vad',
@@ -948,7 +949,8 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
           ? 'supervisor-needed'
           : params.useSupervisor ? 'supervisor-always' : (includeTools ? 'tools-direct' : 'no-tools'),
         tool_count: toolsToSend.length,
-        tool_names_sample: toolNames,
+        tools: toolNames,
+        instructions_chars: systemText.length,
       }))
       statusRef.value = {
         toolsCount: toolsToSend.length,
@@ -1078,15 +1080,20 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
       return
     }
 
-    // The context fetch started at key-down and is normally long done; when it
-    // is not, wait a moment so the item precedes the audio, never long.
-    const ctx = turnContext
+    // The context fetched at key-down, then once more now, so "this" means
+    // what the cursor is on when the user stops speaking. The refresh runs
+    // after the first fetch (never beside it, or the stale item could land
+    // last) and is sent only when it changed. The commit waits for both, never
+    // longer than 400 ms, so the item precedes the audio.
+    const first = turnContext ?? Promise.resolve(null)
     turnContext = null
-    if (ctx) {
-      void withinMs(ctx, 400).then(() => finishPttCommit(heldMs))
-      return
-    }
-    finishPttCommit(heldMs)
+    const refreshed = first.then(() => fetchTurnContext(false)).then((text) => {
+      if (text && connected) {
+        const ok = sendSystemText(text)
+        log(`[screen] context refreshed at key-up ${ok ? '' : '(NOT sent) '}(${text.length} chars)`)
+      }
+    })
+    void withinMs(refreshed, 400).then(() => finishPttCommit(heldMs))
   }
 
   function finishPttCommit(heldMs: number) {

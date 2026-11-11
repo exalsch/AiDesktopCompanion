@@ -9,6 +9,28 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
+### The voice assistant looks before it answers and shows you what it did
+
+kind: fix
+
+In a voice call the assistant used to say it had checked your calendar when it
+had not, guess where your mouse was, and ask Claude Code about the event on
+your screen, which Claude Code cannot see. Now:
+
+- It reads the screen first. "This event", "what am I hovering" and "where is
+  my cursor" go to the pointer and focus tools, and the answer starts with the
+  name it read. In the new Outlook, whose calendar the usual hit test cannot
+  see into, the app finds the event under the mouse itself.
+- It does not claim a check it did not make, names the tools it really used
+  when you ask, looks again when you correct it, and says so when it has no
+  tool for something.
+- A call gets only the screen tools of windows-commander (context, pointer,
+  focus, find, OCR, screenshot and the on-screen arrows). Mouse, keyboard,
+  PowerShell and files stay with chat. Switch back under Assistant > Screen
+  presence and Hermes > Voice tools.
+- Every tool call shows as a line in the live transcript, briefly on the call
+  pill, and in the saved call history and its copied text.
+
 ### The voice assistant knows what is on your screen and can point at it
 
 kind: feat

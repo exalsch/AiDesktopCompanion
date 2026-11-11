@@ -5,10 +5,10 @@ import { useAssistantRealtime, type ConnectParams } from '../../composables/useA
 import { useAssistantGeminiLive, isGeminiLiveModel, DEFAULT_GEMINI_LIVE_VOICE } from '../../composables/useAssistantGeminiLive'
 import { useSettings } from '../../composables/useSettings'
 import { useCallTones } from '../../composables/useCallTones'
-import { useCallHistory, titleFor, type CallDraft } from '../../composables/useCallHistory'
+import { useCallHistory, titleFor, transcriptToText, type CallDraft } from '../../composables/useCallHistory'
 import CollapsibleCard from '../ui/CollapsibleCard.vue'
 import CallHistory from './CallHistory.vue'
-import { listen } from '@tauri-apps/api/event'
+import { emit, listen } from '@tauri-apps/api/event'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { HOTKEY_EVENT_PTT_DOWN, HOTKEY_EVENT_PTT_UP } from '../../hotkeys'
 import { hermesResultText, HERMES_SPEAK_INSTRUCTIONS, type HermesOutcome } from '../../composables/screenPresence'
@@ -166,8 +166,8 @@ const elapsedLabel = computed(() => {
 /**
  * The conversation as plain text, ready to copy or paste elsewhere.
  *
- * Tool calls are left out: they are diagnostics, not something anyone wants
- * pasted into a document.
+ * Tool calls stay in as `[tool]` lines, so the text shows what the assistant
+ * really did; delete them in the box before sending it on if they are noise.
  */
 const transcriptText = ref('')
 
@@ -355,6 +355,8 @@ const session = reactive({
   historyRetention: 'days_30',
   // Read in Rust (screen_layer.rs, hermes.rs) from this blob.
   screenContext: true,
+  // Read in Rust (voice_tools.rs) by realtime_build_tools and realtime_call_tool.
+  voiceToolProfile: 'screen' as 'screen' | 'all',
   hermesEnabled: false,
   hermesBaseUrl: 'http://127.0.0.1:8642',
   hermesApiKey: '',
@@ -574,11 +576,20 @@ const realtime = {
 
 // Declared after `realtime`: watch() evaluates its source immediately, and
 // this one reads through to the composable.
+// Turns already looked at for new tool calls, so each one reaches the pill
+// once. A new call clears the transcript, which resets it.
+let toolTurnsSeen = 0
+
 watch(transcript, (turns) => {
-  transcriptText.value = turns
-    .filter((t) => t.role !== 'tool')
-    .map((t) => `${t.role === 'user' ? 'You' : 'Assistant'}: ${t.content}`)
-    .join('\n\n')
+  transcriptText.value = transcriptToText(turns)
+  if (turns.length < toolTurnsSeen) toolTurnsSeen = 0
+  // Each tool call shows on the floating pill for a moment: the user is
+  // usually in another app and would otherwise never see that the assistant
+  // looked (or did not).
+  for (let i = toolTurnsSeen; i < turns.length; i++) {
+    if (turns[i].role === 'tool') void emit('assistant-pill:tool', { line: turns[i].content }).catch(() => {})
+  }
+  toolTurnsSeen = turns.length
 }, { deep: true })
 
 async function activate() {
@@ -657,6 +668,7 @@ onMounted(async () => {
       if (typeof ar.enable_tools === 'boolean') ui.enableTools = ar.enable_tools
       if (typeof ar.use_supervisor === 'boolean') ui.useSupervisor = ar.use_supervisor
       session.screenContext = ar.screen_context !== false
+      session.voiceToolProfile = ar.voice_tool_profile === 'all' ? 'all' : 'screen'
       if (typeof ar.hermes_enabled === 'boolean') session.hermesEnabled = ar.hermes_enabled
       if (typeof ar.hermes_base_url === 'string' && ar.hermes_base_url.trim()) session.hermesBaseUrl = ar.hermes_base_url
       if (typeof ar.hermes_api_key === 'string') session.hermesApiKey = ar.hermes_api_key
@@ -682,9 +694,10 @@ watch(() => debugLines.value.length, async () => {
 // happened to change. Watch all three explicitly.
 watch([session, () => ui.enableTools, () => ui.useSupervisor, () => ui.showDebug], () => { void saveAssistantSettings() }, { deep: true })
 
-// Hermes adds or removes a tool, which realtime_build_tools reads from the
-// saved settings - so save first, then resend the session.
-watch(() => session.hermesEnabled, async () => {
+// Hermes and the voice tool profile change the tool list, which
+// realtime_build_tools reads from the saved settings - so save first, then
+// resend the session.
+watch(() => [session.hermesEnabled, session.voiceToolProfile], async () => {
   await saveAssistantSettings()
   await syncSession()
 })
@@ -719,6 +732,7 @@ async function saveAssistantSettings() {
           show_debug: ui.showDebug,
           // Read by screen_layer.rs and hermes.rs.
           screen_context: session.screenContext,
+          voice_tool_profile: session.voiceToolProfile,
           hermes_enabled: session.hermesEnabled,
           hermes_base_url: session.hermesBaseUrl,
           hermes_api_key: session.hermesApiKey,
@@ -1070,6 +1084,20 @@ onBeforeUnmount(() => {
       </span>
     </label>
 
+    <div class="field">
+      <label class="field-label">Voice tools from windows-commander</label>
+      <select class="input" v-model="session.voiceToolProfile">
+        <option value="screen">Screen only (recommended)</option>
+        <option value="all">All tools</option>
+      </select>
+      <p class="field-hint">
+        Screen only gives the call the tools that look at and point at the screen: current context, pointer context,
+        focused element, find element, OCR, screenshot, point at, mark area, highlight and clear. Realtime voice models
+        pick badly from a long list, so mouse, keyboard, PowerShell, files and registry stay with chat. Other MCP
+        servers keep their tools. Disabled tools stay off in both.
+      </p>
+    </div>
+
     <div class="divider"></div>
 
     <label class="switch row">
@@ -1143,7 +1171,7 @@ onBeforeUnmount(() => {
     <div class="field">
       <label class="field-label">Plain text</label>
       <textarea class="input" rows="6" v-model="transcriptText"></textarea>
-      <p class="field-hint">Editable before you send it anywhere. Tool calls are left out.</p>
+      <p class="field-hint">Editable before you send it anywhere. Tool calls are kept as [tool] lines.</p>
     </div>
 
     <div class="actions">
