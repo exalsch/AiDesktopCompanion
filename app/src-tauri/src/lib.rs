@@ -265,6 +265,7 @@ mod webview_health;
 mod screen_layer;
 mod hermes;
 mod voice_tools;
+mod background_ask;
 
 use rmcp::{
   service::{RoleClient, RunningService},
@@ -1095,6 +1096,16 @@ async fn realtime_build_tools() -> Result<serde_json::Value, String> {
   // user chose "all" (voice_tools.rs). Chat is not affected.
   let profile = voice_tools::profile_from_settings();
   let mut flat = voice_tools::filter_tools(flat, &screen_layer::wc_server_id(), profile);
+  // Claude Code answers by itself in a call (background_ask.rs), so the model
+  // gets no ticket and no claude_result to collect one with.
+  flat.retain(|t| !t.get("name").and_then(|n| n.as_str()).map(|n| n.ends_with(&format!("__{}", background_ask::RESULT_TOOL))).unwrap_or(false));
+  for t in flat.iter_mut() {
+    let is_ask = t.get("name").and_then(|n| n.as_str()).map(|n| n.ends_with(&format!("__{}", background_ask::ASK_TOOL))).unwrap_or(false);
+    if is_ask {
+      let d = t.get("description").and_then(|x| x.as_str()).unwrap_or("").to_string();
+      t["description"] = serde_json::json!(background_ask::voice_description(&d));
+    }
+  }
   // Not an MCP tool: Hermes runs are started and followed by hermes.rs.
   if hermes::config_from_settings_or_env().enabled {
     flat.push(hermes::tool_definition());
@@ -1139,6 +1150,12 @@ async fn realtime_call_tool(app: tauri::AppHandle, name: String, args_json: Opti
   let Some((server_id, tool_name)) = mcp::parse_mcp_fn_call_name(&name) else {
     return Ok(RealtimeToolOutput::text(serde_json::json!({ "error": format!("unknown tool: {name}") })));
   };
+  if background_ask::handles(&tool_name) {
+    return Ok(RealtimeToolOutput::text(background_ask::start(&app, &MCP_CLIENTS, server_id, args).await));
+  }
+  if tool_name == background_ask::RESULT_TOOL {
+    return Ok(RealtimeToolOutput::text(serde_json::json!({ "error": "Not needed in a voice call: Claude Code's answer arrives in the conversation by itself as a [Claude Code] message." })));
+  }
   match mcp::call_tool(&MCP_CLIENTS, &server_id, &tool_name, args).await {
     Ok(mut res) => {
       // A position sentence, and the real element for WebView2 apps whose

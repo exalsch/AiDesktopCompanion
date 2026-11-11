@@ -198,6 +198,9 @@ impl SseDecoder {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunOutcome {
+  /// Who did the work, as the voice session names it: "Hermes" or
+  /// "Claude Code" (background_ask.rs delivers through here too).
+  pub agent: String,
   pub run_id: String,
   pub task: String,
   /// completed | failed | cancelled | interrupted | lost
@@ -210,7 +213,7 @@ pub struct RunOutcome {
 /// Finished runs no voice session has taken yet.
 static PENDING: Lazy<Mutex<Vec<RunOutcome>>> = Lazy::new(|| Mutex::new(Vec::new()));
 
-fn clip(s: &str, max: usize) -> String {
+pub(crate) fn clip(s: &str, max: usize) -> String {
   let s = s.split_whitespace().collect::<Vec<_>>().join(" ");
   if s.chars().count() <= max { return s; }
   let mut out: String = s.chars().take(max.saturating_sub(3)).collect();
@@ -225,7 +228,7 @@ pub fn notify(app: &tauri::AppHandle, title: &str, body: &str) {
   }
 }
 
-fn deliver(app: &tauri::AppHandle, outcome: RunOutcome) {
+pub(crate) fn deliver(app: &tauri::AppHandle, outcome: RunOutcome) {
   if let Ok(mut p) = PENDING.lock() {
     p.retain(|o| o.run_id != outcome.run_id);
     p.push(outcome.clone());
@@ -240,13 +243,13 @@ fn deliver(app: &tauri::AppHandle, outcome: RunOutcome) {
     tokio::time::sleep(Duration::from_secs(4)).await;
     let still_pending = PENDING.lock().map(|p| p.iter().any(|o| o.run_id == outcome.run_id)).unwrap_or(false);
     if still_pending {
-      let title = if outcome.status == "completed" { "Hermes finished" } else { "Hermes did not finish" };
+      let title = if outcome.status == "completed" { format!("{} finished", outcome.agent) } else { format!("{} did not finish", outcome.agent) };
       let body = if outcome.status == "completed" {
         format!("{}: {}", clip(&outcome.task, 60), outcome.output)
       } else {
         format!("{} ({}): {}", clip(&outcome.task, 60), outcome.status, outcome.error)
       };
-      notify(&app, title, &body);
+      notify(&app, &title, &body);
     }
   });
 }
@@ -424,7 +427,7 @@ async fn follow_run(app: tauri::AppHandle, base: String, key: String, run_id: St
   } else {
     crate::busy::finish(&app, Err(format!("Hermes {status}: {}", clip(if error.is_empty() { &task } else { &error }, 120))));
   }
-  deliver(&app, RunOutcome { run_id, task, status, output, error, speak_result });
+  deliver(&app, RunOutcome { agent: "Hermes".into(), run_id, task, status, output, error, speak_result });
 }
 
 // ---------------------------------------------------------------------------
