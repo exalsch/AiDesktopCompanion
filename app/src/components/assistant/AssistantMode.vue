@@ -11,7 +11,7 @@ import CallHistory from './CallHistory.vue'
 import { emit, listen } from '@tauri-apps/api/event'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { HOTKEY_EVENT_PTT_DOWN, HOTKEY_EVENT_PTT_UP } from '../../hotkeys'
-import { hermesResultText, HERMES_SPEAK_INSTRUCTIONS, type HermesOutcome } from '../../composables/screenPresence'
+import { agentOf, hermesResultText, resultSpeakInstructions, type HermesOutcome } from '../../composables/screenPresence'
 
 const props = defineProps<{
   mcpServers: any[]
@@ -749,17 +749,18 @@ watch(() => props.autostart, (n, old) => {
   if (typeof n === 'number' && typeof old === 'number' && n > old) void activate()
 })
 
-// ---- Hermes results (hermes.rs) -------------------------------------------
+// ---- Hermes and Claude Code results (hermes.rs, background_ask.rs) --------
 //
-// A finished run is emitted to this window. A live call takes it into the
+// A finished run (or a Claude Code question asked in a call, which runs in
+// the background the same way) is emitted to this window. A live call takes it into the
 // conversation and acknowledges it; without one, Rust shows a notification and
 // keeps the result for the next call, which picks it up on connect.
 
 function deliverHermes(o: HermesOutcome, respond: boolean): boolean {
   if (!ui.connected) return false
-  const ok = realtime.injectContext(hermesResultText(o), respond, respond ? HERMES_SPEAK_INSTRUCTIONS : undefined)
+  const ok = realtime.injectContext(hermesResultText(o), respond, respond ? resultSpeakInstructions(o) : undefined)
   if (ok) {
-    debugLines.value.push(`[hermes] ${o.status}: ${o.task.slice(0, 80)}`)
+    debugLines.value.push(`[${agentOf(o)}] ${o.status}: ${o.task.slice(0, 80)}`)
     void invoke('hermes_ack_result', { runId: o.runId }).catch(() => {})
   }
   return ok
@@ -785,7 +786,7 @@ onMounted(async () => {
       const o = e.payload
       if (!o) return
       if (!deliverHermes(o, o.speakResult !== false)) {
-        props.notify?.(o.status === 'completed' ? `Hermes finished: ${o.task}` : `Hermes ${o.status}: ${o.error || o.task}`, o.status === 'completed' ? 'success' : 'error', 6000)
+        props.notify?.(o.status === 'completed' ? `${agentOf(o)} finished: ${o.task}` : `${agentOf(o)} ${o.status}: ${o.error || o.task}`, o.status === 'completed' ? 'success' : 'error', 6000)
       }
     })
     unlistenHermesApproval = await listen<{ task: string, text: string }>('hermes:approval', (e) => {

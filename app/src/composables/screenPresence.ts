@@ -7,8 +7,13 @@ import { invoke } from '@tauri-apps/api/core'
 // The instructions about tools and the screen live in voiceInstructions.ts.
 export { HERMES_TOOL_NAME } from './voiceInstructions'
 
-/** A finished Hermes run, as hermes.rs emits it. */
+/**
+ * A finished background job, as hermes.rs emits it: a Hermes run, or a Claude
+ * Code question from a voice call (background_ask.rs). `agent` names which.
+ */
 export interface HermesOutcome {
+  /** "Hermes" or "Claude Code"; missing from results older than the field. */
+  agent?: string
   runId: string
   task: string
   status: string
@@ -31,16 +36,27 @@ export async function fetchTurnContext(reset: boolean): Promise<string | null> {
   }
 }
 
-/** What the model is told when a Hermes run ends. */
-export function hermesResultText(o: HermesOutcome): string {
-  if (o.status === 'completed') {
-    return `[Hermes] The task you handed over is done.\nTask: ${o.task}\nResult: ${o.output || '(no text returned)'}`
-  }
-  return `[Hermes] The task you handed over did not finish (${o.status}).\nTask: ${o.task}\nReason: ${o.error || 'unknown'}`
+/** Who did the work: "Hermes" for older results without the field. */
+export function agentOf(o: HermesOutcome): string {
+  return (o.agent && o.agent.trim()) || 'Hermes'
 }
 
-export const HERMES_SPEAK_INSTRUCTIONS =
-  'A Hermes task just finished; its result is the last [Hermes] message. Tell the user in one or two short sentences, in the language of the conversation. Do not read out URLs, IDs or markup.'
+/** What the model is told when a background job ends. */
+export function hermesResultText(o: HermesOutcome): string {
+  const agent = agentOf(o)
+  const what = agent === 'Hermes' ? 'The task you handed over' : 'The question you asked'
+  const label = agent === 'Hermes' ? 'Task' : 'Question'
+  if (o.status === 'completed') {
+    return `[${agent}] ${what} is answered.\n${label}: ${o.task}\nResult: ${o.output || '(no text returned)'}`
+  }
+  return `[${agent}] ${what} did not finish (${o.status}).\n${label}: ${o.task}\nReason: ${o.error || 'unknown'}`
+}
+
+/** How the model is asked to speak a result that just arrived. */
+export function resultSpeakInstructions(o: HermesOutcome): string {
+  const agent = agentOf(o)
+  return `${agent} just finished; its result is the last [${agent}] message. Tell the user in one or two short sentences, in the language of the conversation, starting with what it was about. Do not read out URLs, IDs or markup.`
+}
 
 /** Resolves with `p`, or with null after `ms`. */
 export function withinMs<T>(p: Promise<T>, ms: number): Promise<T | null> {

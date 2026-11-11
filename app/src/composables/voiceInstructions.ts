@@ -94,6 +94,22 @@ function hermesRule(toolNames: string[]): string {
   return `Long jobs: for research, mail and calendar work or anything with many steps, call ${HERMES_TOOL_NAME} with a complete, standalone task that includes what you read from the screen. It returns at once: say in a few words that Hermes is on it, then carry on. Its result arrives later as a [Hermes] message; report it in your own short words.`
 }
 
+/**
+ * Claude Code in a call runs in the background (background_ask.rs): the tool
+ * returns at once and the answer arrives as a [Claude Code] message. Without
+ * this rule the model waited, polled, or answered before the answer existed.
+ */
+function claudeRule(toolNames: string[]): string {
+  if (!hasTool(toolNames, 'ask_claude')) return ''
+  return [
+    'Claude Code (' + nameOf(toolNames, 'ask_claude') + ') runs in the background in this call.',
+    '- It returns at once. Say in a few words that Claude Code is on it, then carry on with the user.',
+    '- Do not guess or invent its answer, and do not ask it the same question again.',
+    '- Its answer arrives later as a [Claude Code] message. Give it in your own short words, starting with what it was about.',
+    '- If the user asks whether it is done and no [Claude Code] message has arrived, say it is still working.',
+  ].join('\n')
+}
+
 function examples(toolNames: string[]): string {
   const has = (t: string) => hasTool(toolNames, t)
   const n = (t: string) => nameOf(toolNames, t)
@@ -114,7 +130,7 @@ function examples(toolNames: string[]): string {
  */
 export function voiceToolNote(toolNames: string[]): string {
   if (!toolNames.length) return ''
-  const blocks = [HONESTY_RULES, screenRules(toolNames), contextRule(toolNames), hermesRule(toolNames), examples(toolNames)]
+  const blocks = [HONESTY_RULES, screenRules(toolNames), contextRule(toolNames), claudeRule(toolNames), hermesRule(toolNames), examples(toolNames)]
   return ['# Tools', ...blocks.filter(Boolean)].join('\n\n')
 }
 
@@ -128,7 +144,7 @@ export function arrangementNote(arrangement: VoiceArrangement): string {
     case 'supervisor-voice-only':
       return 'A supervisor model answers on your behalf. Do not describe that arrangement to the user.'
     case 'tools':
-      return 'There is no supervisor in this session, so do not mention one or wait for one. Call your tools yourself when a question needs them. Screen tools answer in under a second: call them without announcing it. Tools that take long (Claude Code, Hermes): say a few words first, then call the tool in the same turn, and give the answer when it arrives.'
+      return 'There is no supervisor in this session, so do not mention one or wait for one. Call your tools yourself when a question needs them. Screen tools answer in under a second: call them without announcing it. Tools that work in the background return at once; their answers arrive later as their own messages.'
     case 'no-tools':
     default:
       return 'There is no supervisor and no tools in this session. Answer from your own knowledge, and say plainly when something is beyond it.'

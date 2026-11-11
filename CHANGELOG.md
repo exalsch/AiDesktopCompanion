@@ -9,6 +9,17 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
+### Claude Code answers in a voice call arrive by themselves
+
+kind: fix
+
+A question the voice assistant hands to Claude Code no longer holds the call
+open until the answer is there. The assistant says Claude Code is on it and
+you can keep talking; when the answer comes, the assistant tells you. If you
+have already hung up, a desktop notification shows the answer and the next
+call picks it up. Before, a slow answer (over three minutes for a "do I need
+to prepare" check) could arrive after the call ended and was lost.
+
 ### The voice assistant looks before it answers and shows you what it did
 
 kind: fix

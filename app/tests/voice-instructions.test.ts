@@ -29,6 +29,12 @@ test('the rules name the exact tool names of the session', () => {
   assert.ok(note.includes(SCREEN_CONTEXT_PREFIX))
 })
 
+test('Claude Code is described as a background job, only when it is offered', () => {
+  assert.match(voiceToolNote(SCREEN), /runs in the background in this call/)
+  assert.match(voiceToolNote(SCREEN), /\[Claude Code\] message/)
+  assert.doesNotMatch(voiceToolNote(SCREEN.filter((n) => !n.endsWith('ask_claude'))), /Claude Code/)
+})
+
 test('rules for missing tools are left out', () => {
   const note = voiceToolNote(['mcp__Rob__ask_claude'])
   assert.doesNotMatch(note, /get_pointer_context/)
