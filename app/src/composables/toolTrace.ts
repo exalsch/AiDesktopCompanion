@@ -22,12 +22,18 @@ function parse(s: string): any {
   try { return JSON.parse(s) } catch { return undefined }
 }
 
-/** The tool's own payload: the JSON in the first text block of `result`, else the text. */
+/**
+ * The tool's own payload: the first text block that is JSON, else all the
+ * text. A tool that also returned an image has the image's note
+ * (mcp::split_tool_images) as one of its text blocks, so "the first block"
+ * would be the note, not the result.
+ */
 function payloadOf(out: any): { value: any, text: string, isError: boolean } {
   const result = out?.result
   const blocks = Array.isArray(result?.content) ? result.content : []
-  const text = blocks.filter((b: any) => b?.type === 'text').map((b: any) => String(b.text ?? '')).join(' ')
-  return { value: parse(text), text, isError: result?.isError === true }
+  const texts: string[] = blocks.filter((b: any) => b?.type === 'text').map((b: any) => String(b.text ?? ''))
+  const value = texts.map(parse).find((v) => v !== undefined)
+  return { value, text: texts.join(' '), isError: result?.isError === true }
 }
 
 function element(el: any): string {

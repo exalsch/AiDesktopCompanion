@@ -60,6 +60,19 @@ test('trace line: pointer context shows the resolved element and position', () =
   assert.match(line, /^get_pointer_context -> Button "Steering Committee, 14:00 to 15:00" · On screen 2/)
 })
 
+test('trace line: a result with an image still shows the element', () => {
+  // Seen in call 18: get_pointer_context with include_image traced as the image note.
+  const output = JSON.stringify({
+    serverId: 'windows-commander', tool: 'get_pointer_context',
+    result: { content: [
+      { type: 'text', text: '[image/png image, 12 KB: sent to you as the next user message.]' },
+      { type: 'text', text: JSON.stringify({ element: { controlType: 'Window', name: 'Calendar' }, resolved_element: { controlType: 'Button', name: 'Release sync, 16:00 to 16:30' } }) },
+    ] },
+  })
+  assert.equal(toolTraceLine('mcp__windows-commander__get_pointer_context', '{"include_image":true}', output),
+    'get_pointer_context -> Button "Release sync, 16:00 to 16:30"')
+})
+
 test('trace line: arguments, errors and plain answers', () => {
   const pointed = JSON.stringify({ serverId: 'w', tool: 'point_at', result: { content: [{ type: 'text', text: '{"id":"a1"}' }] } })
   assert.equal(toolTraceLine('mcp__w__point_at', '{"text":"Send"}', pointed), 'point_at (Send) -> drawn on screen')
