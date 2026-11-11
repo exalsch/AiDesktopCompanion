@@ -220,9 +220,12 @@ exact mangled names.
 - **Hermes** only when the tool exists, for long jobs.
 - **Examples** use names that are not in the eval fixtures (a unit test checks
   it).
+- **Claude Code** (when `ask_claude` is offered): it runs in the background
+  (section 10); say it is on it, carry on, never guess its answer, say "still
+  working" when asked, give the answer when the `[Claude Code]` message comes.
 - **Arrangement note** for tools: screen tools are fast, so call them without
-  announcing; slow tools (Claude Code, Hermes) get a few words first, then the
-  call in the same turn. The old note ("Some take up to a minute, so say you
+  announcing; background tools return at once and answer later as their own
+  messages. The old note ("Some take up to a minute, so say you
   are checking before you call one") produced "Let me check" with no call.
 
 ## 7. Outlook reality check (11.11.2026, read only)
@@ -291,6 +294,27 @@ live failure, for example: "Let me check the details for this event. I can't
 see the event you're looking at", after an `ask_claude` call and no screen
 tool.
 
+After Claude Code moved to the background (section 10), Gemini again, 3 runs:
+
+| scenario | baseline | new | new-noctx |
+|---|---|---|---|
+| this_event | 0/3 | 2/3 | 2/3 |
+| which_tool | 0/3 | 3/3 | 3/3 |
+| cursor_where | 0/3 | 3/3 | 3/3 |
+| cursor_correction | 2/3 | 3/3 | 3/3 |
+| hover | 0/3 | 3/3 | 3/3 |
+| show_send | 3/3 | 3/3 | 3/3 |
+| focused_window | 0/3 | 3/3 | 3/3 |
+| ocr_fallback | 0/3 | 3/3 | 2/3 |
+| no_tool | 3/3 | 3/3 | 3/3 |
+| claude_background | - | 3/3 | 3/3 |
+| **all** | **8/27** | **29/30** | **28/30** |
+
+The this_event failures read the screen and asked Claude Code correctly but
+said "that meeting" without its name. The OpenAI rerun of this state stopped
+with `credit_balance_exhausted` on the account and is not counted; the OpenAI
+column above is from before section 10.
+
 ## 9. Tool calls you can see (`toolTrace.ts`)
 
 - Each call becomes one line, `name (arg) -> result`, built from the real
@@ -303,6 +327,44 @@ tool.
   transcript showed none. The copy now keeps them as `[tool] ...` lines, and
   the stored line is the readable trace instead of 300 characters of raw JSON.
   No schema change, so no migration.
+
+## 10. Claude Code in the background (`background_ask.rs`)
+
+- **Why.** The companion bridge (MCP server "Rob") answers `ask_claude`
+  synchronously for up to `defaultTimeoutSeconds` = 300 before it hands back a
+  ticket. The 300 s are deliberate (bridge commit d771c5a, 25.08.2026): with 55
+  s, voice models did not collect tickets and answers were lost. In call 18
+  (11.11.2026) a "do we need to prepare" question took 216 s; the tool call was
+  open the whole time, the user hung up after 201 s and the answer arrived 25 s
+  later, into nothing. The transcript had no `ask_claude` line because the
+  call never returned.
+- **Now.** In a voice call `realtime_call_tool` answers `ask_claude` at once
+  with `{status: "started", job_id, note}` and runs the real call in a task:
+  the ask with `timeout_seconds: 900` (the bridge's maximum), then
+  `claude_result` every 15 s for up to 15 minutes if a ticket comes back
+  (`pending_ticket` reads both bridge phrasings). The busy pill shows
+  "Claude Code: <question>".
+- **Delivery** is the Hermes path (`hermes::deliver`), now with an `agent`
+  field on `RunOutcome`: the result is emitted as `hermes:run-finished`, a live
+  call injects `[Claude Code] The question you asked is answered. Question:
+  ... Result: ...` and speaks it; with no call (or no acknowledgement within
+  4 s) a desktop notification "Claude Code finished" shows it, and the next
+  call picks it up on connect.
+- **One at a time.** The bridge answers one question per lane, so a second
+  `ask_claude` while one runs gets an error that names the running question
+  and says its answer is coming.
+- **The model** no longer sees `claude_result` in a call (refused if named),
+  `ask_claude`'s description gains "IN THIS VOICE CALL it runs in the
+  background ...", and the rules (section 6) say: say Claude Code is on it,
+  carry on, never guess the answer, say "still working" when asked, give the
+  answer when the `[Claude Code]` message arrives.
+- **Unchanged:** the bridge and its config; chat, which calls the bridge
+  directly; `claude_status`.
+- **Eval:** scenario `claude_background` (new variants only): ask about the
+  event, "Any result yet?", then the app injects the answer. Checks: screen
+  read before the ask and the event name in the question, no invented answer
+  before it arrives, "still working" without asking again, the answer given
+  when it lands.
 
 ## Privacy
 
@@ -333,3 +395,8 @@ tool.
   hovered one is.
 - No UI to answer a Hermes approval from this app; by design for now.
 - Supervisor modes do not get `delegate_to_hermes`.
+- A Claude Code question that is still running when the app quits is lost
+  (the task dies with the app; the bridge finishes it but nobody collects it).
+- Claude Code itself is slow for calendar-plus-mail questions (216 s in call
+  18, Sonnet lane `rob`); this section only stops the wait from blocking the
+  call.
