@@ -217,6 +217,24 @@ pub fn finish(app: &tauri::AppHandle, result: Result<(), String>) {
   }
 }
 
+/// Change the label of the running indicator, for long operations that report
+/// progress (a Hermes run naming the tool it is in). Does nothing when the
+/// pill is idle, suppressed, or showing an error.
+pub fn relabel(app: &tauri::AppHandle, label: &str) {
+  if is_suppressed() {
+    return;
+  }
+  let state = {
+    let Ok(mut cur) = BUSY_STATE.lock() else { return };
+    if cur.state != "running" {
+      return;
+    }
+    cur.label = label.to_string();
+    cur.clone()
+  };
+  publish(app, &state);
+}
+
 /// Convenience wrapper: run `fut` with the indicator showing, reporting any
 /// error through the indicator while still returning it to the caller.
 pub async fn with_indicator<T, F>(app: &tauri::AppHandle, label: &str, fut: F) -> Result<T, String>

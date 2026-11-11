@@ -4,6 +4,7 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_global_shortcut::Builder::new().build())
     .plugin(tauri_plugin_dialog::init())
+    .plugin(tauri_plugin_notification::init())
     .on_window_event(|window, event| {
       if let tauri::WindowEvent::CloseRequested { api, .. } = event {
         // Close-to-tray: prevent app exit and hide the main window
@@ -24,6 +25,11 @@ pub fn run() {
       // Instrumentation for issue #14 (blank window after hibernate). Watches
       // only; the repair waits until the logs say which failure it is.
       webview_health::watch_all(app.handle());
+
+      // Own the shared windows-commander instance: move a stdio entry onto it
+      // (once), then start it if nothing runs. Never stopped on exit; other
+      // clients share it.
+      screen_layer::on_app_start();
 
       // System tray: build a minimal menu and icon
       // Menu items: Show (shows and focuses main window) and Exit (quits app)
@@ -182,6 +188,13 @@ pub fn run() {
       mcp_get_prompt,
       mcp_ping,
       mcp_is_connected,
+      assistant_screen_context,
+      screen_layer::screen_layer_status,
+      screen_layer::screen_layer_start,
+      screen_layer::screen_layer_stop,
+      hermes::hermes_test_connection,
+      hermes::hermes_pending_results,
+      hermes::hermes_ack_result,
       realtime_create_ephemeral_token,
       gemini_live_create_token,
       settings::list_gemini_live_models,
@@ -249,6 +262,8 @@ mod assistant_pill;
 mod call_history;
 mod media;
 mod webview_health;
+mod screen_layer;
+mod hermes;
 
 use rmcp::{
   service::{RoleClient, RunningService},
@@ -322,8 +337,19 @@ async fn mcp_connect(
   cwd: Option<String>,
   env: Option<serde_json::Value>,
   transport: Option<String>,
+  headers: Option<serde_json::Value>,
+  auth: Option<String>,
+  fallback_command: Option<String>,
 ) -> Result<String, String> {
-  mcp::connect(&app, &MCP_CLIENTS, server_id, command, args, cwd, env, transport).await
+  mcp::connect(&app, &MCP_CLIENTS, server_id, command, args, cwd, env, transport, headers, auth, fallback_command).await
+}
+
+/// Screen context item for the start of a voice turn, or null when the screen
+/// has not changed since the last one (or windows-commander is not connected,
+/// or screen context is off). `reset` is set by a new session.
+#[tauri::command]
+async fn assistant_screen_context(reset: Option<bool>) -> Result<Option<String>, String> {
+  Ok(screen_layer::turn_context(&MCP_CLIENTS, reset.unwrap_or(false)).await)
 }
 
 #[tauri::command]
@@ -1064,6 +1090,11 @@ async fn realtime_build_tools() -> Result<serde_json::Value, String> {
       }))
     })
     .collect();
+  let mut flat = flat;
+  // Not an MCP tool: Hermes runs are started and followed by hermes.rs.
+  if hermes::config_from_settings_or_env().enabled {
+    flat.push(hermes::tool_definition());
+  }
   Ok(serde_json::Value::Array(flat))
 }
 
@@ -1082,11 +1113,19 @@ async fn realtime_build_tools() -> Result<serde_json::Value, String> {
 /// `images` rather than inside `output`; see `mcp::split_tool_images`. The voice
 /// clients send them on as images in the next message.
 #[tauri::command]
-async fn realtime_call_tool(name: String, args_json: Option<String>) -> Result<RealtimeToolOutput, String> {
+async fn realtime_call_tool(app: tauri::AppHandle, name: String, args_json: Option<String>) -> Result<RealtimeToolOutput, String> {
   let args: serde_json::Value = args_json
     .filter(|s| !s.trim().is_empty())
     .and_then(|s| serde_json::from_str(&s).ok())
     .unwrap_or_else(|| serde_json::json!({}));
+  if name == hermes::TOOL_NAME {
+    let task = args.get("task").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let speak = args.get("speak_result").and_then(|x| x.as_bool()).unwrap_or(true);
+    // What the user is looking at goes along as text, so "this mail" means
+    // something to Hermes. Off together with the screen context setting.
+    let ctx = screen_layer::current_context_text(&MCP_CLIENTS).await;
+    return Ok(RealtimeToolOutput::text(hermes::delegate(&app, task, speak, ctx).await));
+  }
   let Some((server_id, tool_name)) = mcp::parse_mcp_fn_call_name(&name) else {
     return Ok(RealtimeToolOutput::text(serde_json::json!({ "error": format!("unknown tool: {name}") })));
   };

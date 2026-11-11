@@ -4,7 +4,8 @@ use std::sync::Mutex as StdMutex;
 use tokio::sync::Mutex as AsyncMutex;
 use rmcp::service::{RunningService, RoleClient};
 use rmcp::service::ServiceExt;
-use rmcp::transport::{TokioChildProcess, streamable_http_client::StreamableHttpClientTransport};
+use rmcp::transport::{TokioChildProcess, streamable_http_client::{StreamableHttpClientTransport, StreamableHttpClientTransportConfig}};
+use reqwest::header::{HeaderName, HeaderValue};
 use tokio::process::Command as TokioCommand;
 use tauri::Emitter;
 use once_cell::sync::Lazy;
@@ -69,6 +70,85 @@ async fn publish_or_yield(
   true
 }
 
+/// Extra HTTP headers for an HTTP server, from the entry's `headers` object.
+///
+/// Values are strings; anything else, an invalid name or an invalid value is
+/// an error naming the header (never its value - headers usually carry keys).
+/// Empty names are skipped so a half-filled row in the editor is harmless.
+pub fn parse_header_map(v: Option<&serde_json::Value>) -> Result<std::collections::HashMap<HeaderName, HeaderValue>, String> {
+  let mut out = std::collections::HashMap::new();
+  let Some(v) = v else { return Ok(out) };
+  if v.is_null() { return Ok(out); }
+  let obj = v.as_object().ok_or_else(|| "headers must be an object of name -> value".to_string())?;
+  for (k, val) in obj {
+    let name = k.trim();
+    if name.is_empty() { continue; }
+    let val = val.as_str().ok_or_else(|| format!("header '{name}' must be a string"))?;
+    let hn = HeaderName::from_bytes(name.as_bytes()).map_err(|_| format!("invalid header name '{name}'"))?;
+    let mut hv = HeaderValue::from_str(val.trim()).map_err(|_| format!("invalid value for header '{name}'"))?;
+    hv.set_sensitive(true);
+    out.insert(hn, hv);
+  }
+  Ok(out)
+}
+
+pub fn is_loopback_url(uri: &str) -> bool {
+  let lower = uri.to_ascii_lowercase();
+  ["http://127.0.0.1", "http://localhost", "http://[::1]"].iter().any(|p| lower.starts_with(p))
+}
+
+/// Connect to a streamable-HTTP server. `bearer` is the token without the
+/// `Bearer ` prefix.
+///
+/// Loopback servers get a client that ignores the system proxy: a corporate
+/// proxy setting would otherwise route 127.0.0.1 out to the proxy, and the
+/// windows-commander instance refuses anything whose Host is not itself.
+/// Bounded, because a server that accepts the socket and never answers would
+/// otherwise leave the entry "connecting" for good.
+async fn serve_http(
+  uri: &str,
+  bearer: Option<String>,
+  headers: std::collections::HashMap<HeaderName, HeaderValue>,
+) -> Result<RunningService<RoleClient, ()>, String> {
+  let mut config = StreamableHttpClientTransportConfig::with_uri(uri.to_string()).custom_headers(headers);
+  if let Some(t) = bearer { config = config.auth_header(t); }
+  let transport = if is_loopback_url(uri) {
+    let client = reqwest::Client::builder()
+      .no_proxy()
+      .pool_max_idle_per_host(0)
+      .build()
+      .map_err(|e| format!("http client: {e}"))?;
+    StreamableHttpClientTransport::with_client(client, config)
+  } else {
+    StreamableHttpClientTransport::<reqwest::Client>::from_config(config)
+  };
+  match tokio::time::timeout(std::time::Duration::from_secs(10), ().serve(transport)).await {
+    Ok(Ok(svc)) => Ok(svc),
+    Ok(Err(e)) => Err(format!("serve failed: {e}")),
+    Err(_) => Err(format!("no answer from {uri} within 10s")),
+  }
+}
+
+async fn finish_connect(
+  app: &tauri::AppHandle,
+  clients: &AsyncMutex<ClientMap>,
+  server_id: &str,
+  service: RunningService<RoleClient, ()>,
+  mode: &str,
+) -> Result<String, String> {
+  if !publish_or_yield(clients, server_id, Arc::new(service)).await {
+    return Ok("already connected".into());
+  }
+  let _ = app.emit("mcp:connected", serde_json::json!({ "serverId": server_id, "mode": mode }));
+  Ok(format!("connected ({mode})"))
+}
+
+fn emit_error(app: &tauri::AppHandle, server_id: &str, msg: String) -> String {
+  let _ = app.emit("mcp:error", serde_json::json!({ "serverId": server_id, "message": msg }));
+  msg
+}
+
+#[allow(clippy::too_many_arguments)]
 pub async fn connect(
   app: &tauri::AppHandle,
   clients: &AsyncMutex<ClientMap>,
@@ -78,6 +158,9 @@ pub async fn connect(
   cwd: Option<String>,
   env: Option<serde_json::Value>,
   transport: Option<String>,
+  headers: Option<serde_json::Value>,
+  auth: Option<String>,
+  fallback_command: Option<String>,
 ) -> Result<String, String> {
   // fast path: already connected
   {
@@ -87,34 +170,68 @@ pub async fn connect(
     }
   }
 
+  let header_map = parse_header_map(headers.as_ref()).map_err(|e| emit_error(app, &server_id, e))?;
+
+  // windows-commander's shared instance: url and token come from its
+  // discovery record, read now, so the token is never stored in settings.
+  // When the instance cannot be reached the same entry falls back to running
+  // the exe over stdio, which bridges to the instance once there is one, or
+  // runs standalone.
+  if auth.as_deref() == Some(crate::screen_layer::WC_AUTH) {
+    // The app may be starting the instance right now (screen_layer::on_app_start).
+    crate::screen_layer::wait_for_startup(std::time::Duration::from_secs(12)).await;
+    let why_not_http = match crate::screen_layer::read_discovery() {
+      Ok(rec) if rec.running && !rec.token.is_empty() => {
+        match serve_http(&rec.url, Some(rec.token.clone()), header_map.clone()).await {
+          Ok(svc) => return finish_connect(app, clients, &server_id, svc, "shared instance").await,
+          Err(e) => e,
+        }
+      }
+      Ok(_) => "shared instance is not running".to_string(),
+      Err(e) => e,
+    };
+    log::warn!("mcp {server_id}: {why_not_http}; falling back to stdio");
+    let exe = fallback_command
+      .map(|s| s.trim().to_string())
+      .filter(|s| !s.is_empty())
+      .unwrap_or_else(crate::screen_layer::exe_path_from_settings);
+    let svc = spawn_stdio(&exe, &args, cwd.as_deref(), env.as_ref())
+      .await
+      .map_err(|e| emit_error(app, &server_id, format!("{e} (shared instance: {why_not_http})")))?;
+    return finish_connect(app, clients, &server_id, svc, "stdio fallback").await;
+  }
+
   let transport_kind = transport.unwrap_or_else(|| "stdio".to_string());
   if transport_kind == "http" {
     let uri = command.trim().to_string();
     if uri.is_empty() { return Err("HTTP transport requires a non-empty URI in 'command'".into()); }
-    let http_transport = StreamableHttpClientTransport::<reqwest::Client>::from_uri(uri);
-    let service = ().serve(http_transport).await.map_err(|e| {
-      let msg = format!("serve failed: {e}");
-      let _ = app.emit("mcp:error", serde_json::json!({ "serverId": server_id, "message": msg }));
-      msg
-    })?;
-    let service = Arc::new(service);
-    if !publish_or_yield(clients, &server_id, service).await {
-      return Ok("already connected".into());
-    }
-    let _ = app.emit("mcp:connected", serde_json::json!({ "serverId": server_id }));
-    return Ok("connected".into());
+    let svc = serve_http(&uri, None, header_map).await.map_err(|e| emit_error(app, &server_id, e))?;
+    return finish_connect(app, clients, &server_id, svc, "http").await;
   }
 
-  // Default: stdio child process
+  let svc = spawn_stdio(&command, &args, cwd.as_deref(), env.as_ref())
+    .await
+    .map_err(|e| emit_error(app, &server_id, e))?;
+  finish_connect(app, clients, &server_id, svc, "stdio").await
+}
+
+/// Start a stdio server and complete the MCP handshake with it.
+async fn spawn_stdio(
+  command: &str,
+  args: &[String],
+  cwd: Option<&str>,
+  env: Option<&serde_json::Value>,
+) -> Result<RunningService<RoleClient, ()>, String> {
+  let command = command.to_string();
   #[cfg(target_os = "windows")]
-  let program_to_run: String = resolve_windows_program(&command, cwd.as_deref()).unwrap_or_else(|| command.clone());
+  let program_to_run: String = resolve_windows_program(&command, cwd).unwrap_or_else(|| command.clone());
   #[cfg(not(target_os = "windows"))]
   let program_to_run: String = command.clone();
 
   let mut cmd = TokioCommand::new(&program_to_run);
   cmd.args(args.iter());
-  if let Some(dir) = cwd.as_ref() { cmd.current_dir(dir); }
-  if let Some(envv) = env.as_ref() {
+  if let Some(dir) = cwd.filter(|d| !d.trim().is_empty()) { cmd.current_dir(dir); }
+  if let Some(envv) = env {
     if let Some(obj) = envv.as_object() {
       for (k, v) in obj.iter() { if let Some(s) = v.as_str() { cmd.env(k, s); } }
     }
@@ -135,17 +252,7 @@ pub async fn connect(
   }
 
   let child_transport = TokioChildProcess::new(cmd).map_err(|e| format!("spawn failed: {e}"))?;
-  let service = ().serve(child_transport).await.map_err(|e| {
-    let msg = format!("serve failed: {e}");
-    let _ = app.emit("mcp:error", serde_json::json!({ "serverId": server_id, "message": msg }));
-    msg
-  })?;
-  let service = Arc::new(service);
-  if !publish_or_yield(clients, &server_id, service).await {
-    return Ok("already connected".into());
-  }
-  let _ = app.emit("mcp:connected", serde_json::json!({ "serverId": server_id }));
-  Ok("connected".into())
+  ().serve(child_transport).await.map_err(|e| format!("serve failed: {e}"))
 }
 
 pub async fn disconnect(app: &tauri::AppHandle, clients: &AsyncMutex<ClientMap>, server_id: String) -> Result<String, String> {
@@ -470,5 +577,41 @@ mod tool_image_tests {
     let (stripped, images) = split_tool_images(res.clone());
     assert!(images.is_empty());
     assert_eq!(stripped, res);
+  }
+}
+
+#[cfg(test)]
+mod header_tests {
+  use super::*;
+
+  #[test]
+  fn parses_headers_and_skips_blank_rows() {
+    let v = serde_json::json!({ "Authorization": "Bearer abc", "X-Api-Key": " k ", "": "ignored" });
+    let map = parse_header_map(Some(&v)).unwrap();
+    assert_eq!(map.len(), 2);
+    let auth = map.get(&HeaderName::from_static("authorization")).unwrap();
+    assert_eq!(auth.to_str().unwrap(), "Bearer abc");
+    assert!(auth.is_sensitive());
+    assert_eq!(map.get(&HeaderName::from_static("x-api-key")).unwrap().to_str().unwrap(), "k");
+    assert!(parse_header_map(None).unwrap().is_empty());
+    assert!(parse_header_map(Some(&serde_json::Value::Null)).unwrap().is_empty());
+  }
+
+  #[test]
+  fn rejects_bad_headers_without_echoing_values() {
+    let bad_name = serde_json::json!({ "bad name": "x" });
+    assert!(parse_header_map(Some(&bad_name)).unwrap_err().contains("bad name"));
+    let bad_value = serde_json::json!({ "X-Key": "line\nbreak-secret" });
+    let err = parse_header_map(Some(&bad_value)).unwrap_err();
+    assert!(err.contains("X-Key") && !err.contains("secret"));
+    assert!(parse_header_map(Some(&serde_json::json!({ "X": 1 }))).is_err());
+    assert!(parse_header_map(Some(&serde_json::json!(["x"]))).is_err());
+  }
+
+  #[test]
+  fn recognises_loopback_urls() {
+    assert!(is_loopback_url("http://127.0.0.1:47821/mcp"));
+    assert!(is_loopback_url("HTTP://localhost:8642"));
+    assert!(!is_loopback_url("https://api.example.com/mcp"));
   }
 }
