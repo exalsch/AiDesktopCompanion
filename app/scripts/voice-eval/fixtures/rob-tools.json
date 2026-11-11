@@ -1,0 +1,56 @@
+[
+ {
+  "name": "ask_claude",
+  "description": "Ask Claude Code a question or give it a task, and get the answer back. Claude Code is the user's own agent running on this machine with real tools: their Outlook mail and calendar, ClickUp tasks, Teams, their work knowledge base, a fast index of all their files, browser automation and their source repositories. Use this for anything about the user's own mail, calendar, tasks, files, projects, colleagues or code - you cannot answer those yourself. It keeps conversational memory per lane, so follow-up questions work naturally. It usually takes between ten and sixty seconds, so tell the user you are checking before you call it, and never call it twice for the same question.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "question": {
+     "type": "string",
+     "description": "The question or instruction, written as a complete sentence. Include any context from the conversation that Claude Code would need, because it cannot hear the call."
+    },
+    "lane": {
+     "type": "string",
+     "enum": [
+      "rob",
+      "cotire",
+      "desk",
+      "companion"
+     ],
+     "description": "Which working context to ask in. Omit it for the default, which covers mail, calendar, tasks, files and general work - that is the right choice for almost every question. Name a project only when the question is clearly about that project's code. The only valid values are: rob, cotire, desk, companion."
+    },
+    "new_thread": {
+     "type": "boolean",
+     "description": "Set true to start a fresh conversation instead of continuing the previous one. Use when changing subject completely."
+    }
+   },
+   "required": [
+    "question"
+   ]
+  }
+ },
+ {
+  "name": "claude_result",
+  "description": "Collect the answer for a ticket that ask_claude handed back because it was still working. Wait a few seconds before calling, and if it is still running, tell the user it is still going rather than calling repeatedly in a tight loop.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "ticket": {
+     "type": "string",
+     "description": "The ticket id from ask_claude."
+    }
+   },
+   "required": [
+    "ticket"
+   ]
+  }
+ },
+ {
+  "name": "claude_status",
+  "description": "List the available lanes and anything Claude Code is currently working on. Use when the user asks what Claude is doing, or when you need the lane names.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {}
+  }
+ }
+]
