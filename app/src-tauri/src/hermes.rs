@@ -199,7 +199,8 @@ impl SseDecoder {
 #[serde(rename_all = "camelCase")]
 pub struct RunOutcome {
   /// Who did the work, as the voice session names it: "Hermes" or
-  /// "Claude Code" (background_ask.rs delivers through here too).
+  /// the name of a voice tool whose call went to the background
+  /// (background_tools.rs delivers through here too).
   pub agent: String,
   pub run_id: String,
   pub task: String,

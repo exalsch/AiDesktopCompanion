@@ -265,7 +265,7 @@ mod webview_health;
 mod screen_layer;
 mod hermes;
 mod voice_tools;
-mod background_ask;
+mod background_tools;
 
 use rmcp::{
   service::{RoleClient, RunningService},
@@ -1096,16 +1096,9 @@ async fn realtime_build_tools() -> Result<serde_json::Value, String> {
   // user chose "all" (voice_tools.rs). Chat is not affected.
   let profile = voice_tools::profile_from_settings();
   let mut flat = voice_tools::filter_tools(flat, &screen_layer::wc_server_id(), profile);
-  // Claude Code answers by itself in a call (background_ask.rs), so the model
-  // gets no ticket and no claude_result to collect one with.
-  flat.retain(|t| !t.get("name").and_then(|n| n.as_str()).map(|n| n.ends_with(&format!("__{}", background_ask::RESULT_TOOL))).unwrap_or(false));
-  for t in flat.iter_mut() {
-    let is_ask = t.get("name").and_then(|n| n.as_str()).map(|n| n.ends_with(&format!("__{}", background_ask::ASK_TOOL))).unwrap_or(false);
-    if is_ask {
-      let d = t.get("description").and_then(|x| x.as_str()).unwrap_or("").to_string();
-      t["description"] = serde_json::json!(background_ask::voice_description(&d));
-    }
-  }
+  // Slow calls go to the background and collect their own tickets
+  // (background_tools.rs), so the model gets no ticket collector to misuse.
+  flat.retain(|t| !t.get("name").and_then(|n| n.as_str()).map(|n| n.ends_with(&format!("__{}", background_tools::TICKET_RESULT_TOOL))).unwrap_or(false));
   // Not an MCP tool: Hermes runs are started and followed by hermes.rs.
   if hermes::config_from_settings_or_env().enabled {
     flat.push(hermes::tool_definition());
@@ -1150,19 +1143,29 @@ async fn realtime_call_tool(app: tauri::AppHandle, name: String, args_json: Opti
   let Some((server_id, tool_name)) = mcp::parse_mcp_fn_call_name(&name) else {
     return Ok(RealtimeToolOutput::text(serde_json::json!({ "error": format!("unknown tool: {name}") })));
   };
-  if background_ask::handles(&tool_name) {
-    return Ok(RealtimeToolOutput::text(background_ask::start(&app, &MCP_CLIENTS, server_id, args).await));
+  if tool_name == background_tools::TICKET_RESULT_TOOL {
+    return Ok(RealtimeToolOutput::text(serde_json::json!({ "error": "Not needed in a voice call: a result that takes longer arrives in the conversation by itself." })));
   }
-  if tool_name == background_ask::RESULT_TOOL {
-    return Ok(RealtimeToolOutput::text(serde_json::json!({ "error": "Not needed in a voice call: Claude Code's answer arrives in the conversation by itself as a [Claude Code] message." })));
-  }
-  match mcp::call_tool(&MCP_CLIENTS, &server_id, &tool_name, args).await {
-    Ok(mut res) => {
+  // The call runs as a task; past BACKGROUND_AFTER it carries on in the
+  // background and its result is delivered when it lands (background_tools.rs).
+  let work = {
+    let (server_id, tool_name, args, is_pointer) = (server_id.clone(), tool_name.clone(), args.clone(), server_id == wc && tool_name == "get_pointer_context");
+    async move {
+      let mut res = mcp::call_tool(&MCP_CLIENTS, &server_id, &tool_name, args).await?;
       // A position sentence, and the real element for WebView2 apps whose
       // hit test stops at the window (voice_tools.rs).
-      if server_id == wc && tool_name == "get_pointer_context" {
+      if is_pointer {
         voice_tools::enrich_pointer_result(&MCP_CLIENTS, &server_id, &mut res).await;
       }
+      Ok(res)
+    }
+  };
+  let done = match background_tools::call_or_background(&app, &MCP_CLIENTS, server_id.clone(), tool_name.clone(), &args, work).await {
+    background_tools::Outcome::Done(r) => r,
+    background_tools::Outcome::Background(v) => return Ok(RealtimeToolOutput::text(v)),
+  };
+  match done {
+    Ok(res) => {
       let (res, images) = mcp::split_tool_images(res);
       Ok(RealtimeToolOutput {
         output: serde_json::json!({ "serverId": server_id, "tool": tool_name, "result": res }).to_string(),
