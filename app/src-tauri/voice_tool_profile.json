@@ -1,0 +1,15 @@
+{
+  "comment": "Tools a voice session gets from windows-commander when assistant_realtime.voice_tool_profile is \"screen\" (the default). Read by voice_tools.rs (include_str!) and by scripts/voice-eval. Chosen with the eval; see specs/ScreenPresence_design.md, section 5.",
+  "windows_commander_screen": [
+    "get_current_context",
+    "get_pointer_context",
+    "get_focused_ui_element",
+    "find_ui_element",
+    "ocr_screen",
+    "capture_screen",
+    "point_at",
+    "mark_area",
+    "highlight_element",
+    "clear_annotations"
+  ]
+}

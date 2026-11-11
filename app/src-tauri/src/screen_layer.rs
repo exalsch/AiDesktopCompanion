@@ -40,7 +40,12 @@ const EXE_NAME: &str = "WindowsCommander.McpServer.exe";
 
 /// Hard cap on the context item. It goes into every voice turn, so it is
 /// billed on every turn; a few lines are enough to say what the user looks at.
-pub const CONTEXT_MAX_CHARS: usize = 600;
+pub const CONTEXT_MAX_CHARS: usize = 700;
+
+/// First line of every context item. Gemini Live has no mid-session system
+/// role, so the item arrives as user-role text; this line is what keeps the
+/// model from taking it for speech. voiceInstructions.ts names the prefix.
+pub const CONTEXT_HEADER: &str = "[Screen context, written by the app, not said by the user. It can be a few seconds old.]";
 
 // ---------------------------------------------------------------------------
 // Discovery record
@@ -495,11 +500,11 @@ fn describe_window(entry: &serde_json::Value, title_max: usize) -> String {
   }
 }
 
-fn describe_element(el: &serde_json::Value) -> Option<String> {
+fn describe_element(el: &serde_json::Value, name_max: usize) -> Option<String> {
   let ctype = str_field(el, "controlType").unwrap_or("element");
   let name = str_field(el, "name");
   let mut out = match name {
-    Some(n) => format!("{ctype} \"{}\"", clip(n, 60)),
+    Some(n) => format!("{ctype} \"{}\"", clip(n, name_max)),
     None => ctype.to_string(),
   };
   if name.is_none() && str_field(el, "controlType").is_none() { return None; }
@@ -517,7 +522,7 @@ fn describe_element(el: &serde_json::Value) -> Option<String> {
 /// window handles are left out on purpose - names say what the user looks at,
 /// values are what they typed.
 pub fn format_context_item(current: &serde_json::Value, pointer: Option<&serde_json::Value>) -> String {
-  let mut head: Vec<String> = vec!["[Screen context: what the user has in front of them right now. Not said by the user; do not read it out.]".into()];
+  let mut head: Vec<String> = vec![CONTEXT_HEADER.into()];
   let now = current.get("current").unwrap_or(&serde_json::Value::Null);
   let now_seq = now.get("sequence").and_then(|s| s.as_i64());
   if now.is_object() {
@@ -525,22 +530,27 @@ pub fn format_context_item(current: &serde_json::Value, pointer: Option<&serde_j
     let blocked = now.get("blocked").and_then(|b| b.as_bool()) == Some(true);
     if !blocked {
       if let Some(url) = str_field(now, "url") { head.push(format!("URL: {}", clip(url, 120))); }
-      if let Some(fe) = now.get("focusedElement").and_then(describe_element) { head.push(format!("Focused: {fe}")); }
+      if let Some(fe) = now.get("focusedElement").and_then(|e| describe_element(e, 60)) { head.push(format!("Focused: {fe}")); }
     }
   }
   if let Some(p) = pointer {
     let window = p.get("window");
     let blocked = p.get("blocked").and_then(|b| b.as_bool()) == Some(true);
+    // Where, as a sentence (voice models guess from raw pixels), then what.
+    // Event and item names run long ("Steering Committee, 14:00 to 15:00,
+    // Wednesday, ..."), so the element under the cursor gets more room than
+    // the focused one.
+    let at = crate::voice_tools::describe_position(p).map(|s| format!("{s} ")).unwrap_or_default();
     let line = if blocked {
       let process = window.and_then(|w| str_field(w, "processName")).unwrap_or("an app");
-      Some(format!("Under the cursor: {process} (private window, details withheld)"))
-    } else if let Some(el) = p.get("element").and_then(describe_element) {
+      Some(format!("Cursor: {at}Over {process} (private window, details withheld)"))
+    } else if let Some(el) = p.get("element").and_then(|e| describe_element(e, 120)) {
       match window.and_then(|w| str_field(w, "processName")) {
-        Some(proc_) => Some(format!("Under the cursor: {el} in {proc_}")),
-        None => Some(format!("Under the cursor: {el}")),
+        Some(proc_) => Some(format!("Cursor: {at}Over {el} in {proc_}")),
+        None => Some(format!("Cursor: {at}Over {el}")),
       }
     } else {
-      window.map(|w| format!("Under the cursor: window {}", describe_window(w, 60)))
+      window.map(|w| format!("Cursor: {at}Over window {}", describe_window(w, 60)))
     };
     if let Some(l) = line { head.push(l); }
   }
@@ -737,7 +747,8 @@ mod tests {
     assert!(text.contains("Foreground: msedge \"Pull request #41 - GitHub\""), "{text}");
     assert!(text.contains("URL: https://github.com/exalsch/AiDesktopCompanion/pull/41"));
     assert!(text.contains("Focused: Button \"Merge pull request\""));
-    assert!(text.contains("Under the cursor: TabItem \"Files changed\" [element_ref e:4f2a] in msedge"));
+    assert!(text.starts_with(CONTEXT_HEADER), "{text}");
+    assert!(text.contains("Cursor: Over TabItem \"Files changed\" [element_ref e:4f2a] in msedge"), "{text}");
     assert!(text.contains("olk \"FW: CoTiRe - status update\" (4s)"));
     assert!(text.contains("KeePassXC (private window, details withheld)"));
     // The current entry is not repeated in the history; values never appear.
@@ -752,7 +763,7 @@ mod tests {
     let pointer = json!({ "x": 1, "y": 1, "blocked": true, "window": { "processName": "KeePassXC" } });
     let text = format_context_item(&current, Some(&pointer));
     assert!(text.contains("Foreground: KeePassXC (private window, details withheld)"));
-    assert!(text.contains("Under the cursor: KeePassXC (private window"));
+    assert!(text.contains("Cursor: Over KeePassXC (private window"));
     assert!(!text.contains("Before that"));
   }
 

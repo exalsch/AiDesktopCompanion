@@ -264,6 +264,7 @@ mod media;
 mod webview_health;
 mod screen_layer;
 mod hermes;
+mod voice_tools;
 
 use rmcp::{
   service::{RoleClient, RunningService},
@@ -1090,11 +1091,16 @@ async fn realtime_build_tools() -> Result<serde_json::Value, String> {
       }))
     })
     .collect();
-  let mut flat = flat;
+  // The voice profile: only the screen tools of windows-commander, unless the
+  // user chose "all" (voice_tools.rs). Chat is not affected.
+  let profile = voice_tools::profile_from_settings();
+  let mut flat = voice_tools::filter_tools(flat, &screen_layer::wc_server_id(), profile);
   // Not an MCP tool: Hermes runs are started and followed by hermes.rs.
   if hermes::config_from_settings_or_env().enabled {
     flat.push(hermes::tool_definition());
   }
+  let names: Vec<&str> = flat.iter().filter_map(|t| t.get("name").and_then(|n| n.as_str())).collect();
+  log::info!("voice session tools ({:?} profile, {}): {}", profile, names.len(), names.join(", "));
   Ok(serde_json::Value::Array(flat))
 }
 
@@ -1126,11 +1132,20 @@ async fn realtime_call_tool(app: tauri::AppHandle, name: String, args_json: Opti
     let ctx = screen_layer::current_context_text(&MCP_CLIENTS).await;
     return Ok(RealtimeToolOutput::text(hermes::delegate(&app, task, speak, ctx).await));
   }
+  let wc = screen_layer::wc_server_id();
+  if !voice_tools::allowed(&name, &wc, voice_tools::profile_from_settings()) {
+    return Ok(RealtimeToolOutput::text(serde_json::json!({ "error": format!("{name} is not available in voice sessions") })));
+  }
   let Some((server_id, tool_name)) = mcp::parse_mcp_fn_call_name(&name) else {
     return Ok(RealtimeToolOutput::text(serde_json::json!({ "error": format!("unknown tool: {name}") })));
   };
   match mcp::call_tool(&MCP_CLIENTS, &server_id, &tool_name, args).await {
-    Ok(res) => {
+    Ok(mut res) => {
+      // A position sentence, and the real element for WebView2 apps whose
+      // hit test stops at the window (voice_tools.rs).
+      if server_id == wc && tool_name == "get_pointer_context" {
+        voice_tools::enrich_pointer_result(&MCP_CLIENTS, &server_id, &mut res).await;
+      }
       let (res, images) = mcp::split_tool_images(res);
       Ok(RealtimeToolOutput {
         output: serde_json::json!({ "serverId": server_id, "tool": tool_name, "result": res }).to_string(),

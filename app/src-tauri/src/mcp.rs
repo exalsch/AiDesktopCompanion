@@ -385,7 +385,7 @@ pub fn sanitize_fn_name(s: &str) -> String {
 
 /// Sanitize a single component (server ID or tool name) by collapsing consecutive underscores.
 /// Use this on individual parts BEFORE joining with the `__` separator.
-fn sanitize_fn_component(s: &str) -> String {
+pub(crate) fn sanitize_fn_component(s: &str) -> String {
   let raw = sanitize_fn_name(s);
   let mut collapsed = String::with_capacity(raw.len());
   let mut prev_underscore = false;
@@ -399,6 +399,12 @@ fn sanitize_fn_component(s: &str) -> String {
     }
   }
   collapsed
+}
+
+/// The function name a model sees for `tool` on `server`, as
+/// `build_openai_tools_from_mcp` builds it.
+pub fn mangled_tool_name(server_id: &str, tool: &str) -> String {
+  format!("mcp__{}__{}", sanitize_fn_component(server_id), sanitize_fn_component(tool))
 }
 
 pub fn parse_mcp_fn_call_name(name: &str) -> Option<(String, String)> {
