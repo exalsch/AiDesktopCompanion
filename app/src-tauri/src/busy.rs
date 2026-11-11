@@ -83,8 +83,13 @@ fn publish(app: &tauri::AppHandle, state: &BusyState) {
 
 /// Place the pill in the bottom-right corner of the work area of the monitor
 /// under the cursor, so it follows the user across a multi-monitor desktop.
+///
+/// While the Assistant call pill is showing, that corner is the call pill's:
+/// this one goes right above it, right-aligned with it and on its monitor.
+/// A Claude Code question asked in a call shows here while the call pill is
+/// up, and used to land right behind it.
 #[cfg(target_os = "windows")]
-fn position_window(win: &tauri::WebviewWindow) {
+fn position_window(app: &tauri::AppHandle, win: &tauri::WebviewWindow) {
   use windows::Win32::Foundation::POINT;
   use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
@@ -92,6 +97,18 @@ fn position_window(win: &tauri::WebviewWindow) {
     Ok(s) => s,
     Err(_) => return,
   };
+  const GAP: i32 = 8;
+  if let Some(pill) = app
+    .get_webview_window(crate::assistant_pill::PILL_WINDOW_LABEL)
+    .filter(|w| w.is_visible().unwrap_or(false))
+  {
+    if let (Ok(pos), Ok(psize)) = (pill.outer_position(), pill.outer_size()) {
+      let x = pos.x + psize.width as i32 - size.width as i32;
+      let y = pos.y - size.height as i32 - GAP;
+      let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+      return;
+    }
+  }
   unsafe {
     let mut pt = POINT { x: 0, y: 0 };
     if GetCursorPos(&mut pt).is_err() {
@@ -106,7 +123,14 @@ fn position_window(win: &tauri::WebviewWindow) {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn position_window(_win: &tauri::WebviewWindow) {}
+fn position_window(_app: &tauri::AppHandle, _win: &tauri::WebviewWindow) {}
+
+/// Re-place a showing indicator after the call pill appeared or went away.
+pub fn reposition(app: &tauri::AppHandle) {
+  if let Some(win) = app.get_webview_window(BUSY_WINDOW_LABEL).filter(|w| w.is_visible().unwrap_or(false)) {
+    position_window(app, &win);
+  }
+}
 
 /// Apply `WS_EX_NOACTIVATE` so showing the pill never steals focus from the
 /// application the user is typing in — the whole point of this window is to be
@@ -162,7 +186,7 @@ fn start_with(app: &tauri::AppHandle, label: &str, cancellable: bool) {
   }
   if let Some(win) = app.get_webview_window(BUSY_WINDOW_LABEL) {
     make_non_activating(&win);
-    position_window(&win);
+    position_window(app, &win);
     let _ = win.show();
     let _ = win.set_always_on_top(true);
   }
@@ -208,7 +232,7 @@ pub fn finish(app: &tauri::AppHandle, result: Result<(), String>) {
       }
       if let Some(win) = app.get_webview_window(BUSY_WINDOW_LABEL) {
         make_non_activating(&win);
-        position_window(&win);
+        position_window(app, &win);
         let _ = win.show();
         let _ = win.set_always_on_top(true);
       }
