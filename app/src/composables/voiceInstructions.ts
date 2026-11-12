@@ -37,8 +37,15 @@ function nameOf(toolNames: string[], tool: string): string {
 
 // Tool results and injected messages are English text; without this line the
 // Live models drifted into another language after them (calls 19 and 20, and
-// the eval's multi_step run, 12.11.2026).
-const LANGUAGE_RULE = "Language: reply in the language of the user's last spoken message, also right after a tool result or a message in another language."
+// the eval's multi_step run, 12.11.2026). Following "the last message" was
+// not enough: Gemini's speech recognition heard a short English "what?" as
+// "¿Qué?" and the model answered in Spanish (call 25, 12.11.2026).
+const LANGUAGE_RULE = [
+  'Language',
+  '- Speak the language the user has spoken in most of this call. Keep it after a tool result or a message in another language.',
+  '- A very short message that looks like another language ("¿Qué?", "Que?", "Hä?") was almost always misheard. Answer in the language of the call and repeat or rephrase your last answer.',
+  '- Switch only when the user says a full sentence in another language.',
+].join('\n')
 
 const HONESTY_RULES = [
   'Honesty',
@@ -119,7 +126,9 @@ function actionRules(toolNames: string[]): string {
   return [
     'Doing things',
     ...lines,
-    '- Before anything that sends, deletes, submits, pays or posts: say in one sentence what will happen, ask whether to go ahead, and wait for a clear yes from the user. Only then do it.',
+    '- "Draft", "write", "prepare" or "type" a message means: put the text in and leave it unsent. Send only when the user says "send".' +
+      (has('desktop_agent') ? ` When you hand a draft to ${n('desktop_agent')}, end the task with "Do not send it."` : ''),
+    '- Before anything that sends, deletes, submits, pays or posts: say in one sentence what will happen, ask whether to go ahead, and wait for a clear yes from the user. Only then do it. Ask about the step that will really happen: do not ask "type it in?" and then send.',
     '- Say it is done only when the tool result says so. If it failed, say that.',
   ].join('\n')
 }
@@ -164,6 +173,7 @@ function examples(toolNames: string[]): string {
   if (has('invoke_ui_element') && has('get_pointer_context')) {
     ex.push(`User: "Open this one." -> call ${n('get_pointer_context')} -> call ${n('invoke_ui_element')} with its element_ref -> result ok -> "Done, it is open."`)
   }
+  if (has('desktop_agent')) ex.push(`User: "Draft the reply to Anna in Teams." -> call ${n('desktop_agent')} with "Open the Teams chat with Anna and type this reply into the message box: ... Do not send it." -> "The draft is in the chat with Anna. Say send when it is right."`)
   if (has('desktop_agent')) ex.push(`User: "Move my two o'clock to Friday." -> "That changes a meeting for others: move it to Friday at two?" -> User: "Yes." -> call ${n('desktop_agent')} with the full task`)
   ex.push('User: "Dim the lights." -> "I cannot do that. I have no tool for the lights."')
   return ['Examples', ...ex.map((e) => `- ${e}`)].join('\n')

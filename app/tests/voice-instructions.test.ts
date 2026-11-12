@@ -49,6 +49,23 @@ test('the reply language comes from what the user said', () => {
   assert.match(replyLanguageRule('German'), /Antworte auf Deutsch/)
 })
 
+test('a short message in another language counts as misheard', () => {
+  // Call 25: "what?" heard as "¿Qué?", answered in Spanish.
+  const note = voiceToolNote(['mcp__windows-commander__get_pointer_context'])
+  assert.match(note, /most of this call/)
+  assert.match(note, /misheard/)
+  assert.match(note, /¿Qué\?/)
+})
+
+test('a draft stays unsent, also through the desktop agent', () => {
+  // Call 25: "draft the message in Teams" ended with the message sent.
+  const note = voiceToolNote(['mcp__windows-commander__type_text', 'desktop_agent'])
+  assert.match(note, /leave it unsent/)
+  assert.match(note, /end the task with "Do not send it\."/)
+  assert.match(note, /Ask about the step that will really happen/)
+  assert.doesNotMatch(voiceToolNote(['mcp__windows-commander__type_text']), /end the task with/)
+})
+
 test('trace line: a background job shows as started', () => {
   assert.equal(toolTraceLine('mcp__Rob__ask_claude', '{"question":"Prepare?"}', '{"status":"started","job_id":"cc-1","note":"..."}'),
     'ask_claude (Prepare?) -> started in the background')

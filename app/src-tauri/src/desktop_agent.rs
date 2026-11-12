@@ -69,7 +69,10 @@ pub fn system_prompt(screen_context: Option<&str>) -> String {
      Carry the task out with your tools. Prefer UI Automation: find the element (find_ui_element, read_ui_tree, \
      get_pointer_context), then invoke_ui_element or set_ui_value with its element_ref; use mouse coordinates only when \
      no element is found. Check the result of each step before the next one. \
-     Before anything that sends, deletes, submits, pays or posts, ask with request_user_confirmation and stop if it is not approved. \
+     Send, post or submit only when the task says so in those words; a task to draft, write, prepare or type a message \
+     ends with the text in the box, unsent. \
+     Before anything that sends, deletes, submits, pays or posts, ask with request_user_confirmation and continue only \
+     when its decision is \"approved\"; on \"denied\" or \"timeout\" stop and say so. \
      Do not open or change anything the task does not need. \
      If you cannot find what you need after three or four tries, stop and say what you found instead. \
      End with one or two plain sentences that say what you did, or what stopped you. No markdown, no lists.",
@@ -138,6 +141,9 @@ mod tests {
   fn prompt_asks_before_outward_actions_and_carries_context() {
     let p = system_prompt(Some("Foreground: olk \"Calendar\""));
     assert!(p.contains("request_user_confirmation"));
+    // A draft stays unsent (call 25, 12.11.2026: "draft it in Teams" was sent).
+    assert!(p.contains("unsent"));
+    assert!(p.contains("\"approved\""));
     assert!(p.contains("Foreground: olk"));
     assert!(!system_prompt(None).contains("had on screen"));
   }
