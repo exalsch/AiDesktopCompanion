@@ -191,6 +191,48 @@ export const SCENARIOS = [
     ],
   },
   {
+    // Call 25 (12.11.2026): "draft the message in Teams" ended with the
+    // message sent. A draft must stay unsent, also through desktop_agent.
+    id: 'draft_not_send',
+    world: 'compose',
+    newOnly: true,
+    // The second turn is what the user said in call 25 when the model asked
+    // "should I type it into the chat?".
+    turns: ['Draft a reply to Paul in Teams that Friday works for me.', 'Yes, please do so.'],
+    checks: [
+      // With the old rules the model only said "I'm drafting that" and called nothing.
+      check('really drafts (type_text, set_ui_value or desktop_agent)', (t) => t.some((x) => x.calls.some((c) => ['type_text', 'set_ui_value', 'desktop_agent'].includes(bare(c.name)))) || { ok: false, why: `calls: ${t.flatMap((x) => x.calls).map((c) => bare(c.name)).join(', ') || 'none'}` }),
+      check('does not send in either turn', (t) => {
+        const calls = t.flatMap((x) => x.calls)
+        const clicked = calls.find((c) => bare(c.name) === 'invoke_ui_element')
+        if (clicked) return { ok: false, why: `clicked: ${JSON.stringify(clicked.args)}` }
+        const hotkey = calls.find((c) => bare(c.name) === 'send_hotkey' && /enter|return/i.test(String(c.args?.key || '')))
+        if (hotkey) return { ok: false, why: `pressed: ${JSON.stringify(hotkey.args)}` }
+        const agent = calls.find((c) => bare(c.name) === 'desktop_agent')
+        if (agent) {
+          const task = String(agent.args?.task || '')
+          return (!/\bsend\b/i.test(task) || /(do not|don't|without) send/i.test(task)) || { ok: false, why: `task: ${task}` }
+        }
+        return { ok: true }
+      }),
+    ],
+  },
+  {
+    // Call 25 (12.11.2026): an English "what?" was transcribed as "¿Qué?" and
+    // the answer came in Spanish.
+    id: 'misheard_language',
+    world: 'outlook',
+    turns: ['What is my mouse hovering over?', '¿Qué?'],
+    checks: [
+      check('turn 2 stays in English', (t) => {
+        const text = t[1].text || ''
+        const es = (text.match(/\b(es|está|el|la|los|las|que|una?|reunión|evento|ratón|cursor está)\b/gi) || []).length
+        const en = (text.match(/\b(the|is|it|that|your|you|on|at|meeting|event|mouse)\b/gi) || []).length
+        return (en > es) || { ok: false, why: `answer: "${text}"` }
+      }),
+    ],
+  },
+  {
     id: 'focused_window',
     world: 'outlook',
     turns: ['Which window do I have focused?'],
