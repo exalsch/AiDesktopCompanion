@@ -427,7 +427,7 @@ all ~70 tools:
   outward actions; done only when the result says so. A language line now
   opens the rules: reply in the language of the user's last spoken message,
   also after a tool result (the eval's `multi_step` answered an English
-  request in German before it).
+  request in German before it). Changed after call 25, see below.
 - **Eval** (Gemini, 2 runs, 12.11.2026): new 27/30 then, after naming the
   subject in the "started" sentence and fixing a false positive, the affected
   scenarios 9/9. New scenarios: `click_this` (pointer then invoke with the
@@ -441,9 +441,32 @@ all ~70 tools:
   took 2 rounds and was right. An impossible task (no calendar window open)
   ran all 12 rounds without an answer on three models before the stop rule;
   with it, the agent stopped after 3 to 4 rounds and said what blocked it.
-- **Not tested live:** a real multi-step run that changes something (it would
-  act on the user's desktop), and whether `invoke_ui_element` accepts the
-  `element_ref`s of the Outlook WebView2 content window.
+- **First live run (call 25, 12.11.2026):** the user asked to "draft the
+  message in Teams". The voice model asked "should I type it into the chat?",
+  the user said yes, and the task it handed over said to send. The agent took
+  10 steps (find_window, focus_window, find_ui_element "Type a message",
+  read_ui_tree, ocr_screen, a click into the box, type_text), asked with
+  `request_user_confirmation` ("Send the summary ... to Frantisek ...?") and
+  pressed Enter 5 s later: the message was sent. windows-commander's
+  `get_operation_history` records the call but not the decision, so the
+  audit log cannot show whether the dialog was approved. Fixes: a "Doing
+  things" rule that draft / write / prepare / type means leave it unsent, and
+  that a draft handed to `desktop_agent` ends with "Do not send it."; ask about
+  the step that will really happen; the agent prompt sends only when the task
+  says so and continues after the dialog only on `"approved"`. New eval
+  scenario `draft_not_send` (the two turns of call 25): with the old rules the
+  model called no tool at all and only said "I'm drafting that" (fails the new
+  "really drafts" check); with the new rules every run hands the agent a task
+  ending in "Do not send it."
+- **Language (same call):** a short English "what?" was transcribed as
+  "¿Qué?" and the answer came in Spanish, because the rule said "the language
+  of the user's last spoken message". The language block now says: the
+  language spoken in most of the call; a very short message in another
+  language is misheard (answer in the call's language and repeat); switch only
+  on a full sentence. Scenario `misheard_language`: old rules 2/3, new 3/3.
+  Full Gemini eval after both changes: 34/34 (2 runs).
+- **Not tested live:** whether `invoke_ui_element` accepts the `element_ref`s
+  of the Outlook WebView2 content window.
 
 ## Privacy
 
