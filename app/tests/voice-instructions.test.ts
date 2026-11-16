@@ -139,6 +139,6 @@ test('trace line: arguments, errors and plain answers', () => {
   const failed = JSON.stringify({ serverId: 'w', tool: 'point_at', result: { content: [{ type: 'text', text: 'Text not found' }], isError: true } })
   assert.equal(toolTraceLine('mcp__w__point_at', '{"text":"Nope"}', failed), 'point_at (Nope) -> error: Text not found')
   assert.equal(toolTraceLine('consult_supervisor', '{"question":"why"}', '{"answer":"Because."}'), 'consult_supervisor (why) -> Because.')
-  assert.equal(bareToolName('delegate_to_hermes'), 'delegate_to_hermes')
+  assert.equal(bareToolName('desktop_agent'), 'desktop_agent')
   assert.ok(toolTraceLine('x', '', 'not json at all').endsWith('not json at all'))
 })

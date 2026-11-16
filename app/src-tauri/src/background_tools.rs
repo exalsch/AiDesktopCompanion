@@ -9,9 +9,9 @@
 // So every MCP tool call of a voice session runs as a task. If it finishes
 // within BACKGROUND_AFTER the result goes back as usual, in the same turn. If
 // not, the model gets `{status: "started", ...}` at once and the call carries
-// on; the result is delivered through hermes::deliver when it lands, the same
-// way as a Hermes result: injected into a live call and spoken, else a
-// desktop notification and kept for the next call. Nothing here knows any
+// on; the result is delivered through background_results::deliver when it
+// lands: injected into a live call and spoken, else a desktop notification
+// and kept for the next call. Nothing here knows any
 // particular server.
 //
 // One adapter is specific: a reply that says "still working ... ticket X"
@@ -51,10 +51,10 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 pub fn request_summary(args: &serde_json::Value) -> String {
   for key in ["question", "task", "query", "prompt", "text", "message"] {
     if let Some(s) = args.get(key).and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()) {
-      return crate::hermes::clip(s, 300);
+      return crate::background_results::clip(s, 300);
     }
   }
-  crate::hermes::clip(&args.to_string(), 300)
+  crate::background_results::clip(&args.to_string(), 300)
 }
 
 /// What a tool said, as text: the joined text blocks of an MCP result.
@@ -111,7 +111,7 @@ pub fn busy_output(tool: &str, request: &str, since: Instant) -> serde_json::Val
   serde_json::json!({
     "error": format!(
       "{tool} is still working on an earlier request ({} s so far): \"{}\". Its result will arrive in this conversation as a [{tool}] message. Try again after that.",
-      since.elapsed().as_secs(), crate::hermes::clip(request, 120)
+      since.elapsed().as_secs(), crate::background_results::clip(request, 120)
     )
   })
 }
@@ -156,7 +156,7 @@ where
   let app2 = app.clone();
   let (tool2, job2) = (tool.clone(), job_id.clone());
   tauri::async_runtime::spawn(async move {
-    crate::busy::start(&app2, &format!("{tool2}: {}", crate::hermes::clip(&request, 60)));
+    crate::busy::start(&app2, &format!("{tool2}: {}", crate::background_results::clip(&request, 60)));
     let first = handle.await.unwrap_or_else(|e| Err(format!("tool task failed: {e}")));
     let (status, output, error) = finish(clients, &server_id, first).await;
     if let Ok(mut list) = IN_FLIGHT.lock() {
@@ -166,9 +166,9 @@ where
     if status == "completed" {
       crate::busy::finish(&app2, Ok(()));
     } else {
-      crate::busy::finish(&app2, Err(format!("{tool2}: {}", crate::hermes::clip(&error, 120))));
+      crate::busy::finish(&app2, Err(format!("{tool2}: {}", crate::background_results::clip(&error, 120))));
     }
-    crate::hermes::deliver(&app2, crate::hermes::RunOutcome {
+    crate::background_results::deliver(&app2, crate::background_results::BackgroundResult {
       agent: tool2, run_id: job2, task: request, status, output, error, speak_result: true,
     });
   });

@@ -2,19 +2,17 @@ import { invoke } from '@tauri-apps/api/core'
 import { guessLanguage, replyLanguageRule } from './voiceInstructions'
 
 // Screen presence for the voice session: what windows-commander says the user
-// is looking at, and Hermes results coming back. Shared by the OpenAI Realtime and Gemini Live
-// clients so both say the same thing.
-
-// The instructions about tools and the screen live in voiceInstructions.ts.
-export { HERMES_TOOL_NAME } from './voiceInstructions'
+// is looking at, and results of voice tool calls that finished in the
+// background. Shared by the OpenAI Realtime and Gemini Live clients so both
+// say the same thing. The instructions about tools and the screen live in
+// voiceInstructions.ts.
 
 /**
- * A finished background job, as hermes.rs emits it: a Hermes run, or a voice
- * tool call that took longer and went to the background (background_tools.rs).
- * `agent` names which.
+ * A voice tool call that took longer, went to the background
+ * (background_tools.rs) and has now finished, as background_results.rs emits
+ * it. `agent` is the tool's name.
  */
-export interface HermesOutcome {
-  /** "Hermes" or the tool's name; missing from results older than the field. */
+export interface BackgroundResult {
   agent?: string
   runId: string
   task: string
@@ -38,27 +36,26 @@ export async function fetchTurnContext(reset: boolean): Promise<string | null> {
   }
 }
 
-/** Who did the work: "Hermes" for older results without the field. */
-export function agentOf(o: HermesOutcome): string {
-  return (o.agent && o.agent.trim()) || 'Hermes'
+/** Which tool did the work. */
+export function agentOf(o: BackgroundResult): string {
+  return (o.agent && o.agent.trim()) || 'background job'
 }
 
 /** What the model is told when a background job ends. */
-export function hermesResultText(o: HermesOutcome): string {
+export function backgroundResultText(o: BackgroundResult): string {
   const agent = agentOf(o)
-  const what = agent === 'Hermes' ? 'The task you handed over' : `The ${agent} call you started earlier`
-  const label = agent === 'Hermes' ? 'Task' : 'Request'
+  const what = `The ${agent} call you started earlier`
   if (o.status === 'completed') {
-    return `[${agent}] ${what} has finished.\n${label}: ${o.task}\nResult: ${o.output || '(no text returned)'}`
+    return `[${agent}] ${what} has finished.\nRequest: ${o.task}\nResult: ${o.output || '(no text returned)'}`
   }
-  return `[${agent}] ${what} did not finish (${o.status}).\n${label}: ${o.task}\nReason: ${o.error || 'unknown'}`
+  return `[${agent}] ${what} did not finish (${o.status}).\nRequest: ${o.task}\nReason: ${o.error || 'unknown'}`
 }
 
 /**
  * How the model is asked to speak a result that just arrived. `userTexts` are
  * the user's transcribed turns, for the language (voiceInstructions.ts).
  */
-export function resultSpeakInstructions(o: HermesOutcome, userTexts: string[] = []): string {
+export function resultSpeakInstructions(o: BackgroundResult, userTexts: string[] = []): string {
   const agent = agentOf(o)
   return `${agent} just finished; its result is the last [${agent}] message. Tell the user in one or two short sentences, starting with what it was about. Do not read out URLs, IDs or markup. ${replyLanguageRule(guessLanguage(userTexts))}`
 }

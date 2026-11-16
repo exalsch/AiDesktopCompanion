@@ -11,7 +11,7 @@ import CallHistory from './CallHistory.vue'
 import { emit, listen } from '@tauri-apps/api/event'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { HOTKEY_EVENT_PTT_DOWN, HOTKEY_EVENT_PTT_UP } from '../../hotkeys'
-import { agentOf, hermesResultText, resultSpeakInstructions, type HermesOutcome } from '../../composables/screenPresence'
+import { agentOf, backgroundResultText, resultSpeakInstructions, type BackgroundResult } from '../../composables/screenPresence'
 
 const props = defineProps<{
   mcpServers: any[]
@@ -27,7 +27,6 @@ const ui = reactive({
   enableTools: false,
   useSupervisor: false,
   showDebug: false,
-  showHermesKey: false,
 })
 
 // Keep realtime session in sync when toggling tools/supervisor while connected
@@ -36,6 +35,11 @@ watch(() => ui.enableTools, syncSession)
 watch(() => ui.useSupervisor, syncSession)
 
 const statusText = ref('Idle')
+
+/** windows-commander's GitHub page; the URL is fixed in Rust (screen_layer.rs). */
+function openWindowsCommanderPage() {
+  invoke('screen_layer_open_project_page').catch((e) => props.notify?.(String(e), 'error'))
+}
 const remoteAudioElRef = ref<HTMLAudioElement | null>(null)
 
 const transcript = computed<Array<{ role: string, content: string }>>(
@@ -353,38 +357,14 @@ const session = reactive({
   // the session is gone.
   historyEnabled: true,
   historyRetention: 'days_30',
-  // Read in Rust (screen_layer.rs, hermes.rs) from this blob.
+  // Read in Rust (screen_layer.rs) from this blob.
   screenContext: true,
   // Read in Rust (voice_tools.rs) by realtime_build_tools and realtime_call_tool.
   voiceToolProfile: 'screen' as 'screen' | 'screen_only' | 'all',
   // Read in Rust (desktop_agent.rs).
   desktopAgent: true,
   desktopAgentModel: '',
-  hermesEnabled: false,
-  hermesBaseUrl: 'http://127.0.0.1:8642',
-  hermesApiKey: '',
 })
-
-const hermesTest = reactive({ busy: false, ok: false, result: '' })
-
-async function testHermes() {
-  hermesTest.busy = true
-  hermesTest.result = ''
-  try {
-    // The command reads the saved settings; the watcher below saves on every
-    // change, but a key typed a moment ago may still be in flight.
-    await saveAssistantSettings()
-    const r = await invoke<any>('hermes_test_connection')
-    hermesTest.ok = r?.healthOk === true && r?.authOk === true
-    const version = r?.version ? ` (Hermes ${r.version})` : ''
-    hermesTest.result = `${r?.baseUrl}: ${r?.detail || 'no answer'}${version}`
-  } catch (e: any) {
-    hermesTest.ok = false
-    hermesTest.result = typeof e === 'string' ? e : (e?.message || String(e))
-  } finally {
-    hermesTest.busy = false
-  }
-}
 
 /**
  * Push the whole session config to the live connection.
@@ -505,7 +485,7 @@ async function recordCall() {
 const callbacks = {
   // The clock the history records starts here rather than at `activate`, so a
   // slow token mint or ICE negotiation is not billed to the call's duration.
-  onConnected: () => { ui.connected = true; ui.connecting = false; ui.error = null; statusText.value = 'Connected'; startElapsed(); syncPill('live'); tones.stopRingback(); if (session.callTones) tones.readyBeep(); callStartedMs = Date.now(); callRecorded = false; setTimeout(() => { void deliverPendingHermes() }, 1500) },
+  onConnected: () => { ui.connected = true; ui.connecting = false; ui.error = null; statusText.value = 'Connected'; startElapsed(); syncPill('live'); tones.stopRingback(); if (session.callTones) tones.readyBeep(); callStartedMs = Date.now(); callRecorded = false; setTimeout(() => { void deliverPendingResults() }, 1500) },
   onDisconnected: () => { ui.connected = false; ui.connecting = false; statusText.value = 'Idle'; stopElapsed(); syncPill('hidden'); tones.stopRingback(); void recordCall() },
   // Ringing on past a failed connect would be a phone that never stops, so the
   // tone is stopped here as well as on the two success paths.
@@ -674,9 +654,6 @@ onMounted(async () => {
       session.voiceToolProfile = ar.voice_tool_profile === 'all' || ar.voice_tool_profile === 'screen_only' ? ar.voice_tool_profile : 'screen'
       session.desktopAgent = ar.desktop_agent !== false
       if (typeof ar.desktop_agent_model === 'string') session.desktopAgentModel = ar.desktop_agent_model
-      if (typeof ar.hermes_enabled === 'boolean') session.hermesEnabled = ar.hermes_enabled
-      if (typeof ar.hermes_base_url === 'string' && ar.hermes_base_url.trim()) session.hermesBaseUrl = ar.hermes_base_url
-      if (typeof ar.hermes_api_key === 'string') session.hermesApiKey = ar.hermes_api_key
     }
   } catch (e) {
     debugLines.value.push('[warn] failed to load assistant_realtime settings')
@@ -699,10 +676,10 @@ watch(() => debugLines.value.length, async () => {
 // happened to change. Watch all three explicitly.
 watch([session, () => ui.enableTools, () => ui.useSupervisor, () => ui.showDebug], () => { void saveAssistantSettings() }, { deep: true })
 
-// Hermes and the voice tool profile change the tool list, which
+// The voice tool profile and the desktop agent change the tool list, which
 // realtime_build_tools reads from the saved settings - so save first, then
 // resend the session.
-watch(() => [session.hermesEnabled, session.voiceToolProfile, session.desktopAgent], async () => {
+watch(() => [session.voiceToolProfile, session.desktopAgent], async () => {
   await saveAssistantSettings()
   await syncSession()
 })
@@ -735,14 +712,11 @@ async function saveAssistantSettings() {
           history_enabled: session.historyEnabled,
           history_retention: session.historyRetention,
           show_debug: ui.showDebug,
-          // Read by screen_layer.rs and hermes.rs.
+          // Read by screen_layer.rs, voice_tools.rs and desktop_agent.rs.
           screen_context: session.screenContext,
           voice_tool_profile: session.voiceToolProfile,
           desktop_agent: session.desktopAgent,
           desktop_agent_model: session.desktopAgentModel,
-          hermes_enabled: session.hermesEnabled,
-          hermes_base_url: session.hermesBaseUrl,
-          hermes_api_key: session.hermesApiKey,
         }
       }
     })
@@ -756,18 +730,18 @@ watch(() => props.autostart, (n, old) => {
   if (typeof n === 'number' && typeof old === 'number' && n > old) void activate()
 })
 
-// ---- Background results (hermes.rs, background_tools.rs) ------------------
+// ---- Background results (background_results.rs, background_tools.rs) -------
 //
-// A finished Hermes run, or a voice tool call that took longer and went to
-// the background, is emitted to this window. A live call takes it into the
-// conversation and acknowledges it; without one, Rust shows a notification and
-// keeps the result for the next call, which picks it up on connect.
+// A voice tool call that took longer and went to the background is emitted to
+// this window when it finishes. A live call takes it into the conversation and
+// acknowledges it; without one, Rust shows a notification and keeps the result
+// for the next call, which picks it up on connect.
 
-function deliverHermes(o: HermesOutcome, respond: boolean): boolean {
+function deliverResult(o: BackgroundResult, respond: boolean): boolean {
   if (!ui.connected) return false
   // The user's own words pin the reply language; see replyLanguageRule.
   const userTexts = transcript.value.filter((t) => t.role === 'user').map((t) => t.content)
-  const ok = realtime.injectContext(hermesResultText(o), respond, respond ? resultSpeakInstructions(o, userTexts) : undefined)
+  const ok = realtime.injectContext(backgroundResultText(o), respond, respond ? resultSpeakInstructions(o, userTexts) : undefined)
   if (ok) {
     debugLines.value.push(`[${agentOf(o)}] ${o.status}: ${o.task.slice(0, 80)}`)
     // The arrival is a step the user should see in the transcript, the call
@@ -775,53 +749,38 @@ function deliverHermes(o: HermesOutcome, respond: boolean): boolean {
     const result = o.status === 'completed' ? (o.output || '(no text)') : `${o.status}: ${o.error || 'unknown'}`
     const line = `${agentOf(o)} answered -> ${result.replace(/\s+/g, ' ').slice(0, 157)}${result.length > 157 ? '…' : ''}`
     try { (realtime as any).transcript?.value?.push({ role: 'tool', content: line }) } catch {}
-    void invoke('hermes_ack_result', { runId: o.runId }).catch(() => {})
+    void invoke('background_ack_result', { runId: o.runId }).catch(() => {})
   }
   return ok
 }
 
-async function deliverPendingHermes() {
+async function deliverPendingResults() {
   if (!ui.connected) return
-  let pending: HermesOutcome[] = []
-  try { pending = await invoke<HermesOutcome[]>('hermes_pending_results') } catch { return }
+  let pending: BackgroundResult[] = []
+  try { pending = await invoke<BackgroundResult[]>('background_pending_results') } catch { return }
   if (!pending.length) return
   // All go in as context; one spoken answer at the end covers them, because a
   // second queued response would only replace the first.
   const speak = pending.some((o) => o.speakResult)
-  pending.forEach((o, i) => { deliverHermes(o, speak && i === pending.length - 1) })
+  pending.forEach((o, i) => { deliverResult(o, speak && i === pending.length - 1) })
 }
 
-let unlistenHermesDone: UnlistenFn | null = null
-let unlistenHermesApproval: UnlistenFn | null = null
+let unlistenJobDone: UnlistenFn | null = null
 
 onMounted(async () => {
   try {
-    unlistenHermesDone = await listen<HermesOutcome>('hermes:run-finished', (e) => {
+    unlistenJobDone = await listen<BackgroundResult>('background:job-finished', (e) => {
       const o = e.payload
       if (!o) return
-      if (!deliverHermes(o, o.speakResult !== false)) {
+      if (!deliverResult(o, o.speakResult !== false)) {
         props.notify?.(o.status === 'completed' ? `${agentOf(o)} finished: ${o.task}` : `${agentOf(o)} ${o.status}: ${o.error || o.task}`, o.status === 'completed' ? 'success' : 'error', 6000)
       }
-    })
-    unlistenHermesApproval = await listen<{ task: string, text: string }>('hermes:approval', (e) => {
-      const p = e.payload
-      if (!p) return
-      // Said, not decided: the user answers in Hermes itself.
-      if (ui.connected) {
-        realtime.injectContext(
-          `[Hermes] The task "${p.task}" is waiting for the user's approval: ${p.text}`,
-          true,
-          'Tell the user in one short sentence that Hermes needs their approval for this and that they can answer it in Hermes. Do not approve anything yourself.'
-        )
-      }
-      props.notify?.(`Hermes needs your approval: ${p.text}`, 'error', 8000)
     })
   } catch {}
 })
 
 onBeforeUnmount(() => {
-  try { unlistenHermesDone?.() } catch {}
-  try { unlistenHermesApproval?.() } catch {}
+  try { unlistenJobDone?.() } catch {}
 })
 
 let unlistenHangup: UnlistenFn | null = null
@@ -1083,9 +1042,14 @@ onBeforeUnmount(() => {
 
   <CollapsibleCard
     id="assistant.presence"
-    title="Screen presence and Hermes"
-    desc="What the assistant knows about your screen, and where long jobs go."
+    title="Screen presence"
+    desc="What the assistant knows about your screen, and what it may do there."
   >
+    <p class="field-hint">
+      Needs the
+      <a href="#" @click.prevent="openWindowsCommanderPage">windows-commander MCP server</a>,
+      which the app runs as a shared instance (Settings > MCP Servers > Screen layer).
+    </p>
     <label class="switch row">
       <input type="checkbox" v-model="session.screenContext" />
       <span class="switch-text">
@@ -1130,47 +1094,6 @@ onBeforeUnmount(() => {
       <label class="field-label">Desktop agent model</label>
       <input class="input" type="text" v-model.lazy="session.desktopAgentModel" placeholder="empty = the Prompt chat model" />
       <p class="field-hint">A model that is good at tool use pays off here; the agent may take a dozen steps.</p>
-    </div>
-
-    <div class="divider"></div>
-
-    <label class="switch row">
-      <input type="checkbox" v-model="session.hermesEnabled" />
-      <span class="switch-text">
-        <span class="switch-label">Delegate long jobs to Hermes</span>
-        <span class="switch-hint">
-          Offers the voice model a <code>delegate_to_hermes</code> tool. The run happens in the background; its result
-          comes back into the call, or as a notification when no call is live. Hermes also gets the screen context
-          as text. Needs MCP tools on and the supervisor off. Approval requests are shown to you, never answered.
-        </span>
-      </span>
-    </label>
-
-    <div class="field-grid" v-if="session.hermesEnabled">
-      <div class="field">
-        <label class="field-label">Hermes API server</label>
-        <input class="input" v-model="session.hermesBaseUrl" placeholder="http://127.0.0.1:8642" spellcheck="false" />
-      </div>
-      <div class="field">
-        <label class="field-label">API key</label>
-        <div class="actions">
-          <input
-            class="input mono"
-            :type="ui.showHermesKey ? 'text' : 'password'"
-            v-model="session.hermesApiKey"
-            placeholder="API_SERVER_KEY (or HERMES_API_KEY in the environment)"
-            autocomplete="off"
-            spellcheck="false"
-          />
-          <button class="btn ghost sm" type="button" @click="ui.showHermesKey = !ui.showHermesKey">{{ ui.showHermesKey ? 'Hide' : 'Show' }}</button>
-        </div>
-      </div>
-    </div>
-    <div class="actions" v-if="session.hermesEnabled">
-      <button class="btn" type="button" :disabled="hermesTest.busy" @click="testHermes">
-        {{ hermesTest.busy ? 'Testing…' : 'Test connection' }}
-      </button>
-      <span v-if="hermesTest.result" class="field-hint" :class="{ error: !hermesTest.ok }">{{ hermesTest.result }}</span>
     </div>
   </CollapsibleCard>
 

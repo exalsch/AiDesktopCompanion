@@ -1,16 +1,16 @@
-# Screen presence: voice, screen and long jobs
+# Screen presence: voice and screen
 
 Status: implemented on `feat/screen-presence` (2026-11-11). Sections 5 to 9
 (voice tool profile, voice rules, Outlook check, eval, tool trace) were added
-the same day after a failed live test.
+the same day after a failed live test. The Hermes delegation of section 4 was
+removed again on 16.11.2026.
 
-## The three parts
+## The two parts
 
 | Part | Role | Lives in |
 |---|---|---|
 | **AiDesktopCompanion** | The voice. Runs in the user's session all day, holds the Realtime / Gemini Live call, and **owns the shared windows-commander instance**. | this repo |
-| **windows-commander** | The screen. MCP server with annotations (`point_at`, `mark_area`, `highlight_element`, `clear_annotations`), the activity timeline (`get_current_context`, `get_activity`, `wait_for_context_change`) and `get_pointer_context`. Its tracker, overlays and audit log are per process, so all clients must share one instance. | `C:\PROGRAMMING\MCP_Servers\windows-commander-mcp` |
-| **Hermes Agent** | Long jobs. Background runs with memory, Microsoft 365 and a browser, behind an OpenAI-compatible API server (`/v1/runs`). | Hermes install, not this repo |
+| **windows-commander** | The screen. MCP server with annotations (`point_at`, `mark_area`, `highlight_element`, `clear_annotations`), the activity timeline (`get_current_context`, `get_activity`, `wait_for_context_change`) and `get_pointer_context`. Its tracker, overlays and audit log are per process, so all clients must share one instance. | separate open-source repo, <https://github.com/exalsch/windows-commander-mcp> |
 
 ```
                  voice (WebRTC / WebSocket)
@@ -23,14 +23,14 @@ the same day after a failed live test.
  │     └─ tool call ─── invoke realtime_call_tool ────────┤              │
  │  Rust:                                                 ▼              │
  │     screen_layer.rs  (owns instance, context item)  mcp.rs (rmcp)     │
- │     hermes.rs        (runs, SSE, approvals, results)  busy.rs (pill)  │
- └───────────┬───────────────────────────────────────────┬──────────────┘
-             │ MCP Streamable HTTP + Bearer               │ HTTP + Bearer
-             ▼ 127.0.0.1:47821/mcp                        ▼ 127.0.0.1:8642
-   windows-commander --http (shared)               Hermes API server
-   ▲   ▲                                           (POST /v1/runs, SSE events)
+ │     background_tools.rs / background_results.rs     busy.rs (pill)    │
+ └───────────┬───────────────────────────────────────────────────────────┘
+             │ MCP Streamable HTTP + Bearer
+             ▼ 127.0.0.1:47821/mcp
+   windows-commander --http (shared)
+   ▲   ▲
    │   └── Claude Code (type: http)
-   └────── Hermes (mcp_servers: windows-commander)
+   └────── any other MCP client (http, or stdio that bridges)
 ```
 
 ## 1. Owning the shared instance (`screen_layer.rs`)
@@ -114,7 +114,7 @@ the same day after a failed live test.
   audio. Gemini: `clientContent` with `turnComplete: false` (Live has no
   mid-session system role).
 - **Setting:** `assistant_realtime.screen_context` (default on). Off also
-  stops screen context going to Hermes.
+  stops screen context going to the desktop agent.
 - **Instructions.** See section 6 (`voiceInstructions.ts`).
 - **Kept, not dropped.** The eval (section 8) ran the new rules with and
   without the automatic item: 27/27 with it, 25/27 without. Without it the
@@ -122,37 +122,15 @@ the same day after a failed live test.
   reading the screen. The rules still say to call the tool for the cursor, the
   focus and "this", so a stale item costs no more than a wrong hint.
 
-## 4. `delegate_to_hermes` (`hermes.rs`)
+## 4. Hermes delegation (removed)
 
-- **Offered** by `realtime_build_tools` when `assistant_realtime.hermes_enabled`
-  is on, so only in the tools-direct arrangement (MCP tools on, supervisor off).
-- **Call.** `realtime_call_tool` handles the name in Rust:
-  `POST {base}/v1/runs` with `input` = task and `instructions` = how to
-  answer (short, speakable) plus the current screen context text. Returns at
-  once: `{status: "started", run_id, note}`; the note tells the model to say it
-  handed over and carry on.
-- **Follow.** A background task reads `GET /v1/runs/{id}/events` (SSE,
-  `data: {event, ...}`), and falls back to polling `GET /v1/runs/{id}` every
-  3 s when the stream fails or goes silent for 90 s. `tool.started` relabels
-  the busy pill; terminal events are `run.completed | failed | cancelled |
-  interrupted`. Gives up after two hours or 40 failed polls ("lost").
-- **Approvals.** `approval.request` (or status `waiting_for_approval`) shows a
-  desktop notification with the description/command and emits
-  `hermes:approval`; a live call is told to mention it. Nothing is ever posted
-  to `/v1/runs/{id}/approval`.
-- **Results.** The outcome is kept in a pending list and emitted as
-  `hermes:run-finished`. A live call injects `[Hermes] ...` and, with
-  `speak_result` (default true), asks the model to say it; it then calls
-  `hermes_ack_result`. Not acknowledged within 4 s: a notification. The next
-  call fetches `hermes_pending_results` on connect.
-- **Settings** (inside `assistant_realtime`, because `save_settings` passes
-  that blob through wholesale): `hermes_enabled`, `hermes_base_url` (default
-  `http://127.0.0.1:8642`), `hermes_api_key` (masked; falls back to env
-  `HERMES_API_KEY`). **Test connection** calls `hermes_test_connection`:
-  `/health` without auth, then `/v1/models` with the key, so "not reachable"
-  and "key rejected" are told apart.
-- All Hermes traffic is from Rust: the key never enters the webview and the
-  CSP needs no new host.
+A `delegate_to_hermes` tool handed long jobs to a locally running Hermes Agent
+over its `/v1/runs` API. It was removed on 16.11.2026: it served one personal
+setup and made no sense to anyone else using this open-source app. Long and
+multi-step work now goes to the desktop agent (section 11), and any slow tool
+call continues in the background (section 10). The result delivery it
+introduced survives as `background_results.rs`. Old `hermes_*` keys in
+`assistant_realtime` are dropped the next time the Assistant settings save.
 
 ## 5. Voice tool profile (`voice_tools.rs`)
 
@@ -170,7 +148,7 @@ the same day after a failed live test.
   everything that types, clicks, runs or writes.
 - **Setting.** `assistant_realtime.voice_tool_profile`: `"screen"` (default;
   an unknown value counts as screen) or `"all"`. UI: Assistant > Screen
-  presence and Hermes > Voice tools from windows-commander. Only the
+  presence > Voice tools from windows-commander. Only the
   windows-commander server is filtered; other servers keep their tools.
   `disabled_tools` applies on top in both profiles.
 - **Enforced** in `realtime_call_tool` too: the reverse name map is shared
@@ -179,8 +157,7 @@ the same day after a failed live test.
 - **Logged.** `realtime_build_tools` logs the profile and every tool name;
   both clients log the full list and the instruction length at setup.
 - **A session now gets** 10 windows-commander tools + `ask_claude`,
-  `claude_result`, `claude_status` = 13 (14 with `delegate_to_hermes`; CoTiRe
-  is not auto-connected).
+  `claude_result`, `claude_status` = 13 (CoTiRe is not auto-connected).
 - **`get_pointer_context` gets two fields** on the way back to the model:
   - `position`: "On screen 2: horizontally left of centre (38 %), vertically
     below the middle (63 %)." Buckets at 20, 40, 60 and 80 %. Before, the
@@ -217,7 +194,6 @@ exact mangled names.
   the name to mail and calendar tools. Never read out refs, coordinates or
   class names.
 - **`[Screen context` messages** are app-written and can be stale: a hint.
-- **Hermes** only when the tool exists, for long jobs.
 - **Examples** use names that are not in the eval fixtures (a unit test checks
   it).
 - **Tools that take longer** (any tool, section 10): a result with status
@@ -345,9 +321,9 @@ column above is from before section 10.
   Screen tools always do (the WebView2 lookup takes up to 5 s). Past 8 s the
   model gets `{status: "started", job_id, note}` and the task carries on; the
   busy pill shows "<tool>: <request>".
-- **Delivery** is the Hermes path (`hermes::deliver`), with an `agent` field on
-  `RunOutcome` (the tool's name, or "Hermes"): emitted as
-  `hermes:run-finished`; a live call injects `[<tool>] The <tool> call you
+- **Delivery** goes through `background_results::deliver`, with an `agent`
+  field on `BackgroundResult` (the tool's name): emitted as
+  `background:job-finished`; a live call injects `[<tool>] The <tool> call you
   started earlier has finished. Request: ... Result: ...` and speaks it; with
   no call (or no acknowledgement within 4 s) a desktop notification "<tool>
   finished" shows it, and the next call picks it up on connect. A result that
@@ -479,10 +455,10 @@ all ~70 tools:
   Automation and the activity tracker; it never asks for an image. Pixels
   reach the model only when it calls `capture_screen` (or
   `get_pointer_context` with `include_image`) itself.
-- **Hermes receives text only**: the task and the same context text. Turning
-  screen context off stops both.
+- **The desktop agent receives text only**: the task and the same context
+  text. Turning screen context off stops both.
 - **Tokens.** The windows-commander token is read per connect and never
-  stored or logged. The Hermes key is in settings.json like the other keys.
+  stored or logged.
 - **Cost.** The item is capped at 700 characters and only sent when it changed.
 
 ## Open points
@@ -495,8 +471,6 @@ all ~70 tools:
   app-side lookup in `voice_tools.rs` can go once it does.
 - The selected (clicked) Outlook event is not reachable through UIA; only the
   hovered one is.
-- No UI to answer a Hermes approval from this app; by design for now.
-- Supervisor modes do not get `delegate_to_hermes`.
 - A background tool call that is still running when the app quits is lost
   (the task dies with the app; the server may finish it but nobody collects
   it).

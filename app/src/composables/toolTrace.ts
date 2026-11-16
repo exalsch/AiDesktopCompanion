@@ -113,7 +113,7 @@ export function toolTraceLine(name: string, argsJson: string, output: string): s
   if (out === undefined) return `${head} -> ${clip(output)}`
   if (out && typeof out === 'object' && 'error' in out && !('result' in out)) return `${head} -> error: ${clip(String(out.error))}`
   if (out && typeof out === 'object' && 'answer' in out) return `${head} -> ${clip(String(out.answer))}`
-  // background_tools.rs / hermes.rs: the job runs on, its result comes later.
+  // background_tools.rs: the job runs on, its result comes later.
   if (out && typeof out === 'object' && out.status === 'started') return `${head} -> started in the background`
   const p = payloadOf(out)
   if (p.isError) return `${head} -> error: ${clip(p.text)}`

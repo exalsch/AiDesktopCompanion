@@ -25,8 +25,8 @@ tauri = { version = "2.11", features = ["protocol-asset", "tray-icon"] }
 tauri-plugin-log = "2.7"
 tauri-plugin-global-shortcut = "2.3"
 tauri-plugin-dialog = "2.4"
-# Desktop notifications from Rust: Hermes results and approval requests that
-# arrive while no voice session is live to say them.
+# Desktop notifications from Rust: results of voice tool calls that finished in
+# the background while no voice session was live to say them.
 tauri-plugin-notification = "2.3"
 arboard = "3"
 enigo = "0.6"

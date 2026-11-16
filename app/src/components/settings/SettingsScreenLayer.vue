@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 
 // The shared windows-commander instance (screen_layer.rs): the app starts it
 // at launch and never stops it on exit, because other clients (Claude Code,
-// Hermes) use the same instance. Stopping is this card's button only.
+// other agents) use the same instance. Stopping is this card's button only.
 
 const props = defineProps<{ settings: any }>()
 
@@ -52,6 +52,11 @@ async function run(cmd: 'screen_layer_status' | 'screen_layer_start' | 'screen_l
 }
 
 onMounted(() => { void run('screen_layer_status') })
+
+/** windows-commander's GitHub page; the URL is fixed in Rust (screen_layer.rs). */
+function openProjectPage() {
+  invoke('screen_layer_open_project_page').catch((e) => { error.value = String(e) })
+}
 </script>
 
 <template>
@@ -79,6 +84,12 @@ onMounted(() => { void run('screen_layer_status') })
       </dl>
       <p v-if="status?.detail && !status.running" class="field-hint">{{ status.detail }}</p>
       <p v-if="error" class="field-hint error">{{ error }}</p>
+      <p class="field-hint">
+        <template v-if="status && !status.exe_found">Not installed yet? </template>
+        windows-commander is a separate, open-source MCP server:
+        <a href="#" @click.prevent="openProjectPage">github.com/exalsch/windows-commander-mcp</a>
+        (download, setup, safety notes).
+      </p>
 
       <label class="switch row">
         <input type="checkbox" v-model="props.settings.screen_layer_autostart" />
@@ -110,7 +121,7 @@ onMounted(() => { void run('screen_layer_status') })
           class="btn danger"
           type="button"
           :disabled="busy || !status?.running"
-          title="Every client connected to it (Claude Code, Hermes, this app) loses its connection"
+          title="Every client connected to it (this app, Claude Code, other agents) loses its connection"
           @click="run('screen_layer_stop')"
         >Stop shared instance</button>
       </div>

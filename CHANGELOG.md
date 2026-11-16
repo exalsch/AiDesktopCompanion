@@ -27,7 +27,7 @@ The assistant also keeps to the language of the call. A short "what?" that
 the speech recognition heard as "¿Qué?" got an answer in Spanish; now it is
 taken as misheard and answered in the language you have been speaking.
 
-Choose under Assistant > Screen presence and Hermes: "Screen and simple
+Choose under Assistant > Screen presence: "Screen and simple
 actions" (new default), "Screen only" or "All tools", and switch the desktop
 agent on or off or give it its own model.
 
@@ -68,7 +68,7 @@ your screen, which Claude Code cannot see. Now:
 - A call gets only the screen tools of windows-commander (context, pointer,
   focus, find, OCR, screenshot and the on-screen arrows). Mouse, keyboard,
   PowerShell and files stay with chat. Switch back under Assistant > Screen
-  presence and Hermes > Voice tools.
+  presence > Voice tools.
 - Every tool call shows as a line in the live transcript, briefly on the call
   pill, and in the saved call history and its copied text.
 
@@ -86,7 +86,7 @@ when something changed, and windows on windows-commander's block list
 
 The assistant is also told it can show you things: it draws an arrow or a
 frame on your screen and clears it when you move on. Switch the screen lines
-off under Assistant > Screen presence and Hermes.
+off under Assistant > Screen presence.
 
 ### The app keeps one shared windows-commander running for every client
 
@@ -94,10 +94,12 @@ kind: feat
 
 At start-up the app now checks for the shared windows-commander instance and
 starts it in the background when it is not running, without a console
-window. Claude Code, Hermes and this app then share one activity timeline and
-one set of on-screen arrows. Quitting the app leaves it running, because the
+window. This app, Claude Code and any other MCP client then share one activity
+timeline and one set of on-screen arrows. Quitting the app leaves it running, because the
 others still use it; Settings > MCP Servers > Screen layer shows whether it
-runs, its version and address, and has a button to stop it.
+runs, its version and address, and has a button to stop it. windows-commander
+is a separate open-source MCP server; the same card links to its GitHub page
+for download and setup.
 
 Your existing windows-commander server entry moves to the shared instance
 automatically. Its address and access token are read when it connects and are
@@ -111,20 +113,6 @@ kind: feat
 An HTTP server in Settings > MCP Servers now has a list of headers to send
 with every request, for servers that need an API key or a bearer token. The
 values are hidden until you choose to show them.
-
-### Hand long jobs to Hermes from a voice call
-
-kind: feat
-
-Turn on "Delegate long jobs to Hermes" under Assistant > Screen presence and
-Hermes, enter the address and API key of your Hermes API server, and press
-Test connection. In a call, ask for something that takes a while - research,
-work through your mail - and the assistant hands it to Hermes and keeps
-talking. The pill in the corner shows that Hermes is working. When the job is
-done, the assistant tells you the result; if no call is open, a notification
-does, and the next call picks it up. When Hermes needs your approval, you get
-a notification with what it wants to do; the app never approves anything for
-you. Hermes receives what is on your screen as text, never a screenshot.
 
 ### Two more accurate Parakeet models for local speech-to-text
 

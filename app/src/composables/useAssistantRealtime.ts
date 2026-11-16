@@ -232,7 +232,7 @@ export function useAssistantRealtime(opts: AssistantRealtimeOptions) {
   }
 
   /**
-   * Put a system message into the conversation from outside a turn (a Hermes
+   * Put a system message into the conversation from outside a turn (a background
    * result). With `respond`, the model is asked to speak about it; the request
    * waits for any response already in progress.
    */

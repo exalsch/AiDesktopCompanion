@@ -14,7 +14,6 @@
 // cannot see. Every rule below answers one of those failures; the eval checks
 // each of them.
 
-export const HERMES_TOOL_NAME = 'delegate_to_hermes'
 export const SUPERVISOR_TOOL_NAME = 'consult_supervisor'
 
 /** Prefix of every machine-written screen context message. */
@@ -138,11 +137,6 @@ function contextRule(toolNames: string[]): string {
   return `Messages that start with ${SCREEN_CONTEXT_PREFIX} are written by the app, not said by the user. They can be a few seconds old: use them as a hint, but call the tool for the cursor, the focus and "this". Never read them out.`
 }
 
-function hermesRule(toolNames: string[]): string {
-  if (!hasTool(toolNames, HERMES_TOOL_NAME)) return ''
-  return `Long jobs: for research, mail and calendar work or anything with many steps, call ${HERMES_TOOL_NAME} with a complete, standalone task that includes what you read from the screen. It returns at once: say in a few words that Hermes is on it, then carry on. Its result arrives later as a [Hermes] message; report it in your own short words.`
-}
-
 /**
  * Any voice tool call that takes longer than a few seconds carries on in the
  * background (background_tools.rs): the tool returns `status: "started"` at
@@ -185,7 +179,7 @@ function examples(toolNames: string[]): string {
  */
 export function voiceToolNote(toolNames: string[]): string {
   if (!toolNames.length) return ''
-  const blocks = [LANGUAGE_RULE, HONESTY_RULES, screenRules(toolNames), contextRule(toolNames), actionRules(toolNames), backgroundRule(), hermesRule(toolNames), examples(toolNames)]
+  const blocks = [LANGUAGE_RULE, HONESTY_RULES, screenRules(toolNames), contextRule(toolNames), actionRules(toolNames), backgroundRule(), examples(toolNames)]
   return ['# Tools', ...blocks.filter(Boolean)].join('\n\n')
 }
 

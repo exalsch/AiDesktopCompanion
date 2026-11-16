@@ -273,7 +273,7 @@ export const SCENARIOS = [
       'Do we need to prepare for this event?',
       'Any result yet?',
       {
-        // As hermesResultText() and resultSpeakInstructions() in screenPresence.ts build them.
+        // As backgroundResultText() and resultSpeakInstructions() in screenPresence.ts build them.
         inject: "[ask_claude] The ask_claude call you started earlier has finished.\nRequest: Do I need to prepare for the Steering Committee HYDS meeting today at 14:00?\nResult: Yes. Paul Weber's agenda asks for the go-live status and the open budget points, so bring the status slide.",
         speak: 'ask_claude just finished; its result is the last [ask_claude] message. Tell the user in one or two short sentences, starting with what it was about. Do not read out URLs, IDs or markup. Reply in English only, never in any other language.',
       },

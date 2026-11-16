@@ -164,7 +164,6 @@ export function cannedResult(tool, args, ctx) {
     }
     case 'claude_result': return { error: `I have no record of ticket ${args?.ticket}.`, isError: true }
     case 'claude_status': return { lanes: ['rob', 'cotire', 'desk', 'companion'], running: [] }
-    case 'delegate_to_hermes': return { status: 'started', run_id: 'run_1', note: 'Say that Hermes is on it.' }
     default: return { error: `eval: ${tool} is not simulated` }
   }
 }

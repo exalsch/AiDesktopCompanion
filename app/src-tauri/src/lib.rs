@@ -192,9 +192,9 @@ pub fn run() {
       screen_layer::screen_layer_status,
       screen_layer::screen_layer_start,
       screen_layer::screen_layer_stop,
-      hermes::hermes_test_connection,
-      hermes::hermes_pending_results,
-      hermes::hermes_ack_result,
+      screen_layer::screen_layer_open_project_page,
+      background_results::background_pending_results,
+      background_results::background_ack_result,
       realtime_create_ephemeral_token,
       gemini_live_create_token,
       settings::list_gemini_live_models,
@@ -263,7 +263,7 @@ mod call_history;
 mod media;
 mod webview_health;
 mod screen_layer;
-mod hermes;
+mod background_results;
 mod voice_tools;
 mod background_tools;
 mod desktop_agent;
@@ -1100,10 +1100,6 @@ async fn realtime_build_tools() -> Result<serde_json::Value, String> {
   // Slow calls go to the background and collect their own tickets
   // (background_tools.rs), so the model gets no ticket collector to misuse.
   flat.retain(|t| !t.get("name").and_then(|n| n.as_str()).map(|n| n.ends_with(&format!("__{}", background_tools::TICKET_RESULT_TOOL))).unwrap_or(false));
-  // Not an MCP tool: Hermes runs are started and followed by hermes.rs.
-  if hermes::config_from_settings_or_env().enabled {
-    flat.push(hermes::tool_definition());
-  }
   // Multi-step desktop work goes to an agent with every tool
   // (desktop_agent.rs); pointless without any MCP server connected.
   if desktop_agent::config_from_settings().enabled && !map.is_empty() {
@@ -1134,14 +1130,6 @@ async fn realtime_call_tool(app: tauri::AppHandle, name: String, args_json: Opti
     .filter(|s| !s.trim().is_empty())
     .and_then(|s| serde_json::from_str(&s).ok())
     .unwrap_or_else(|| serde_json::json!({}));
-  if name == hermes::TOOL_NAME {
-    let task = args.get("task").and_then(|x| x.as_str()).unwrap_or("").to_string();
-    let speak = args.get("speak_result").and_then(|x| x.as_bool()).unwrap_or(true);
-    // What the user is looking at goes along as text, so "this mail" means
-    // something to Hermes. Off together with the screen context setting.
-    let ctx = screen_layer::current_context_text(&MCP_CLIENTS).await;
-    return Ok(RealtimeToolOutput::text(hermes::delegate(&app, task, speak, ctx).await));
-  }
   if name == desktop_agent::TOOL_NAME {
     let task = args.get("task").and_then(|x| x.as_str()).unwrap_or("").to_string();
     let ctx = screen_layer::current_context_text(&MCP_CLIENTS).await;

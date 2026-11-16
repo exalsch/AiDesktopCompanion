@@ -266,11 +266,11 @@ mod tests {
       json!({ "name": "mcp__windows-commander__execute_powershell" }),
       json!({ "name": "mcp__windows-commander__mouse_action" }),
       json!({ "name": "mcp__Rob__ask_claude" }),
-      json!({ "name": "delegate_to_hermes" }),
+      json!({ "name": "desktop_agent" }),
     ];
     let kept: Vec<String> = filter_tools(tools.clone(), "windows-commander", Profile::Screen)
       .iter().map(|t| t["name"].as_str().unwrap().to_string()).collect();
-    assert_eq!(kept, vec!["mcp__windows-commander__point_at", "mcp__Rob__ask_claude", "delegate_to_hermes"]);
+    assert_eq!(kept, vec!["mcp__windows-commander__point_at", "mcp__Rob__ask_claude", "desktop_agent"]);
     assert_eq!(filter_tools(tools, "windows-commander", Profile::All).len(), 5);
     assert!(!allowed("mcp__windows-commander__read_registry", "windows-commander", Profile::Screen));
   }

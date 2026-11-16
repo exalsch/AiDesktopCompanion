@@ -11,7 +11,7 @@
 //
 // - At startup (main window process, once) it asks the exe `--status` and,
 //   when nothing runs, starts `--http` detached and without a console.
-// - It never stops the instance on exit: Claude Code, Hermes and anything else
+// - It never stops the instance on exit: Claude Code and anything else
 //   may be connected to it. Settings offers an explicit "Stop shared instance".
 // - The windows-commander MCP entry connects over HTTP with the bearer token
 //   read from the discovery record at connect time (`mcp.rs`), so the token
@@ -37,6 +37,9 @@ pub const WC_AUTH: &str = "windows-commander";
 /// Conventional id of the windows-commander entry in `mcp_servers`.
 pub const WC_SERVER_ID: &str = "windows-commander";
 const EXE_NAME: &str = "WindowsCommander.McpServer.exe";
+/// Where to get windows-commander. Fixed here, so the command that opens it
+/// takes no URL from the webview.
+pub const WC_PROJECT_URL: &str = "https://github.com/exalsch/windows-commander-mcp";
 
 /// Hard cap on the context item. It goes into every voice turn, so it is
 /// billed on every turn; a few lines are enough to say what the user looks at.
@@ -139,8 +142,8 @@ pub fn autostart_from_settings() -> bool {
     .unwrap_or(true)
 }
 
-/// Whether Assistant Mode sends the screen context item (and passes it to
-/// Hermes). Lives in `assistant_realtime`; on unless switched off.
+/// Whether Assistant Mode sends the screen context item (and passes it to the
+/// desktop agent). Lives in `assistant_realtime`; on unless switched off.
 pub fn screen_context_enabled() -> bool {
   crate::config::load_settings_json()
     .get("assistant_realtime")
@@ -438,6 +441,24 @@ pub async fn screen_layer_start() -> Result<ScreenLayerStatus, String> {
   })
   .await
   .map_err(|e| e.to_string())?
+}
+
+/// Open windows-commander's GitHub page (download, setup, safety notes) in
+/// the default browser.
+#[tauri::command]
+pub fn screen_layer_open_project_page() -> Result<(), String> {
+  #[cfg(target_os = "windows")]
+  {
+    std::process::Command::new("explorer.exe")
+      .arg(WC_PROJECT_URL)
+      .spawn()
+      .map(|_| ())
+      .map_err(|e| format!("failed to open browser: {e}"))
+  }
+  #[cfg(not(target_os = "windows"))]
+  {
+    Err("Opening a browser is not implemented for this platform".to_string())
+  }
 }
 
 /// Stop the shared instance. Every client of it loses the connection, which

@@ -157,7 +157,7 @@ export function useAssistantGeminiLive(opts: Omit<AssistantRealtimeOptions, 'get
   }
 
   /**
-   * A message from outside a turn (a Hermes result). With `respond` the model
+   * A message from outside a turn (a background result). With `respond` the model
    * answers it; either way it waits until the model is not speaking and the
    * user is not holding the talk key, for up to a minute.
    */
