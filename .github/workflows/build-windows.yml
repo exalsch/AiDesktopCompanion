@@ -27,9 +27,17 @@ jobs:
           cache: 'npm'
           cache-dependency-path: 'app/package-lock.json'
 
+      # Pinned, not `stable`. Rust 1.100 broke the build on 16.11.2026 with no
+      # change on our side: ort-sys 2.0.0-rc.10 (pinned for CUDA 12, see
+      # Cargo.toml) copies the ONNX Runtime DLLs into target/<profile>/examples
+      # and deps from its build script, and under 1.100 that copy fails with
+      # "The system cannot find the path specified". 1.99 built green on
+      # 10.11.2026. Move this together with the release workflow, and only
+      # after a build with the new version went green.
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: '1.99'
           targets: x86_64-pc-windows-msvc
 
       # `cache-on-failure` is deliberately off. With it on, a run that failed

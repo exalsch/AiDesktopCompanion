@@ -33,9 +33,11 @@ jobs:
           cache: 'npm'
           cache-dependency-path: 'app/package-lock.json'
 
+      # Pinned to the same version as build-windows.yml; see the note there.
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: '1.99'
           targets: x86_64-pc-windows-msvc
 
       # Off for the same reason as in `build-windows.yml` - see the note there.
