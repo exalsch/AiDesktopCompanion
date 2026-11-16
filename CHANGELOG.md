@@ -9,6 +9,8 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
+## 0.1.29 - 2026-11-16
+
 ### The floating pills no longer stay invisible
 
 kind: fix
