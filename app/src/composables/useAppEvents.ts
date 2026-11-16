@@ -139,10 +139,15 @@ export function useAppEvents(deps: UseAppEventsDeps) {
     unsubs.push(uCommandErr)
 
     // MCP connection lifecycle
-    const u7 = await listen<{ serverId: string }>('mcp:connected', (e) => {
+    const u7 = await listen<{ serverId: string, mode?: string }>('mcp:connected', (e) => {
       const id = (e?.payload as any)?.serverId
+      const mode = (e?.payload as any)?.mode
       const s = id ? findServerById(id) : null
-      if (s) { s.status = 'connected'; s.error = null; s.connecting = false; showToast(`MCP connected: ${id}`, 'success', 1500) }
+      if (s) {
+        s.status = 'connected'; s.error = null; s.connecting = false
+        if (typeof mode === 'string') s.connectedMode = mode
+        showToast(`MCP connected: ${id}${mode && mode !== 'stdio' && mode !== 'http' ? ` (${mode})` : ''}`, 'success', 1500)
+      }
     })
     unsubs.push(u7)
     const u8 = await listen<{ serverId: string; existed?: boolean }>('mcp:disconnected', (e) => {

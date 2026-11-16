@@ -361,10 +361,6 @@ pub fn get_settings() -> Result<serde_json::Value, String> {
 }
 
 pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
-  let path = settings_config_path().ok_or_else(|| "Unsupported platform for config path".to_string())?;
-  if let Some(dir) = path.parent() {
-    fs::create_dir_all(dir).map_err(|e| format!("Failed to create config directory: {e}"))?;
-  }
   // Merge with existing settings. Only update known keys present in `map`.
   let current = load_settings_json();
   let mut obj = current.as_object().cloned().unwrap_or_default();
@@ -418,6 +414,9 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   if let Some(qpsp) = map.get("quick_prompt_system_prompt").and_then(|x| x.as_str()) { obj.insert("quick_prompt_system_prompt".to_string(), serde_json::Value::String(qpsp.to_string())); }
   // Persist Quick Actions preview toggle for quick prompts
   if let Some(flag) = map.get("show_quick_prompt_result_in_popup").and_then(|x| x.as_bool()) { obj.insert("show_quick_prompt_result_in_popup".to_string(), serde_json::Value::Bool(flag)); }
+  // Screen layer (windows-commander shared instance), see screen_layer.rs
+  if let Some(b) = map.get("screen_layer_autostart").and_then(|x| x.as_bool()) { obj.insert("screen_layer_autostart".to_string(), serde_json::Value::Bool(b)); }
+  if let Some(p) = map.get("screen_layer_exe_path").and_then(|x| x.as_str()) { obj.insert("screen_layer_exe_path".to_string(), serde_json::Value::String(p.trim().to_string())); }
   // Remove deprecated global MCP auto_connect flag if present
   obj.remove("auto_connect");
   // Pass-through for MCP servers configuration when provided
@@ -486,7 +485,20 @@ pub fn save_settings(map: serde_json::Value) -> Result<String, String> {
   // Remove deprecated local STT model selector keys if present
   obj.remove("stt_local_base_url");
 
-  let pretty = serde_json::to_string_pretty(&serde_json::Value::Object(obj)).map_err(|e| format!("Serialize settings failed: {e}"))?;
+  write_settings_json(&serde_json::Value::Object(obj))
+}
+
+/// Replace settings.json with `value`, atomically (temp file, then rename).
+///
+/// `save_settings` merges the frontend's map through its allowlist and ends
+/// here; Rust-side migrations (see `screen_layer::migrate_settings_file`) call
+/// it directly with the whole document they read and changed.
+pub fn write_settings_json(value: &serde_json::Value) -> Result<String, String> {
+  let path = settings_config_path().ok_or_else(|| "Unsupported platform for config path".to_string())?;
+  if let Some(dir) = path.parent() {
+    fs::create_dir_all(dir).map_err(|e| format!("Failed to create config directory: {e}"))?;
+  }
+  let pretty = serde_json::to_string_pretty(value).map_err(|e| format!("Serialize settings failed: {e}"))?;
   let tmp_path = path.with_extension("json.tmp");
   fs::write(&tmp_path, &pretty).map_err(|e| format!("Write settings failed: {e}"))?;
   // On Windows, fs::rename fails if target exists — remove first

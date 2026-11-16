@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import CollapsibleCard from '../ui/CollapsibleCard.vue'
+import SettingsScreenLayer from './SettingsScreenLayer.vue'
+import { WINDOWS_COMMANDER_AUTH } from '../../composables/utils'
 
 // A card's identity must not change while the user types in it.
 //
@@ -48,7 +50,24 @@ function statusClass(s: any): string {
 
 function statusLabel(s: any): string {
   if (s?.connecting) return 'connecting'
-  return String(s?.status || 'disconnected')
+  const base = String(s?.status || 'disconnected')
+  // "connected (stdio fallback)" says why the timeline may not be shared.
+  if (base === 'connected' && isWc(s) && s?.connectedMode) return `connected, ${s.connectedMode}`
+  return base
+}
+
+function isWc(s: any): boolean {
+  return s?.transport === 'http' && s?.auth === WINDOWS_COMMANDER_AUTH
+}
+
+function addHeader(s: any) {
+  if (!Array.isArray(s.headerRows)) s.headerRows = []
+  s.headerRows.push({ name: '', value: '' })
+}
+
+function cardDesc(s: any): string {
+  if (isWc(s)) return 'windows-commander shared instance'
+  return s.transport === 'http' ? (s.command || 'no URL set') : (s.command || 'no command set')
 }
 
 function schemaProps(s: any): Record<string, any> | null {
@@ -58,6 +77,8 @@ function schemaProps(s: any): Record<string, any> | null {
 </script>
 
 <template>
+  <SettingsScreenLayer :settings="props.settings" />
+
   <section class="card">
     <div class="card-body">
       <div class="actions">
@@ -93,7 +114,7 @@ function schemaProps(s: any): Record<string, any> | null {
     :key="cardKey(s)"
     :id="'settings.mcp.' + cardKey(s)"
     :title="s.id || 'Unnamed server'"
-    :desc="s.transport === 'http' ? (s.command || 'no URL set') : (s.command || 'no command set')"
+    :desc="cardDesc(s)"
     :default-open="false"
   >
     <template #aside>
@@ -127,8 +148,29 @@ function schemaProps(s: any): Record<string, any> | null {
       </div>
 
       <div class="field" v-if="s.transport === 'http'">
+        <label class="field-label">Authentication</label>
+        <select class="input" v-model="s.auth">
+          <option value="">Headers below</option>
+          <option :value="WINDOWS_COMMANDER_AUTH">windows-commander shared instance</option>
+        </select>
+        <p class="field-hint" v-if="isWc(s)">
+          URL and token are read from windows-commander's discovery record each time it connects,
+          so the token is never stored here.
+        </p>
+      </div>
+
+      <div class="field" v-if="s.transport === 'http' && !isWc(s)">
         <label class="field-label">URL</label>
         <input class="input" v-model="s.command" placeholder="https://server.example.com/mcp" />
+      </div>
+
+      <div class="field" v-if="isWc(s)">
+        <label class="field-label">Fallback executable</label>
+        <input class="input" v-model="s.fallback_command" :placeholder="props.settings.screen_layer_exe_path || 'Screen layer executable (default)'" />
+        <p class="field-hint">
+          Run over stdio when the shared instance cannot be reached. It joins the shared instance on
+          its own once one runs, or works standalone. Empty uses the screen layer executable.
+        </p>
       </div>
 
       <div class="field" v-if="s.transport === 'stdio'">
@@ -136,18 +178,45 @@ function schemaProps(s: any): Record<string, any> | null {
         <input class="input" v-model="s.command" placeholder="uv / node / python / server.exe" />
       </div>
 
-      <div class="field" v-if="s.transport === 'stdio'">
+      <div class="field" v-if="s.transport === 'stdio' || isWc(s)">
         <label class="field-label">Arguments</label>
         <input class="input" v-model="s.argsText" placeholder="--flag value 'quoted arg'" />
       </div>
 
-      <div class="field" v-if="s.transport === 'stdio'">
+      <div class="field" v-if="s.transport === 'stdio' || isWc(s)">
         <label class="field-label">Working directory</label>
         <input class="input" v-model="s.cwd" placeholder="c:\path\to\server" />
       </div>
     </div>
 
-    <div class="field" v-if="s.transport === 'stdio'">
+    <div class="field" v-if="s.transport === 'http'">
+      <label class="field-label">HTTP headers</label>
+      <div v-for="(row, ri) in (s.headerRows || [])" :key="ri" class="actions header-row">
+        <input class="input" v-model="row.name" placeholder="Authorization" spellcheck="false" />
+        <input
+          class="input mono"
+          :type="s.headersShown ? 'text' : 'password'"
+          v-model="row.value"
+          placeholder="Bearer ..."
+          spellcheck="false"
+          autocomplete="off"
+        />
+        <button class="btn ghost sm" type="button" @click="s.headerRows.splice(ri, 1)">Remove</button>
+      </div>
+      <div class="actions">
+        <button class="btn ghost sm" type="button" @click="addHeader(s)">Add header</button>
+        <button v-if="(s.headerRows || []).length" class="btn ghost sm" type="button" @click="s.headersShown = !s.headersShown">
+          {{ s.headersShown ? 'Hide values' : 'Show values' }}
+        </button>
+      </div>
+      <p class="field-hint">
+        Sent with every request, e.g. <code>Authorization: Bearer ...</code>. Values are stored in settings.json.
+        <template v-if="isWc(s)"> The bearer token is added on its own; use this for extras such as
+          <code>Windows-Commander-Unattended: 1</code>.</template>
+      </p>
+    </div>
+
+    <div class="field" v-if="s.transport === 'stdio' || isWc(s)">
       <label class="field-label">Environment</label>
       <textarea
         class="input mono"
@@ -252,6 +321,11 @@ function schemaProps(s: any): Record<string, any> | null {
 </template>
 
 <style scoped>
+/* Name and value side by side; the value takes the room. */
+.header-row { flex-wrap: nowrap; }
+.header-row .input:first-child { flex: 0 0 34%; min-width: 0; }
+.header-row .input.mono { flex: 1 1 auto; min-width: 0; }
+
 /* A card inside a card: drop the shadow so the nesting reads as depth rather
    than as two floating panels. */
 .nested {

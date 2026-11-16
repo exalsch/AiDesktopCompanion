@@ -10,57 +10,64 @@ import { ref } from 'vue'
  *
  * Tokens are counted exactly, from what the API reports. Money is an estimate
  * and is labelled as one: the rates below are correct at the time of writing
- * but are not fetched from anywhere, and OpenAI has cut realtime pricing
- * repeatedly. `RATES_CHECKED` is what tells you how far to trust the figure.
+ * but are not fetched from anywhere, and both providers change realtime
+ * pricing often. `RATES_CHECKED` is what tells you how far to trust the figure.
  */
 
-/** When the rate table below was last verified against OpenAI's pricing page. */
-export const RATES_CHECKED = '2026-08-25'
+/**
+ * When the rate table below was last verified against the published pricing:
+ * https://developers.openai.com/api/docs/pricing and
+ * https://aistudio.google.com/docs/pricing (paid tier).
+ */
+export const RATES_CHECKED = '2026-11-16'
 
 /** USD per million tokens. */
-interface ModelRates {
+export interface ModelRates {
   audioIn: number
   audioInCached: number
   audioOut: number
   textIn: number
   textInCached: number
   textOut: number
+  /** Images (and Gemini video frames), e.g. screenshots a tool sent into the call. */
+  imageIn: number
 }
+
+const GPT_REALTIME: ModelRates = { audioIn: 32, audioInCached: 0.4, audioOut: 64, textIn: 4, textInCached: 0.4, textOut: 16, imageIn: 5 }
+const GPT_REALTIME_2: ModelRates = { ...GPT_REALTIME, textOut: 24 }
+const GPT_REALTIME_MINI: ModelRates = { audioIn: 10, audioInCached: 0.3, audioOut: 20, textIn: 0.6, textInCached: 0.06, textOut: 2.4, imageIn: 0.8 }
+// Gemini lists no cached-input rate for the Live models; nothing is counted
+// as cached there (see addGeminiUsage), so those two fields are never used.
+const GEMINI_LIVE: ModelRates = { audioIn: 3, audioInCached: 3, audioOut: 12, textIn: 0.75, textInCached: 0.75, textOut: 4.5, imageIn: 1 }
+const GEMINI_25_NATIVE_AUDIO: ModelRates = { audioIn: 3, audioInCached: 3, audioOut: 12, textIn: 0.5, textInCached: 0.5, textOut: 2, imageIn: 3 }
 
 /**
  * Rates by model prefix, longest match first.
  *
- * Keyed on prefix because OpenAI ships dated snapshots behind moving aliases
- * (`gpt-realtime-2.1-2026-...`), and a table of exact ids would silently miss
- * every one of them and report a call as free.
+ * Keyed on prefix because both providers ship dated snapshots and variants
+ * behind moving names (`gpt-realtime-2.1-2026-...`,
+ * `gemini-3.8-live-extended-thinking`), and a table of exact ids would silently
+ * miss every one of them and report a call as unpriced.
  *
- * Audio, cached audio and text rates are taken from OpenAI's published pricing.
- * `textInCached` is the one inferred figure - cached text is priced at a tenth
- * of fresh text, matching the ratio used elsewhere - and it moves the total by
- * almost nothing, because audio dominates a voice call by two orders of
- * magnitude.
+ * All figures are the published ones, except the Gemini 2.5 native-audio image
+ * rate: Google prices "audio/video" input together at $3, and an image is
+ * charged as video there.
  */
 const RATE_TABLE: Array<{ prefix: string, rates: ModelRates }> = [
-  {
-    prefix: 'gpt-realtime-2.1-mini',
-    rates: { audioIn: 10, audioInCached: 0.3, audioOut: 20, textIn: 0.6, textInCached: 0.06, textOut: 2.4 },
-  },
-  {
-    prefix: 'gpt-realtime-2.1',
-    rates: { audioIn: 32, audioInCached: 0.4, audioOut: 64, textIn: 4, textInCached: 0.4, textOut: 16 },
-  },
-  {
-    prefix: 'gpt-realtime-2',
-    rates: { audioIn: 32, audioInCached: 0.4, audioOut: 64, textIn: 4, textInCached: 0.4, textOut: 16 },
-  },
-  {
-    prefix: 'gpt-realtime',
-    rates: { audioIn: 32, audioInCached: 0.4, audioOut: 64, textIn: 4, textInCached: 0.4, textOut: 16 },
-  },
+  { prefix: 'gpt-realtime-2.1-mini', rates: GPT_REALTIME_MINI },
+  { prefix: 'gpt-realtime-mini', rates: GPT_REALTIME_MINI },
+  { prefix: 'gpt-realtime-2.1', rates: GPT_REALTIME_2 },
+  { prefix: 'gpt-realtime-2', rates: GPT_REALTIME_2 },
+  // gpt-realtime-1.5 and the original gpt-realtime.
+  { prefix: 'gpt-realtime', rates: GPT_REALTIME },
+  { prefix: 'gemini-3.8-live', rates: GEMINI_LIVE },
+  { prefix: 'gemini-3.1-flash-live', rates: GEMINI_LIVE },
+  { prefix: 'gemini-2.5-flash-native-audio', rates: GEMINI_25_NATIVE_AUDIO },
 ]
 
-function ratesFor(model?: string): ModelRates | null {
-  const m = String(model || '')
+/** Rates for a model id, or null when it is not in the table. */
+export function ratesFor(model?: string): ModelRates | null {
+  const m = String(model || '').trim().toLowerCase().replace(/^models\//, '')
   // Longest prefix wins, so the mini is never charged at the flagship rate.
   const sorted = [...RATE_TABLE].sort((a, b) => b.prefix.length - a.prefix.length)
   for (const entry of sorted) {
@@ -76,11 +83,23 @@ export interface UsageTotals {
   textIn: number
   textInCached: number
   textOut: number
+  imageIn: number
   responses: number
 }
 
 function emptyTotals(): UsageTotals {
-  return { audioIn: 0, audioInCached: 0, audioOut: 0, textIn: 0, textInCached: 0, textOut: 0, responses: 0 }
+  return { audioIn: 0, audioInCached: 0, audioOut: 0, textIn: 0, textInCached: 0, textOut: 0, imageIn: 0, responses: 0 }
+}
+
+/** USD for `t` at `rates`. */
+export function costUsd(t: UsageTotals, rates: ModelRates): number {
+  return (t.audioIn * rates.audioIn
+    + t.audioInCached * rates.audioInCached
+    + t.audioOut * rates.audioOut
+    + t.textIn * rates.textIn
+    + t.textInCached * rates.textInCached
+    + t.textOut * rates.textOut
+    + t.imageIn * rates.imageIn) / 1_000_000
 }
 
 function num(v: any): number {
@@ -102,14 +121,7 @@ export function useRealtimeUsage() {
   function recompute() {
     const rates = ratesFor(model.value)
     if (!rates) { estimatedUsd.value = null; return }
-    const t = totals.value
-    estimatedUsd.value =
-      (t.audioIn * rates.audioIn
-        + t.audioInCached * rates.audioInCached
-        + t.audioOut * rates.audioOut
-        + t.textIn * rates.textIn
-        + t.textInCached * rates.textInCached
-        + t.textOut * rates.textOut) / 1_000_000
+    estimatedUsd.value = costUsd(totals.value, rates)
   }
 
   /**
@@ -133,14 +145,19 @@ export function useRealtimeUsage() {
 
     const audioInTotal = num(inDetails?.audio_tokens)
     const textInTotal = num(inDetails?.text_tokens)
+    const imageInTotal = num(inDetails?.image_tokens)
     const audioInCached = Math.min(num(cached.audio_tokens), audioInTotal)
     const textInCached = Math.min(num(cached.text_tokens), textInTotal)
+    const imageInCached = Math.min(num(cached.image_tokens), imageInTotal)
 
     const t = { ...totals.value }
     t.audioIn += Math.max(0, audioInTotal - audioInCached)
     t.audioInCached += audioInCached
     t.textIn += Math.max(0, textInTotal - textInCached)
-    t.textInCached += textInCached
+    // OpenAI publishes no cached image rate; a cached image is a repeat of
+    // earlier context, charged like cached text.
+    t.textInCached += textInCached + imageInCached
+    t.imageIn += Math.max(0, imageInTotal - imageInCached)
     t.audioOut += num(outDetails?.audio_tokens)
     t.textOut += num(outDetails?.text_tokens)
     t.responses += 1
@@ -156,8 +173,9 @@ export function useRealtimeUsage() {
    * Gemini sends one per model turn, broken down by modality. Thinking tokens
    * are billed as output and reported apart from the response, so they are
    * added to text out. There is no cached split per modality, so nothing is
-   * counted as cached. No Gemini model has rates in the table above, which
-   * leaves the cost at null ("unknown") rather than a made-up figure.
+   * counted as cached. Images and video frames (a screenshot a tool sent) are
+   * image input. A model missing from the rate table leaves the cost at null
+   * ("unpriced") rather than a made-up figure.
    */
   function addGeminiUsage(meta: any): boolean {
     if (!meta || typeof meta !== 'object') return false
@@ -172,6 +190,7 @@ export function useRealtimeUsage() {
     const t = { ...totals.value }
     t.audioIn += byModality(prompt, 'AUDIO')
     t.textIn += byModality(prompt, 'TEXT')
+    t.imageIn += byModality(prompt, 'IMAGE') + byModality(prompt, 'VIDEO')
     t.audioOut += byModality(response, 'AUDIO')
     t.textOut += byModality(response, 'TEXT') + num(meta.thoughtsTokenCount)
     t.responses += 1

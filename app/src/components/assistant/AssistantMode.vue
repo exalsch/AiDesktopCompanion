@@ -5,12 +5,13 @@ import { useAssistantRealtime, type ConnectParams } from '../../composables/useA
 import { useAssistantGeminiLive, isGeminiLiveModel, DEFAULT_GEMINI_LIVE_VOICE } from '../../composables/useAssistantGeminiLive'
 import { useSettings } from '../../composables/useSettings'
 import { useCallTones } from '../../composables/useCallTones'
-import { useCallHistory, titleFor, type CallDraft } from '../../composables/useCallHistory'
+import { useCallHistory, titleFor, transcriptToText, type CallDraft } from '../../composables/useCallHistory'
 import CollapsibleCard from '../ui/CollapsibleCard.vue'
 import CallHistory from './CallHistory.vue'
-import { listen } from '@tauri-apps/api/event'
+import { emit, listen } from '@tauri-apps/api/event'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { HOTKEY_EVENT_PTT_DOWN, HOTKEY_EVENT_PTT_UP } from '../../hotkeys'
+import { agentOf, backgroundResultText, resultSpeakInstructions, type BackgroundResult } from '../../composables/screenPresence'
 
 const props = defineProps<{
   mcpServers: any[]
@@ -34,6 +35,11 @@ watch(() => ui.enableTools, syncSession)
 watch(() => ui.useSupervisor, syncSession)
 
 const statusText = ref('Idle')
+
+/** windows-commander's GitHub page; the URL is fixed in Rust (screen_layer.rs). */
+function openWindowsCommanderPage() {
+  invoke('screen_layer_open_project_page').catch((e) => props.notify?.(String(e), 'error'))
+}
 const remoteAudioElRef = ref<HTMLAudioElement | null>(null)
 
 const transcript = computed<Array<{ role: string, content: string }>>(
@@ -59,9 +65,12 @@ const usageTooltip = computed(() => {
     `Audio out ${rounded(u.audioOut)}`,
     `Text in ${rounded(u.textIn)} (+${rounded(u.textInCached)} cached)`,
     `Text out ${rounded(u.textOut)}`,
+    ...(u.imageIn ? [`Images in ${rounded(u.imageIn)}`] : []),
     `${u.responses} responses`,
     '',
-    `Estimate only, from rates checked ${(realtime as any).usage?.ratesChecked}. Tokens are exact.`,
+    usageCost.value
+      ? `Estimate only, from rates checked ${(realtime as any).usage?.ratesChecked}. Tokens are exact.`
+      : `No price known for ${session.model}, so no cost is shown. Tokens are exact.`,
   ].join('\n')
 })
 
@@ -164,8 +173,8 @@ const elapsedLabel = computed(() => {
 /**
  * The conversation as plain text, ready to copy or paste elsewhere.
  *
- * Tool calls are left out: they are diagnostics, not something anyone wants
- * pasted into a document.
+ * Tool calls stay in as `[tool]` lines, so the text shows what the assistant
+ * really did; delete them in the box before sending it on if they are noise.
  */
 const transcriptText = ref('')
 
@@ -351,6 +360,13 @@ const session = reactive({
   // the session is gone.
   historyEnabled: true,
   historyRetention: 'days_30',
+  // Read in Rust (screen_layer.rs) from this blob.
+  screenContext: true,
+  // Read in Rust (voice_tools.rs) by realtime_build_tools and realtime_call_tool.
+  voiceToolProfile: 'screen' as 'screen' | 'screen_only' | 'all',
+  // Read in Rust (desktop_agent.rs).
+  desktopAgent: true,
+  desktopAgentModel: '',
 })
 
 /**
@@ -472,7 +488,7 @@ async function recordCall() {
 const callbacks = {
   // The clock the history records starts here rather than at `activate`, so a
   // slow token mint or ICE negotiation is not billed to the call's duration.
-  onConnected: () => { ui.connected = true; ui.connecting = false; ui.error = null; statusText.value = 'Connected'; startElapsed(); syncPill('live'); tones.stopRingback(); if (session.callTones) tones.readyBeep(); callStartedMs = Date.now(); callRecorded = false },
+  onConnected: () => { ui.connected = true; ui.connecting = false; ui.error = null; statusText.value = 'Connected'; startElapsed(); syncPill('live'); tones.stopRingback(); if (session.callTones) tones.readyBeep(); callStartedMs = Date.now(); callRecorded = false; setTimeout(() => { void deliverPendingResults() }, 1500) },
   onDisconnected: () => { ui.connected = false; ui.connecting = false; statusText.value = 'Idle'; stopElapsed(); syncPill('hidden'); tones.stopRingback(); void recordCall() },
   // Ringing on past a failed connect would be a phone that never stops, so the
   // tone is stopped here as well as on the two success paths.
@@ -537,6 +553,7 @@ const realtime = {
   setMicEnabled: (enabled: boolean) => client().setMicEnabled(enabled),
   startTalking: () => client().startTalking(),
   stopTalking: () => client().stopTalking(),
+  injectContext: (text: string, respond?: boolean, instructions?: string) => client().injectContext(text, respond, instructions),
   get micEnabled() { return client().micEnabled },
   get status() { return client().status },
   get transcript() { return client().transcript },
@@ -545,11 +562,20 @@ const realtime = {
 
 // Declared after `realtime`: watch() evaluates its source immediately, and
 // this one reads through to the composable.
+// Turns already looked at for new tool calls, so each one reaches the pill
+// once. A new call clears the transcript, which resets it.
+let toolTurnsSeen = 0
+
 watch(transcript, (turns) => {
-  transcriptText.value = turns
-    .filter((t) => t.role !== 'tool')
-    .map((t) => `${t.role === 'user' ? 'You' : 'Assistant'}: ${t.content}`)
-    .join('\n\n')
+  transcriptText.value = transcriptToText(turns)
+  if (turns.length < toolTurnsSeen) toolTurnsSeen = 0
+  // Each tool call shows on the floating pill for a moment: the user is
+  // usually in another app and would otherwise never see that the assistant
+  // looked (or did not).
+  for (let i = toolTurnsSeen; i < turns.length; i++) {
+    if (turns[i].role === 'tool') void emit('assistant-pill:tool', { line: turns[i].content }).catch(() => {})
+  }
+  toolTurnsSeen = turns.length
 }, { deep: true })
 
 async function activate() {
@@ -627,6 +653,10 @@ onMounted(async () => {
       // app start, and the only symptom was the model saying it had no tools.
       if (typeof ar.enable_tools === 'boolean') ui.enableTools = ar.enable_tools
       if (typeof ar.use_supervisor === 'boolean') ui.useSupervisor = ar.use_supervisor
+      session.screenContext = ar.screen_context !== false
+      session.voiceToolProfile = ar.voice_tool_profile === 'all' || ar.voice_tool_profile === 'screen_only' ? ar.voice_tool_profile : 'screen'
+      session.desktopAgent = ar.desktop_agent !== false
+      if (typeof ar.desktop_agent_model === 'string') session.desktopAgentModel = ar.desktop_agent_model
     }
   } catch (e) {
     debugLines.value.push('[warn] failed to load assistant_realtime settings')
@@ -647,8 +677,21 @@ watch(() => debugLines.value.length, async () => {
 // model insisting it had no tools. `show_debug` was in the saved payload with
 // the same problem: it only reached disk when some unrelated `session` field
 // happened to change. Watch all three explicitly.
-watch([session, () => ui.enableTools, () => ui.useSupervisor, () => ui.showDebug], async () => {
-  // Persist assistant_realtime settings immediately on change
+watch([session, () => ui.enableTools, () => ui.useSupervisor, () => ui.showDebug], () => { void saveAssistantSettings() }, { deep: true })
+
+// The voice tool profile and the desktop agent change the tool list, which
+// realtime_build_tools reads from the saved settings - so save first, then
+// resend the session.
+watch(() => [session.voiceToolProfile, session.desktopAgent], async () => {
+  await saveAssistantSettings()
+  await syncSession()
+})
+
+/**
+ * Persist the whole `assistant_realtime` blob. `save_settings` replaces it
+ * wholesale, so every key in it has to be listed here or it is wiped.
+ */
+async function saveAssistantSettings() {
   try {
     await invoke('save_settings', {
       map: {
@@ -672,17 +715,75 @@ watch([session, () => ui.enableTools, () => ui.useSupervisor, () => ui.showDebug
           history_enabled: session.historyEnabled,
           history_retention: session.historyRetention,
           show_debug: ui.showDebug,
+          // Read by screen_layer.rs, voice_tools.rs and desktop_agent.rs.
+          screen_context: session.screenContext,
+          voice_tool_profile: session.voiceToolProfile,
+          desktop_agent: session.desktopAgent,
+          desktop_agent_model: session.desktopAgentModel,
         }
       }
     })
   } catch (e) {
     debugLines.value.push('[warn] failed to save assistant_realtime settings')
   }
-}, { deep: true })
+}
 
 // Quick Actions raises this to start a session without the user clicking.
 watch(() => props.autostart, (n, old) => {
   if (typeof n === 'number' && typeof old === 'number' && n > old) void activate()
+})
+
+// ---- Background results (background_results.rs, background_tools.rs) -------
+//
+// A voice tool call that took longer and went to the background is emitted to
+// this window when it finishes. A live call takes it into the conversation and
+// acknowledges it; without one, Rust shows a notification and keeps the result
+// for the next call, which picks it up on connect.
+
+function deliverResult(o: BackgroundResult, respond: boolean): boolean {
+  if (!ui.connected) return false
+  // The user's own words pin the reply language; see replyLanguageRule.
+  const userTexts = transcript.value.filter((t) => t.role === 'user').map((t) => t.content)
+  const ok = realtime.injectContext(backgroundResultText(o), respond, respond ? resultSpeakInstructions(o, userTexts) : undefined)
+  if (ok) {
+    debugLines.value.push(`[${agentOf(o)}] ${o.status}: ${o.task.slice(0, 80)}`)
+    // The arrival is a step the user should see in the transcript, the call
+    // pill and the call history, like a tool call.
+    const result = o.status === 'completed' ? (o.output || '(no text)') : `${o.status}: ${o.error || 'unknown'}`
+    const line = `${agentOf(o)} answered -> ${result.replace(/\s+/g, ' ').slice(0, 157)}${result.length > 157 ? '…' : ''}`
+    try { (realtime as any).transcript?.value?.push({ role: 'tool', content: line }) } catch {}
+    void invoke('background_ack_result', { runId: o.runId }).catch(() => {})
+  }
+  return ok
+}
+
+async function deliverPendingResults() {
+  if (!ui.connected) return
+  let pending: BackgroundResult[] = []
+  try { pending = await invoke<BackgroundResult[]>('background_pending_results') } catch { return }
+  if (!pending.length) return
+  // All go in as context; one spoken answer at the end covers them, because a
+  // second queued response would only replace the first.
+  const speak = pending.some((o) => o.speakResult)
+  pending.forEach((o, i) => { deliverResult(o, speak && i === pending.length - 1) })
+}
+
+let unlistenJobDone: UnlistenFn | null = null
+
+onMounted(async () => {
+  try {
+    unlistenJobDone = await listen<BackgroundResult>('background:job-finished', (e) => {
+      const o = e.payload
+      if (!o) return
+      if (!deliverResult(o, o.speakResult !== false)) {
+        props.notify?.(o.status === 'completed' ? `${agentOf(o)} finished: ${o.task}` : `${agentOf(o)} ${o.status}: ${o.error || o.task}`, o.status === 'completed' ? 'success' : 'error', 6000)
+      }
+    })
+  } catch {}
+})
+
+onBeforeUnmount(() => {
+  try { unlistenJobDone?.() } catch {}
 })
 
 let unlistenHangup: UnlistenFn | null = null
@@ -943,6 +1044,63 @@ onBeforeUnmount(() => {
   </CollapsibleCard>
 
   <CollapsibleCard
+    id="assistant.presence"
+    title="Screen presence"
+    desc="What the assistant knows about your screen, and what it may do there."
+  >
+    <p class="field-hint">
+      Needs the
+      <a href="#" @click.prevent="openWindowsCommanderPage">windows-commander MCP server</a>,
+      which the app runs as a shared instance (Settings > MCP Servers > Screen layer).
+    </p>
+    <label class="switch row">
+      <input type="checkbox" v-model="session.screenContext" />
+      <span class="switch-text">
+        <span class="switch-label">Screen context</span>
+        <span class="switch-hint">
+          At the start of each turn the session gets a few lines from windows-commander: the app and window in front,
+          its URL, the focused element, what is under the cursor and the last few switches. Text only, sent again only
+          when it changed. Needs the windows-commander server connected and MCP tools on; private windows on its
+          block list show as "details withheld".
+        </span>
+      </span>
+    </label>
+
+    <div class="field">
+      <label class="field-label">Voice tools from windows-commander</label>
+      <select class="input" v-model="session.voiceToolProfile">
+        <option value="screen">Screen and simple actions (recommended)</option>
+        <option value="screen_only">Screen only, no actions</option>
+        <option value="all">All tools</option>
+      </select>
+      <p class="field-hint">
+        The call gets the tools that look at and point at the screen (current context, pointer context, focused
+        element, find element, OCR, screenshot, point at, mark area, highlight, clear) and, unless you pick "Screen
+        only", four single-step actions: click an element, set a field, type into the focused field, press a
+        shortcut. Realtime voice models pick badly from a long list, so mouse, PowerShell, files and registry stay
+        with chat and the desktop agent below. Other MCP servers keep their tools. Disabled tools stay off.
+      </p>
+    </div>
+
+    <label class="switch row">
+      <input type="checkbox" v-model="session.desktopAgent" />
+      <span class="switch-text">
+        <span class="switch-label">Desktop agent for multi-step tasks</span>
+        <span class="switch-hint">
+          Gives the call one more tool that hands a task with several steps ("switch Outlook to month view and open
+          next Tuesday") to the chat model with every MCP tool. It asks on screen before anything that sends or
+          deletes. Its steps show in the transcript; it runs in the background when it takes longer.
+        </span>
+      </span>
+    </label>
+    <div class="field" v-if="session.desktopAgent">
+      <label class="field-label">Desktop agent model</label>
+      <input class="input" type="text" v-model.lazy="session.desktopAgentModel" placeholder="empty = the Prompt chat model" />
+      <p class="field-hint">A model that is good at tool use pays off here; the agent may take a dozen steps.</p>
+    </div>
+  </CollapsibleCard>
+
+  <CollapsibleCard
     v-if="rateLimits?.length"
     id="assistant.ratelimits"
     title="Rate limits"
@@ -973,7 +1131,7 @@ onBeforeUnmount(() => {
     <div class="field">
       <label class="field-label">Plain text</label>
       <textarea class="input" rows="6" v-model="transcriptText"></textarea>
-      <p class="field-hint">Editable before you send it anywhere. Tool calls are left out.</p>
+      <p class="field-hint">Editable before you send it anywhere. Tool calls are kept as [tool] lines.</p>
     </div>
 
     <div class="actions">

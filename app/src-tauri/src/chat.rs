@@ -20,7 +20,40 @@ pub async fn chat_complete_with_mcp(
   temp: Option<f32>,
   mcp_clients: &AsyncMutex<std::collections::HashMap<String, Arc<RunningService<RoleClient, ()>>>>,
 ) -> Result<String, String> {
+  chat_complete_with_mcp_opts(app, messages, endpoint, model, temp, mcp_clients, LoopOptions::default()).await
+}
+
+/// How the tool loop runs for a caller other than the chat view.
+#[derive(Clone, Default)]
+pub struct LoopOptions {
+  /// When set, the loop does not emit `chat:tool-call` / `chat:tool-result`
+  /// (they would land in the Prompt chat view) and records one line per tool
+  /// call here instead. The voice session's desktop agent uses it.
+  pub trace: Option<Arc<std::sync::Mutex<Vec<String>>>>,
+  /// Model turns before the loop gives up; 0 means the chat default of 6.
+  pub max_rounds: u8,
+}
+
+fn record_step(opts: &LoopOptions, tool: &str, args: &serde_json::Value, result_text: &str) {
+  let Some(trace) = &opts.trace else { return; };
+  let failed = result_text.contains("\"error\"") || result_text.contains("\"isError\":true");
+  let mut a = args.to_string();
+  if a.chars().count() > 80 { a = a.chars().take(77).collect::<String>() + "..."; }
+  if let Ok(mut t) = trace.lock() { t.push(format!("{tool} {a} -> {}", if failed { "error" } else { "ok" })); }
+}
+
+pub async fn chat_complete_with_mcp_opts(
+  app: tauri::AppHandle,
+  messages: Vec<ChatMessage>,
+  endpoint: crate::llm_provider::ChatEndpoint,
+  model: String,
+  temp: Option<f32>,
+  mcp_clients: &AsyncMutex<std::collections::HashMap<String, Arc<RunningService<RoleClient, ()>>>>,
+  opts: LoopOptions,
+) -> Result<String, String> {
   use crate::mcp;
+  let quiet = opts.trace.is_some();
+  let rounds = if opts.max_rounds == 0 { 6 } else { opts.max_rounds };
 
   // Normalize incoming messages to OpenAI format
   let mut norm_msgs: Vec<serde_json::Value> = Vec::new();
@@ -100,7 +133,7 @@ pub async fn chat_complete_with_mcp(
   msgs_for_oai.extend(norm_msgs.clone());
   let mut final_text: Option<String> = None;
 
-  for _ in 0..6u8 {
+  for _ in 0..rounds {
     let mut body = serde_json::json!({ "model": &model, "messages": msgs_for_oai });
     if let Some(t) = temp { if let serde_json::Value::Object(ref mut m) = body { m.insert("temperature".to_string(), serde_json::json!(t)); } }
     if allow_tools && !tools.is_empty() {
@@ -157,14 +190,14 @@ pub async fn chat_complete_with_mcp(
         if !fargs_val.is_object() { fargs_val = serde_json::json!({}); }
 
         if let Some((server_id, tool_name)) = mcp::parse_mcp_fn_call_name(&fname) {
-          let _ = app.emit("chat:tool-call", serde_json::json!({ "id": id, "function": fname, "serverId": server_id, "tool": tool_name, "args": fargs_val.clone() }));
+          if !quiet { let _ = app.emit("chat:tool-call", serde_json::json!({ "id": id, "function": fname, "serverId": server_id, "tool": tool_name, "args": fargs_val.clone() })); }
           // Respect disabled tools from settings
           let disabled_map = crate::config::get_disabled_tools_map();
           let is_disabled = disabled_map.get(&server_id).map(|set| set.contains(&tool_name)).unwrap_or(false);
           let tool_result_text: String;
           if is_disabled {
             tool_result_text = serde_json::json!({ "serverId": server_id, "tool": tool_name, "error": "tool disabled by settings" }).to_string();
-            let _ = app.emit("chat:tool-result", serde_json::json!({ "id": id, "function": fname, "serverId": server_id, "tool": tool_name, "ok": false, "error": "tool disabled by settings" }));
+            if !quiet { let _ = app.emit("chat:tool-result", serde_json::json!({ "id": id, "function": fname, "serverId": server_id, "tool": tool_name, "ok": false, "error": "tool disabled by settings" })); }
           } else {
             let svc_opt = {
               let map2 = mcp_clients.lock().await;
@@ -181,24 +214,25 @@ pub async fn chat_complete_with_mcp(
                   let (res, images) = mcp::split_tool_images(serde_json::to_value(&res).unwrap_or(serde_json::Value::Null));
                   tool_images.extend(images);
                   tool_result_text = serde_json::to_string(&serde_json::json!({ "serverId": server_id, "tool": tool_name, "result": res })).unwrap_or_else(|_| "{}".to_string());
-                  let _ = app.emit("chat:tool-result", serde_json::json!({ "id": id, "function": fname, "serverId": server_id, "tool": tool_name, "ok": true, "result": res }));
+                  if !quiet { let _ = app.emit("chat:tool-result", serde_json::json!({ "id": id, "function": fname, "serverId": server_id, "tool": tool_name, "ok": true, "result": res })); }
                 }
                 Err(e) => {
                   tool_result_text = serde_json::json!({ "serverId": server_id, "tool": tool_name, "error": format!("call_tool failed: {}", e) }).to_string();
-                  let _ = app.emit("chat:tool-result", serde_json::json!({ "id": id, "function": fname, "serverId": server_id, "tool": tool_name, "ok": false, "error": format!("call_tool failed: {}", e) }));
+                  if !quiet { let _ = app.emit("chat:tool-result", serde_json::json!({ "id": id, "function": fname, "serverId": server_id, "tool": tool_name, "ok": false, "error": format!("call_tool failed: {}", e) })); }
                 }
               }
             } else {
               tool_result_text = serde_json::json!({ "error": format!("MCP server not connected: {}", server_id) }).to_string();
-              let _ = app.emit("chat:tool-result", serde_json::json!({ "id": id, "function": fname, "serverId": server_id, "tool": tool_name, "ok": false, "error": format!("MCP server not connected: {}", server_id) }));
+              if !quiet { let _ = app.emit("chat:tool-result", serde_json::json!({ "id": id, "function": fname, "serverId": server_id, "tool": tool_name, "ok": false, "error": format!("MCP server not connected: {}", server_id) })); }
             }
           }
 
+          record_step(&opts, &tool_name, &fargs_val, &tool_result_text);
           // Append tool result message
           msgs_for_oai.push(serde_json::json!({ "role": "tool", "tool_call_id": id, "content": tool_result_text }));
         } else {
           let tool_result_text = serde_json::json!({ "error": format!("Unsupported tool function: {}", fname) }).to_string();
-          let _ = app.emit("chat:tool-result", serde_json::json!({ "id": id, "function": fname, "ok": false, "error": format!("Unsupported tool function: {}", fname) }));
+          if !quiet { let _ = app.emit("chat:tool-result", serde_json::json!({ "id": id, "function": fname, "ok": false, "error": format!("Unsupported tool function: {}", fname) })); }
           msgs_for_oai.push(serde_json::json!({ "role": "tool", "tool_call_id": id, "content": tool_result_text }));
         }
       }
@@ -220,7 +254,7 @@ pub async fn chat_complete_with_mcp(
     break;
   }
 
-  Ok(final_text.unwrap_or_else(|| "(Tool call loop exhausted after 6 rounds — no final response from model.)".to_string()))
+  Ok(final_text.unwrap_or_else(|| format!("(Tool call loop exhausted after {rounds} rounds — no final response from model.)")))
 }
 
 #[derive(Debug, Deserialize)]

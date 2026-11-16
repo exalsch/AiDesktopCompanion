@@ -1,0 +1,1882 @@
+[
+ {
+  "name": "list_processes",
+  "description": "Retrieves a list of currently running processes.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "filter_name": {
+     "type": "string",
+     "description": "Case-insensitive substring to match against process names."
+    },
+    "sort_by_memory": {
+     "type": "boolean",
+     "description": "Sort by working-set memory descending when true."
+    }
+   }
+  }
+ },
+ {
+  "name": "get_process_details",
+  "description": "Fetches deep system information for a specific process.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "pid": {
+     "type": "integer",
+     "description": "Process id to inspect."
+    }
+   },
+   "required": [
+    "pid"
+   ]
+  }
+ },
+ {
+  "name": "manage_process",
+  "description": "Terminates or closes a process.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "pid": {
+     "type": "integer",
+     "description": "Process id to act on."
+    },
+    "action": {
+     "type": "string",
+     "description": "How to stop the process.",
+     "enum": [
+      "terminate",
+      "kill",
+      "kill_tree",
+      "close_main_window"
+     ]
+    }
+   },
+   "required": [
+    "pid",
+    "action"
+   ]
+  }
+ },
+ {
+  "name": "list_windows",
+  "description": "Returns a hierarchical list of active, visible windows.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {}
+  }
+ },
+ {
+  "name": "find_window",
+  "description": "Locates windows by title, class name, executable name, process ID, or visibility state.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "title_contains": {
+     "type": "string",
+     "description": "Case-insensitive substring to match against window titles."
+    },
+    "class_name": {
+     "type": "string",
+     "description": "Exact Win32 window class name to match."
+    },
+    "process_name": {
+     "type": "string",
+     "description": "Owning executable name to match (with or without .exe). Matched as a case-insensitive substring unless process_name_exact is true."
+    },
+    "process_name_exact": {
+     "type": "boolean",
+     "description": "Match process_name as a whole, case-insensitively, instead of a substring (default false). Set true to avoid e.g. 'notepad' also matching 'notepad++'."
+    },
+    "pid": {
+     "type": "integer",
+     "description": "Owning process id to match."
+    },
+    "visible_only": {
+     "type": "boolean",
+     "description": "Restrict results to visible windows when true."
+    }
+   }
+  }
+ },
+ {
+  "name": "get_foreground_window",
+  "description": "Returns the window that currently has the foreground (the one receiving keyboard input): handle, title, class, process and bounds. Returns null when no window is in the foreground. Use get_focused_ui_element for the exact control inside it.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {}
+  }
+ },
+ {
+  "name": "focus_window",
+  "description": "Brings a window to the foreground.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "window_handle": {
+     "type": "integer",
+     "description": "Native window handle (HWND) to focus."
+    }
+   },
+   "required": [
+    "window_handle"
+   ]
+  }
+ },
+ {
+  "name": "move_resize_window",
+  "description": "Moves and resizes a window.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "window_handle": {
+     "type": "integer",
+     "description": "Native window handle (HWND) to move."
+    },
+    "x": {
+     "type": "integer",
+     "description": "New left position in virtual-screen pixels."
+    },
+    "y": {
+     "type": "integer",
+     "description": "New top position in virtual-screen pixels."
+    },
+    "width": {
+     "type": "integer",
+     "description": "New width in pixels."
+    },
+    "height": {
+     "type": "integer",
+     "description": "New height in pixels."
+    }
+   },
+   "required": [
+    "window_handle"
+   ]
+  }
+ },
+ {
+  "name": "set_window_state",
+  "description": "Changes a window state.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "window_handle": {
+     "type": "integer",
+     "description": "Native window handle (HWND) to update."
+    },
+    "state": {
+     "type": "string",
+     "description": "Target window state.",
+     "enum": [
+      "hide",
+      "normal",
+      "restore",
+      "minimize",
+      "maximize"
+     ]
+    }
+   },
+   "required": [
+    "window_handle",
+    "state"
+   ]
+  }
+ },
+ {
+  "name": "wait_for_window",
+  "description": "Waits until a matching window appears.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "title_contains": {
+     "type": "string",
+     "description": "Case-insensitive substring to match against window titles."
+    },
+    "class_name": {
+     "type": "string",
+     "description": "Exact Win32 window class name to match."
+    },
+    "process_name": {
+     "type": "string",
+     "description": "Owning executable name to match. Matched as a case-insensitive substring unless process_name_exact is true."
+    },
+    "process_name_exact": {
+     "type": "boolean",
+     "description": "Match process_name as a whole, case-insensitively, instead of a substring (default false). Set true to avoid e.g. 'notepad' also matching 'notepad++'."
+    },
+    "pid": {
+     "type": "integer",
+     "description": "Owning process id to match."
+    },
+    "timeout_ms": {
+     "type": "integer",
+     "description": "Maximum time to wait in milliseconds (default 30000)."
+    }
+   }
+  }
+ },
+ {
+  "name": "enumerate_child_windows",
+  "description": "Enumerates child windows for a parent window.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "window_handle": {
+     "type": "integer",
+     "description": "Parent native window handle (HWND)."
+    }
+   },
+   "required": [
+    "window_handle"
+   ]
+  }
+ },
+ {
+  "name": "mouse_action",
+  "description": "Performs mouse movements and clicks.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "action": {
+     "type": "string",
+     "description": "Mouse action to perform.",
+     "enum": [
+      "move",
+      "click",
+      "double_click",
+      "drag"
+     ]
+    },
+    "button": {
+     "type": "string",
+     "description": "Mouse button to use.",
+     "enum": [
+      "left",
+      "right",
+      "middle"
+     ]
+    },
+    "x": {
+     "type": "integer",
+     "description": "Target X coordinate in virtual-screen pixels."
+    },
+    "y": {
+     "type": "integer",
+     "description": "Target Y coordinate in virtual-screen pixels."
+    },
+    "target_hwnd": {
+     "type": "integer",
+     "description": "Optional window handle to resolve coordinates against."
+    }
+   },
+   "required": [
+    "action"
+   ]
+  }
+ },
+ {
+  "name": "type_text",
+  "description": "Injects a stream of keystrokes into the focused window.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "text": {
+     "type": "string",
+     "description": "Text to type into the currently focused control."
+    },
+    "speed_ms": {
+     "type": "integer",
+     "description": "Delay between keystrokes in milliseconds."
+    }
+   },
+   "required": [
+    "text"
+   ]
+  }
+ },
+ {
+  "name": "send_hotkey",
+  "description": "Executes keyboard shortcuts.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "modifiers": {
+     "type": "array",
+     "description": "Modifier keys held down, e.g. ctrl, alt, shift, win.",
+     "items": {
+      "type": "string"
+     }
+    },
+    "key": {
+     "type": "string",
+     "description": "Primary key pressed while the modifiers are held."
+    }
+   },
+   "required": [
+    "modifiers",
+    "key"
+   ]
+  }
+ },
+ {
+  "name": "keyboard_action",
+  "description": "Sends low-level key press, release, or tap events.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "action": {
+     "type": "string",
+     "description": "Key event to send.",
+     "enum": [
+      "press",
+      "release",
+      "tap"
+     ]
+    },
+    "key": {
+     "type": "string",
+     "description": "Key name to act on."
+    },
+    "repeat": {
+     "type": "integer",
+     "description": "Number of times to repeat the action."
+    },
+    "delay_ms": {
+     "type": "integer",
+     "description": "Delay between repeats in milliseconds."
+    }
+   },
+   "required": [
+    "action",
+    "key"
+   ]
+  }
+ },
+ {
+  "name": "mouse_wheel",
+  "description": "Scrolls at the current cursor location or target.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "direction": {
+     "type": "string",
+     "description": "Scroll direction.",
+     "enum": [
+      "up",
+      "down",
+      "left",
+      "right"
+     ]
+    },
+    "amount": {
+     "type": "integer",
+     "description": "Number of scroll increments."
+    },
+    "target_hwnd": {
+     "type": "integer",
+     "description": "Optional window handle to scroll over."
+    },
+    "x": {
+     "type": "integer",
+     "description": "Optional X coordinate to scroll over."
+    },
+    "y": {
+     "type": "integer",
+     "description": "Optional Y coordinate to scroll over."
+    }
+   },
+   "required": [
+    "direction",
+    "amount"
+   ]
+  }
+ },
+ {
+  "name": "get_cursor_position",
+  "description": "Returns the current cursor position.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {}
+  }
+ },
+ {
+  "name": "set_cursor_position",
+  "description": "Moves the cursor to a virtual-screen coordinate.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "x": {
+     "type": "integer",
+     "description": "Target X coordinate in virtual-screen pixels."
+    },
+    "y": {
+     "type": "integer",
+     "description": "Target Y coordinate in virtual-screen pixels."
+    },
+    "duration_ms": {
+     "type": "integer",
+     "description": "Animation duration for the move in milliseconds."
+    }
+   },
+   "required": [
+    "x",
+    "y"
+   ]
+  }
+ },
+ {
+  "name": "input_sequence",
+  "description": "Executes a sequence of input actions.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "steps": {
+     "type": "array",
+     "description": "Ordered input steps to execute.",
+     "items": {
+      "type": "object",
+      "properties": {
+       "type": {
+        "type": "string",
+        "description": "Step kind.",
+        "enum": [
+         "mouse",
+         "text",
+         "keyboard",
+         "hotkey",
+         "delay"
+        ]
+       },
+       "action": {
+        "type": "string",
+        "description": "Action for mouse or keyboard steps."
+       },
+       "text": {
+        "type": "string",
+        "description": "Text for text steps."
+       },
+       "key": {
+        "type": "string",
+        "description": "Key for keyboard or hotkey steps."
+       },
+       "modifiers": {
+        "type": "array",
+        "description": "Modifier keys for hotkey steps.",
+        "items": {
+         "type": "string"
+        }
+       },
+       "x": {
+        "type": "integer",
+        "description": "X coordinate for mouse steps."
+       },
+       "y": {
+        "type": "integer",
+        "description": "Y coordinate for mouse steps."
+       },
+       "delay_ms": {
+        "type": "integer",
+        "description": "Delay in milliseconds for delay steps."
+       }
+      },
+      "required": [
+       "type"
+      ]
+     }
+    },
+    "abort_on_error": {
+     "type": "boolean",
+     "description": "Stop the sequence on the first failing step (default true)."
+    }
+   },
+   "required": [
+    "steps"
+   ]
+  }
+ },
+ {
+  "name": "capture_screen",
+  "description": "Captures pixels from the screen and returns a PNG image.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "target": {
+     "type": "string",
+     "description": "What to capture: 'full_screen', 'active_window', or a numeric window handle."
+    },
+    "hwnd": {
+     "type": "integer",
+     "description": "Explicit window handle to capture (overrides target)."
+    },
+    "max_dimension": {
+     "type": "integer",
+     "description": "Cap the longest image side in pixels; the capture is downscaled to fit (default 1400)."
+    },
+    "bring_to_front": {
+     "type": "boolean",
+     "description": "When the target is a specific window (hwnd or a numeric target), its own pixels are captured directly (via PrintWindow), so an occluded, off-screen, or background window is captured correctly without stealing focus or bringing it in front of what the user is working in. bring_to_front (default true) only restores the target first if it is minimized so it can be rendered. No effect for screen or active_window targets. Pass false to leave a minimized/background window untouched."
+    }
+   },
+   "required": [
+    "target"
+   ]
+  }
+ },
+ {
+  "name": "capture_screen_region",
+  "description": "Captures a rectangular screen region as a PNG image.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "x": {
+     "type": "integer",
+     "description": "Region left position in virtual-screen pixels."
+    },
+    "y": {
+     "type": "integer",
+     "description": "Region top position in virtual-screen pixels."
+    },
+    "width": {
+     "type": "integer",
+     "description": "Region width in pixels."
+    },
+    "height": {
+     "type": "integer",
+     "description": "Region height in pixels."
+    },
+    "monitor_id": {
+     "type": "string",
+     "description": "Optional monitor identifier the region belongs to."
+    },
+    "max_dimension": {
+     "type": "integer",
+     "description": "Cap the longest image side in pixels (default 1400)."
+    }
+   },
+   "required": [
+    "x",
+    "y",
+    "width",
+    "height"
+   ]
+  }
+ },
+ {
+  "name": "read_ui_tree",
+  "description": "Reads the UI Automation tree for a window. Returns a result object with the flattened 'elements' list plus 'truncated' (true when elements deeper than max_depth were dropped), 'maxDepth', and 'elementCount'. Use control_types / interactable_only to shrink the payload to the elements you care about.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "hwnd": {
+     "type": "integer",
+     "description": "Native window handle (HWND) whose UI tree to read."
+    },
+    "max_depth": {
+     "type": "integer",
+     "description": "Maximum tree depth to descend, clamped to 1..20 (default 5). Increase if the result reports truncated=true."
+    },
+    "control_types": {
+     "type": "array",
+     "description": "Optional: keep only elements whose UI Automation control type is in this list (e.g. [\"Button\",\"Edit\",\"MenuItem\"]). Omit to return every control type. Truncation is still computed over the full tree.",
+     "items": {
+      "type": "string"
+     }
+    },
+    "interactable_only": {
+     "type": "boolean",
+     "description": "Optional: keep only elements that expose an actionable pattern (Invoke, Toggle, SelectionItem, ExpandCollapse or Value), dropping structural noise like panes and static text."
+    }
+   },
+   "required": [
+    "hwnd"
+   ]
+  }
+ },
+ {
+  "name": "find_ui_element",
+  "description": "Searches UI Automation elements.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "hwnd": {
+     "type": "integer",
+     "description": "Native window handle (HWND) to search within."
+    },
+    "max_depth": {
+     "type": "integer",
+     "description": "Maximum tree depth to search, clamped to 1..20 (default 5). Increase if a deeply nested element is not found."
+    },
+    "name_contains": {
+     "type": "string",
+     "description": "Case-insensitive substring to match against element names."
+    },
+    "automation_id": {
+     "type": "string",
+     "description": "Exact AutomationId to match."
+    },
+    "control_type": {
+     "type": "string",
+     "description": "UI Automation control type to match (matched exactly). Note: most multi-line text editors, including Notepad, expose their editing surface as 'Document', not 'Edit'.",
+     "enum": [
+      "Button",
+      "Calendar",
+      "CheckBox",
+      "ComboBox",
+      "Edit",
+      "Hyperlink",
+      "Image",
+      "ListItem",
+      "List",
+      "Menu",
+      "MenuBar",
+      "MenuItem",
+      "ProgressBar",
+      "RadioButton",
+      "ScrollBar",
+      "Slider",
+      "Spinner",
+      "StatusBar",
+      "Tab",
+      "TabItem",
+      "Text",
+      "ToolBar",
+      "ToolTip",
+      "Tree",
+      "TreeItem",
+      "Custom",
+      "Group",
+      "Thumb",
+      "DataGrid",
+      "DataItem",
+      "Document",
+      "SplitButton",
+      "Window",
+      "Pane",
+      "Header",
+      "HeaderItem",
+      "Table",
+      "TitleBar",
+      "Separator",
+      "SemanticZoom",
+      "AppBar"
+     ]
+    },
+    "class_name": {
+     "type": "string",
+     "description": "Element class name to match."
+    },
+    "enabled_only": {
+     "type": "boolean",
+     "description": "Restrict results to enabled elements when true."
+    }
+   },
+   "required": [
+    "hwnd"
+   ]
+  }
+ },
+ {
+  "name": "invoke_ui_element",
+  "description": "Invokes a UI Automation element action.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "element_ref": {
+     "type": "string",
+     "description": "Element reference returned by find_ui_element or read_ui_tree."
+    },
+    "action": {
+     "type": "string",
+     "description": "Action to invoke on the element.",
+     "enum": [
+      "invoke",
+      "select",
+      "expand",
+      "collapse",
+      "toggle",
+      "focus"
+     ]
+    }
+   },
+   "required": [
+    "element_ref",
+    "action"
+   ]
+  }
+ },
+ {
+  "name": "set_ui_value",
+  "description": "Sets an editable UI Automation value.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "element_ref": {
+     "type": "string",
+     "description": "Element reference for an editable control."
+    },
+    "value": {
+     "type": "string",
+     "description": "New value to set."
+    }
+   },
+   "required": [
+    "element_ref",
+    "value"
+   ]
+  }
+ },
+ {
+  "name": "get_ui_element_details",
+  "description": "Gets detailed UI Automation element information.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "element_ref": {
+     "type": "string",
+     "description": "Element reference to inspect."
+    }
+   },
+   "required": [
+    "element_ref"
+   ]
+  }
+ },
+ {
+  "name": "get_focused_ui_element",
+  "description": "Returns the UI Automation element that currently has keyboard focus, system-wide, with its element_ref (usable with invoke_ui_element / set_ui_value), owning process, and top-level window handle and title. Check this before type_text to confirm where the text will land.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {}
+  }
+ },
+ {
+  "name": "ocr_screen",
+  "description": "Extracts local visible text metadata from a screen/window region.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "target": {
+     "type": "string",
+     "description": "What to read: 'full_screen', 'active_window', or a numeric window handle."
+    },
+    "hwnd": {
+     "type": "integer",
+     "description": "Explicit window handle to read."
+    },
+    "region": {
+     "type": "object",
+     "description": "Optional sub-region to limit the read.",
+     "properties": {
+      "x": {
+       "type": "integer",
+       "description": "Left position in pixels."
+      },
+      "y": {
+       "type": "integer",
+       "description": "Top position in pixels."
+      },
+      "width": {
+       "type": "integer",
+       "description": "Width in pixels."
+      },
+      "height": {
+       "type": "integer",
+       "description": "Height in pixels."
+      }
+     },
+     "required": [
+      "x",
+      "y",
+      "width",
+      "height"
+     ]
+    },
+    "bring_to_front": {
+     "type": "boolean",
+     "description": "When the target is a specific window (hwnd or a numeric target), its own pixels are read directly (via PrintWindow), so an occluded, off-screen, or background window is read correctly without stealing focus or bringing it in front of what the user is working in. bring_to_front (default true) only restores the target first if it is minimized so it can be rendered. No effect for screen or active_window targets. Pass false to leave a minimized/background window untouched."
+    }
+   },
+   "required": [
+    "target"
+   ]
+  }
+ },
+ {
+  "name": "detect_visual_elements",
+  "description": "Detects local visual candidates from windows/UI metadata.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "target": {
+     "type": "string",
+     "description": "What to scan: 'full_screen', 'active_window', or a numeric window handle."
+    },
+    "hwnd": {
+     "type": "integer",
+     "description": "Explicit window handle to scan."
+    },
+    "region": {
+     "type": "object",
+     "description": "Optional sub-region to limit the scan.",
+     "properties": {
+      "x": {
+       "type": "integer",
+       "description": "Left position in pixels."
+      },
+      "y": {
+       "type": "integer",
+       "description": "Top position in pixels."
+      },
+      "width": {
+       "type": "integer",
+       "description": "Width in pixels."
+      },
+      "height": {
+       "type": "integer",
+       "description": "Height in pixels."
+      }
+     },
+     "required": [
+      "x",
+      "y",
+      "width",
+      "height"
+     ]
+    },
+    "element_types": {
+     "type": "array",
+     "description": "Element categories to detect, e.g. window.",
+     "items": {
+      "type": "string"
+     }
+    }
+   },
+   "required": [
+    "target"
+   ]
+  }
+ },
+ {
+  "name": "get_screen_details",
+  "description": "Retrieves detailed information about every attached screen.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {}
+  }
+ },
+ {
+  "name": "get_screen_at_point",
+  "description": "Resolves which screen contains a specific virtual-screen coordinate.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "x": {
+     "type": "integer",
+     "description": "X coordinate in virtual-screen pixels."
+    },
+    "y": {
+     "type": "integer",
+     "description": "Y coordinate in virtual-screen pixels."
+    }
+   },
+   "required": [
+    "x",
+    "y"
+   ]
+  }
+ },
+ {
+  "name": "get_system_info",
+  "description": "Retrieves host-level metadata useful for automation decisions.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {}
+  }
+ },
+ {
+  "name": "execute_powershell",
+  "description": "Runs a PowerShell script or command silently.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "command": {
+     "type": "string",
+     "description": "PowerShell script or command text to run."
+    },
+    "working_directory": {
+     "type": "string",
+     "description": "Working directory for the invocation."
+    },
+    "timeout_ms": {
+     "type": "integer",
+     "description": "Maximum execution time in milliseconds."
+    },
+    "environment": {
+     "type": "object",
+     "description": "Extra environment variables as a string-to-string map.",
+     "additionalProperties": {
+      "type": "string"
+     }
+    }
+   },
+   "required": [
+    "command"
+   ]
+  }
+ },
+ {
+  "name": "execute_process",
+  "description": "Starts a native executable with explicit arguments and controlled output capture.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "executable_path": {
+     "type": "string",
+     "description": "Full path to the executable to start."
+    },
+    "arguments": {
+     "type": "array",
+     "description": "Command-line arguments passed individually.",
+     "items": {
+      "type": "string"
+     }
+    },
+    "working_directory": {
+     "type": "string",
+     "description": "Working directory for the process."
+    },
+    "timeout_ms": {
+     "type": "integer",
+     "description": "Maximum execution time in milliseconds."
+    },
+    "wait_for_exit": {
+     "type": "boolean",
+     "description": "Wait for the process to exit and capture output when true."
+    }
+   },
+   "required": [
+    "executable_path"
+   ]
+  }
+ },
+ {
+  "name": "clipboard_access",
+  "description": "Interacts with the system clipboard.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "action": {
+     "type": "string",
+     "description": "Clipboard operation to perform.",
+     "enum": [
+      "read",
+      "write",
+      "clear"
+     ]
+    },
+    "content": {
+     "type": "string",
+     "description": "Text to place on the clipboard for the 'write' action."
+    },
+    "format": {
+     "type": "string",
+     "description": "Optional clipboard format hint. Only 'text' is supported.",
+     "enum": [
+      "text"
+     ]
+    }
+   },
+   "required": [
+    "action"
+   ]
+  }
+ },
+ {
+  "name": "get_environment_variable",
+  "description": "Reads environment variables from process, user, or machine scope.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string",
+     "description": "Environment variable name."
+    },
+    "scope": {
+     "type": "string",
+     "description": "Scope to read from.",
+     "enum": [
+      "process",
+      "user",
+      "machine"
+     ]
+    }
+   },
+   "required": [
+    "name",
+    "scope"
+   ]
+  }
+ },
+ {
+  "name": "set_environment_variable",
+  "description": "Sets or removes environment variables from process, user, or machine scope.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string",
+     "description": "Environment variable name."
+    },
+    "value": {
+     "type": "string",
+     "description": "New value; omit or null to delete the variable."
+    },
+    "scope": {
+     "type": "string",
+     "description": "Scope to write to.",
+     "enum": [
+      "process",
+      "user",
+      "machine"
+     ]
+    }
+   },
+   "required": [
+    "name",
+    "scope"
+   ]
+  }
+ },
+ {
+  "name": "list_directory",
+  "description": "Lists files and directories with Windows metadata.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "path": {
+     "type": "string",
+     "description": "Directory path to list."
+    },
+    "recursive": {
+     "type": "boolean",
+     "description": "Recurse into subdirectories when true."
+    },
+    "include_hidden": {
+     "type": "boolean",
+     "description": "Include hidden and system entries when true."
+    },
+    "pattern": {
+     "type": "string",
+     "description": "Optional wildcard filename pattern, e.g. *.txt."
+    }
+   },
+   "required": [
+    "path"
+   ]
+  }
+ },
+ {
+  "name": "read_file",
+  "description": "Reads text or binary file content with encoding detection.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "path": {
+     "type": "string",
+     "description": "File path to read."
+    },
+    "encoding": {
+     "type": "string",
+     "description": "Text encoding name, e.g. utf-8, utf-16, ascii."
+    },
+    "max_bytes": {
+     "type": "integer",
+     "description": "Maximum number of bytes to read."
+    },
+    "as_base64": {
+     "type": "boolean",
+     "description": "Return raw bytes as base64 instead of decoded text."
+    }
+   },
+   "required": [
+    "path"
+   ]
+  }
+ },
+ {
+  "name": "write_file",
+  "description": "Writes file content with explicit overwrite control.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "path": {
+     "type": "string",
+     "description": "File path to write."
+    },
+    "content": {
+     "type": "string",
+     "description": "Content to write to the file."
+    },
+    "encoding": {
+     "type": "string",
+     "description": "Text encoding name, e.g. utf-8."
+    },
+    "overwrite": {
+     "type": "boolean",
+     "description": "Overwrite an existing file when true."
+    },
+    "create_directories": {
+     "type": "boolean",
+     "description": "Create missing parent directories when true."
+    }
+   },
+   "required": [
+    "path",
+    "content"
+   ]
+  }
+ },
+ {
+  "name": "copy_move_delete_path",
+  "description": "Copies, moves, deletes, or sends files and directories to the recycle bin.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "action": {
+     "type": "string",
+     "description": "File system operation to perform.",
+     "enum": [
+      "copy",
+      "move",
+      "delete",
+      "recycle"
+     ]
+    },
+    "source_path": {
+     "type": "string",
+     "description": "Source file or directory path."
+    },
+    "destination_path": {
+     "type": "string",
+     "description": "Destination path for copy and move actions."
+    },
+    "recursive": {
+     "type": "boolean",
+     "description": "Apply the action recursively to directories when true."
+    },
+    "overwrite": {
+     "type": "boolean",
+     "description": "Overwrite an existing destination when true."
+    }
+   },
+   "required": [
+    "action",
+    "source_path"
+   ]
+  }
+ },
+ {
+  "name": "get_file_properties",
+  "description": "Retrieves file metadata, version info, hashes, and security descriptor summary.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "path": {
+     "type": "string",
+     "description": "File path to inspect."
+    },
+    "hash_algorithm": {
+     "type": "string",
+     "description": "Optional content hash to compute.",
+     "enum": [
+      "SHA256",
+      "SHA1",
+      "MD5"
+     ]
+    }
+   },
+   "required": [
+    "path"
+   ]
+  }
+ },
+ {
+  "name": "open_path",
+  "description": "Opens a file, folder, URI, or shell verb using the Windows shell.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "path_or_uri": {
+     "type": "string",
+     "description": "File path, folder path, or URI to open."
+    },
+    "verb": {
+     "type": "string",
+     "description": "Optional shell verb, e.g. open, edit, print."
+    },
+    "arguments": {
+     "type": "array",
+     "description": "Optional arguments passed to the target.",
+     "items": {
+      "type": "string"
+     }
+    }
+   },
+   "required": [
+    "path_or_uri"
+   ]
+  }
+ },
+ {
+  "name": "show_in_explorer",
+  "description": "Opens File Explorer with a file or folder selected.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "path": {
+     "type": "string",
+     "description": "File or folder path to reveal."
+    }
+   },
+   "required": [
+    "path"
+   ]
+  }
+ },
+ {
+  "name": "search_files",
+  "description": "Searches file names and optional file content across one or more roots.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "roots": {
+     "type": "array",
+     "description": "Root directories to search.",
+     "items": {
+      "type": "string"
+     }
+    },
+    "name_pattern": {
+     "type": "string",
+     "description": "Optional wildcard filename pattern."
+    },
+    "content_query": {
+     "type": "string",
+     "description": "Optional text to search for inside files."
+    },
+    "include_hidden": {
+     "type": "boolean",
+     "description": "Include hidden and system files when true."
+    },
+    "max_results": {
+     "type": "integer",
+     "description": "Maximum number of results to return."
+    }
+   },
+   "required": [
+    "roots"
+   ]
+  }
+ },
+ {
+  "name": "get_display_metrics",
+  "description": "Maps the physical monitor setup.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {}
+  }
+ },
+ {
+  "name": "get_window_screen_info",
+  "description": "Returns screen mapping details for a window handle.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "window_handle": {
+     "type": "integer",
+     "description": "Native window handle (HWND) to resolve."
+    }
+   },
+   "required": [
+    "window_handle"
+   ]
+  }
+ },
+ {
+  "name": "identify_screens",
+  "description": "Returns monitor identity and geometry details for screen identification.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {}
+  }
+ },
+ {
+  "name": "show_notification",
+  "description": "Shows a local Windows notification balloon.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "title": {
+     "type": "string",
+     "description": "Notification title."
+    },
+    "message": {
+     "type": "string",
+     "description": "Notification body text."
+    },
+    "timeout_ms": {
+     "type": "integer",
+     "description": "How long to display the notification in milliseconds."
+    }
+   },
+   "required": [
+    "title",
+    "message"
+   ]
+  }
+ },
+ {
+  "name": "list_services",
+  "description": "Lists Windows services with status and startup metadata.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "name_filter": {
+     "type": "string",
+     "description": "Case-insensitive substring to match against service names."
+    },
+    "status_filter": {
+     "type": "string",
+     "description": "Optional service status to filter by, e.g. running, stopped."
+    }
+   }
+  }
+ },
+ {
+  "name": "read_registry",
+  "description": "Reads values from a Windows registry key.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "hive": {
+     "type": "string",
+     "description": "Registry hive.",
+     "enum": [
+      "HKCU",
+      "HKLM",
+      "HKCR",
+      "HKU",
+      "HKCC"
+     ]
+    },
+    "key_path": {
+     "type": "string",
+     "description": "Registry key path relative to the hive."
+    },
+    "value_name": {
+     "type": "string",
+     "description": "Specific value name to read; omit to read all values."
+    }
+   },
+   "required": [
+    "hive",
+    "key_path"
+   ]
+  }
+ },
+ {
+  "name": "list_installed_apps",
+  "description": "Lists installed desktop applications and optional Store package registrations.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "name_filter": {
+     "type": "string",
+     "description": "Case-insensitive substring to match against application names."
+    },
+    "include_store_apps": {
+     "type": "boolean",
+     "description": "Include Microsoft Store packaged apps when true."
+    },
+    "include_system_components": {
+     "type": "boolean",
+     "description": "Include system components when true."
+    }
+   }
+  }
+ },
+ {
+  "name": "launch_app",
+  "description": "Launches an application by path, shell URI, AUMID, or shortcut name.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "identifier": {
+     "type": "string",
+     "description": "Application identifier matching identifier_type."
+    },
+    "identifier_type": {
+     "type": "string",
+     "description": "How to interpret identifier.",
+     "enum": [
+      "path",
+      "shell_uri",
+      "shortcut_name",
+      "aumid"
+     ]
+    },
+    "arguments": {
+     "type": "array",
+     "description": "Optional command-line arguments.",
+     "items": {
+      "type": "string"
+     }
+    }
+   },
+   "required": [
+    "identifier",
+    "identifier_type"
+   ]
+  }
+ },
+ {
+  "name": "show_control_indicator",
+  "description": "Displays computer-control indication state.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "message": {
+     "type": "string",
+     "description": "Message shown in the control indicator."
+    },
+    "bounds": {
+     "type": "object",
+     "description": "Optional screen bounds for the indicator overlay.",
+     "properties": {
+      "x": {
+       "type": "integer",
+       "description": "Left position in pixels."
+      },
+      "y": {
+       "type": "integer",
+       "description": "Top position in pixels."
+      },
+      "width": {
+       "type": "integer",
+       "description": "Width in pixels."
+      },
+      "height": {
+       "type": "integer",
+       "description": "Height in pixels."
+      }
+     },
+     "required": [
+      "x",
+      "y",
+      "width",
+      "height"
+     ]
+    }
+   },
+   "required": [
+    "message"
+   ]
+  }
+ },
+ {
+  "name": "hide_control_indicator",
+  "description": "Hides computer-control indication state.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {}
+  }
+ },
+ {
+  "name": "configure_control_indicators",
+  "description": "Configures visual and audio control indicators.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "visual_enabled": {
+     "type": "boolean",
+     "description": "Enable the visual border indicator (default true)."
+    },
+    "audio_enabled": {
+     "type": "boolean",
+     "description": "Enable the audio indicator (default true)."
+    },
+    "border_color": {
+     "type": "string",
+     "description": "Border color name (default Red)."
+    },
+    "border_thickness": {
+     "type": "integer",
+     "description": "Border thickness in pixels (default 4)."
+    },
+    "audio_frequency_hz": {
+     "type": "integer",
+     "description": "Audio tone frequency in Hz (default 880)."
+    },
+    "audio_duration_ms": {
+     "type": "integer",
+     "description": "Audio tone duration in milliseconds (default 150)."
+    }
+   }
+  }
+ },
+ {
+  "name": "get_control_indicator_status",
+  "description": "Returns current indicator state.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {}
+  }
+ },
+ {
+  "name": "request_user_confirmation",
+  "description": "Requests local user confirmation in a topmost dialog that takes keyboard focus: Enter or Space approves, Esc denies. Returns decision ('approved', 'denied' or 'timeout'). The dialog closes itself on timeout.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "title": {
+     "type": "string",
+     "description": "Confirmation dialog title."
+    },
+    "message": {
+     "type": "string",
+     "description": "Confirmation prompt shown to the user."
+    },
+    "risk_level": {
+     "type": "string",
+     "description": "Risk level of the pending operation.",
+     "enum": [
+      "low",
+      "medium",
+      "high"
+     ]
+    },
+    "timeout_ms": {
+     "type": "integer",
+     "description": "How long to wait for a response in milliseconds."
+    }
+   },
+   "required": [
+    "title",
+    "message",
+    "risk_level"
+   ]
+  }
+ },
+ {
+  "name": "ask_user",
+  "description": "Asks the local user a question in a topmost dialog and waits for the answer. Use it for decisions only the user can make. Offer choices as options (one button each), and/or set allow_text_input for a free-text answer. Returns decision ('answered', 'cancelled' or 'timeout'), the clicked choice, and the typed text. The dialog closes itself on timeout.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "title": {
+     "type": "string",
+     "description": "Dialog title."
+    },
+    "message": {
+     "type": "string",
+     "description": "The question shown to the user."
+    },
+    "options": {
+     "type": "array",
+     "description": "Button labels, one per choice, at most 6, e.g. [\"Yes\", \"No\", \"Later\"]. The first is the default (Enter). Omit for a single OK button.",
+     "items": {
+      "type": "string"
+     }
+    },
+    "allow_text_input": {
+     "type": "boolean",
+     "description": "Show a text field and return what the user typed (default false)."
+    },
+    "default_text": {
+     "type": "string",
+     "description": "Initial content of the text field."
+    },
+    "timeout_ms": {
+     "type": "integer",
+     "description": "How long to wait for an answer in milliseconds, clamped to 1000..600000 (default 120000)."
+    }
+   },
+   "required": [
+    "title",
+    "message"
+   ]
+  }
+ },
+ {
+  "name": "point_at",
+  "description": "Draws an arrow (with an optional label) on the user's screen pointing at a target, to show the user where something is. Pass exactly ONE target: x+y (virtual-screen pixels), element (an element_ref), or text (found on screen with OCR; optionally scoped by window or window_title). The arrow comes from the side with room, never covers the target, and fades out after duration_ms. Click-through: it never takes focus or blocks input. Returns the annotation id and the resolved target rect. If the target cannot be resolved, returns an error and draws nothing.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "x": {
+     "type": "integer",
+     "description": "Target X in virtual-screen pixels (with y)."
+    },
+    "y": {
+     "type": "integer",
+     "description": "Target Y in virtual-screen pixels (with x)."
+    },
+    "element": {
+     "type": "string",
+     "description": "Element reference (element_ref) from find_ui_element, read_ui_tree, get_focused_ui_element or get_pointer_context."
+    },
+    "text": {
+     "type": "string",
+     "description": "Text to find on screen with OCR; the best word-level match is the target (exact before partial before fuzzy, then top-to-bottom)."
+    },
+    "window": {
+     "type": "integer",
+     "description": "With text: only search this window (HWND)."
+    },
+    "window_title": {
+     "type": "string",
+     "description": "With text: only search the topmost visible window whose title contains this."
+    },
+    "label": {
+     "type": "string",
+     "description": "Optional label shown at the arrow's tail, e.g. 'Click here to save'."
+    },
+    "color": {
+     "type": "string",
+     "description": "Optional color: a name ('Red') or '#RRGGBB' / '#AARRGGBB' (default #FF1E90FF)."
+    },
+    "duration_ms": {
+     "type": "integer",
+     "description": "How long the arrow stays, in milliseconds (default 8000, max 3600000). 0 keeps it until clear_annotations."
+    }
+   }
+  }
+ },
+ {
+  "name": "mark_area",
+  "description": "Frames an area of the user's screen to draw attention to it: a rounded box (default), a spotlight (dims every screen except the area), or an underline, with an optional label. Pass exactly ONE target: rect, element (an element_ref), or text (found with OCR; optionally scoped by window or window_title). Click-through and never focused. Returns the annotation id and the resolved target rect. If the target cannot be resolved, returns an error and draws nothing.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "rect": {
+     "type": "object",
+     "description": "Area in virtual-screen pixels.",
+     "properties": {
+      "x": {
+       "type": "integer",
+       "description": "Left position in pixels."
+      },
+      "y": {
+       "type": "integer",
+       "description": "Top position in pixels."
+      },
+      "width": {
+       "type": "integer",
+       "description": "Width in pixels."
+      },
+      "height": {
+       "type": "integer",
+       "description": "Height in pixels."
+      }
+     },
+     "required": [
+      "x",
+      "y",
+      "width",
+      "height"
+     ]
+    },
+    "element": {
+     "type": "string",
+     "description": "Element reference (element_ref) to frame."
+    },
+    "text": {
+     "type": "string",
+     "description": "Text to find on screen with OCR and frame."
+    },
+    "window": {
+     "type": "integer",
+     "description": "With text: only search this window (HWND)."
+    },
+    "window_title": {
+     "type": "string",
+     "description": "With text: only search the topmost visible window whose title contains this."
+    },
+    "style": {
+     "type": "string",
+     "description": "How to mark the area.",
+     "enum": [
+      "box",
+      "spotlight",
+      "underline"
+     ]
+    },
+    "label": {
+     "type": "string",
+     "description": "Optional label shown next to the area."
+    },
+    "color": {
+     "type": "string",
+     "description": "Optional color: a name ('Red') or '#RRGGBB' / '#AARRGGBB' (default #FF1E90FF)."
+    },
+    "duration_ms": {
+     "type": "integer",
+     "description": "How long the mark stays, in milliseconds (default 8000, max 3600000). 0 keeps it until clear_annotations."
+    }
+   }
+  }
+ },
+ {
+  "name": "highlight_element",
+  "description": "Frames a UI Automation element on screen (mark_area on an element). Returns the annotation id and the element's resolved rect; errors and draws nothing if the element is gone or off-screen.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "element": {
+     "type": "string",
+     "description": "Element reference (element_ref) from find_ui_element, read_ui_tree, get_focused_ui_element or get_pointer_context."
+    },
+    "style": {
+     "type": "string",
+     "description": "How to mark the element.",
+     "enum": [
+      "box",
+      "spotlight",
+      "underline"
+     ]
+    },
+    "label": {
+     "type": "string",
+     "description": "Optional label shown next to the element."
+    },
+    "color": {
+     "type": "string",
+     "description": "Optional color: a name ('Red') or '#RRGGBB' / '#AARRGGBB' (default #FF1E90FF)."
+    },
+    "duration_ms": {
+     "type": "integer",
+     "description": "How long the highlight stays, in milliseconds (default 8000, max 3600000). 0 keeps it until clear_annotations."
+    }
+   },
+   "required": [
+    "element"
+   ]
+  }
+ },
+ {
+  "name": "clear_annotations",
+  "description": "Removes annotations drawn by point_at / mark_area / highlight_element: one by id, or all when id is omitted. Returns the cleared ids and how many remain. An id that already expired clears nothing and is not an error.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string",
+     "description": "Annotation id to remove (e.g. 'ann-3'); omit to remove all."
+    }
+   }
+  }
+ },
+ {
+  "name": "get_current_context",
+  "description": "Returns what the user is doing right now: the foreground window (handle, process, title), the focused UI element (name, control type, automation id), the address-bar URL for Edge / Chrome / Firefox, and how long the user has been there, plus the last N debounced context changes (newest first) and the timeline cursor. Password managers and private browsing windows show only {blocked:true, processName}. Read-only; never takes a screenshot.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "recent": {
+     "type": "integer",
+     "description": "How many recent context changes to include (default 5, 0 for none)."
+    }
+   }
+  }
+ },
+ {
+  "name": "get_activity",
+  "description": "Returns the activity timeline: debounced context changes (a switch counts after the user stays ~1.5 s), oldest first, each with timestamp (UTC), window, process, title, URL (browsers), focused element and dwellMs (set once the user moved on). Pass the returned cursor back to read only newer entries. 'missed' counts entries dropped from the 200-entry buffer; 'reset' means the cursor was from an earlier server run. The timeline is per server process.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "cursor": {
+     "type": "integer",
+     "description": "Return entries after this cursor (from a previous get_activity / get_current_context / wait_for_context_change)."
+    },
+    "since": {
+     "type": "string",
+     "description": "Return entries newer than this ISO 8601 timestamp, e.g. 2026-11-10T09:30:00Z. Ignored when cursor is given."
+    },
+    "limit": {
+     "type": "integer",
+     "description": "Maximum entries to return (default 50, max 200)."
+    }
+   }
+  }
+ },
+ {
+  "name": "wait_for_context_change",
+  "description": "Long poll: waits until the user switches to a new context (debounced), optionally only one matching process_name / title_regex, and returns it, or {timeout:true} after timeout_ms. Does not block other tool calls. Pass cursor to also catch a change that happened since you last read the timeline.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "process_name": {
+     "type": "string",
+     "description": "Only a context whose process name contains this (case-insensitive, '.exe' optional)."
+    },
+    "title_regex": {
+     "type": "string",
+     "description": "Only a context whose window title matches this regular expression (case-insensitive). Blocked windows have no title and never match."
+    },
+    "cursor": {
+     "type": "integer",
+     "description": "Return at once if a matching change after this cursor already exists."
+    },
+    "timeout_ms": {
+     "type": "integer",
+     "description": "Maximum wait in milliseconds (default 30000, max 120000)."
+    }
+   }
+  }
+ },
+ {
+  "name": "get_pointer_context",
+  "description": "Returns what the user is pointing at with the mouse: cursor position (virtual-screen pixels), its monitor (id, bounds, DPI scale), the window and process under the cursor, and the UI Automation element there (name, control type, automation id, bounds, value when cheap) with an element_ref that point_at, highlight_element, invoke_ui_element etc. accept. include_image adds a PNG crop of radius px around the cursor with the cursor marked by a crosshair. For password managers and private browsing windows only {blocked:true, processName} is returned (no element, no image). Read-only.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "include_image": {
+     "type": "boolean",
+     "description": "Also return a PNG crop around the cursor (default false)."
+    },
+    "radius": {
+     "type": "integer",
+     "description": "Half the side of the crop in pixels, 16..500 (default 200)."
+    }
+   }
+  }
+ },
+ {
+  "name": "get_operation_history",
+  "description": "Returns a bounded audit log of recent tool executions. Each entry names the client session that made the call (sessionId, clientName); a shared instance serves several clients.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "limit": {
+     "type": "integer",
+     "description": "Maximum number of audit entries to return (default 50)."
+    },
+    "include_sensitive_arguments": {
+     "type": "boolean",
+     "description": "Include raw tool arguments in the output when true."
+    }
+   }
+  }
+ },
+ {
+  "name": "get_server_info",
+  "description": "Returns which server instance this client talks to: name, version, mode (standalone = this client's own process, http = the shared instance every client uses), pid, instance id, start time, URL and session count, plus this client's session (id, transport stdio / http / bridge, client name, unattended). Read-only.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {}
+  }
+ }
+]

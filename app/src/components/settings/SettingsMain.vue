@@ -33,7 +33,7 @@ const SUBVIEW_DESC: Record<string, string> = {
   'General': 'Hotkeys, the AI provider, interface style and conversation storage.',
   'Speech To Text': 'Which engine transcribes your recordings, and what happens to the text afterwards.',
   'Quick Prompts': 'The nine prompts reachable from the popup and the Select-All hotkey.',
-  'MCP Servers': 'External tool servers the assistant can call during a chat.',
+  'MCP Servers': 'The shared screen layer, and external tool servers the assistant can call.',
 }
 const subviewDesc = computed(() => SUBVIEW_DESC[props.settingsSubview] || '')
 

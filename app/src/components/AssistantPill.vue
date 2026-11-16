@@ -62,6 +62,22 @@ function apply(next: PillState) {
   else stopTicker()
 }
 
+/**
+ * The last tool the assistant called, shown in place of the status for a few
+ * seconds ("get_pointer_context -> Button ..."). It is the user's only way to
+ * see, from inside another app, whether the assistant really looked.
+ */
+const toolLine = ref('')
+let toolTimer: number | null = null
+let unlistenTool: UnlistenFn | null = null
+const TOOL_LINE_MS = 5000
+
+function showTool(line: string) {
+  toolLine.value = line
+  if (toolTimer) window.clearTimeout(toolTimer)
+  toolTimer = window.setTimeout(() => { toolLine.value = ''; toolTimer = null }, TOOL_LINE_MS)
+}
+
 function hangUp() {
   // The session lives in the main window; this only asks for it to end.
   void emit('assistant:hangup')
@@ -105,11 +121,19 @@ onMounted(async () => {
       if (e?.payload) apply(e.payload)
     })
   } catch {}
+  try {
+    unlistenTool = await listen<{ line: string }>('assistant-pill:tool', (e) => {
+      const line = String(e?.payload?.line || '').trim()
+      if (line) showTool(line)
+    })
+  } catch {}
 })
 
 onBeforeUnmount(() => {
   stopTicker()
+  if (toolTimer) window.clearTimeout(toolTimer)
   try { unlisten?.() } catch {}
+  try { unlistenTool?.() } catch {}
 })
 </script>
 
@@ -135,7 +159,11 @@ onBeforeUnmount(() => {
 
     <template v-else-if="state.state === 'live'">
       <span class="dot" :class="{ open: state.mic_open }" aria-hidden="true"></span>
-      <span class="text">
+      <span v-if="toolLine && !state.mic_open" class="text tool" :title="toolLine">
+        <span class="tool-tag">tool</span>
+        <span class="tool-line">{{ toolLine }}</span>
+      </span>
+      <span v-else class="text">
         <strong>{{ state.mic_open ? 'Listening' : 'On call' }}</strong>
         <span class="time">{{ elapsed }}</span>
       </span>
@@ -202,6 +230,22 @@ code {
 }
 
 .time { color: #9aa3b2; font-variant-numeric: tabular-nums; }
+
+.tool-tag {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  padding: 0 6px;
+  border-radius: 5px;
+  background: rgba(122, 162, 255, 0.18);
+  color: #b8ccff;
+}
+.tool-line {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #c9cfdb;
+}
 
 /* Green when the microphone is open, dim when it is not - the one thing worth
    knowing at a glance during a call. */

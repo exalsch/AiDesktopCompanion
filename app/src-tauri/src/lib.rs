@@ -1,9 +1,12 @@
 // AiDesktopCompanion v0.1.21 build35
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+  webview_health::disable_native_occlusion();
+
   tauri::Builder::default()
     .plugin(tauri_plugin_global_shortcut::Builder::new().build())
     .plugin(tauri_plugin_dialog::init())
+    .plugin(tauri_plugin_notification::init())
     .on_window_event(|window, event| {
       if let tauri::WindowEvent::CloseRequested { api, .. } = event {
         // Close-to-tray: prevent app exit and hide the main window
@@ -24,6 +27,11 @@ pub fn run() {
       // Instrumentation for issue #14 (blank window after hibernate). Watches
       // only; the repair waits until the logs say which failure it is.
       webview_health::watch_all(app.handle());
+
+      // Own the shared windows-commander instance: move a stdio entry onto it
+      // (once), then start it if nothing runs. Never stopped on exit; other
+      // clients share it.
+      screen_layer::on_app_start();
 
       // System tray: build a minimal menu and icon
       // Menu items: Show (shows and focuses main window) and Exit (quits app)
@@ -182,6 +190,13 @@ pub fn run() {
       mcp_get_prompt,
       mcp_ping,
       mcp_is_connected,
+      assistant_screen_context,
+      screen_layer::screen_layer_status,
+      screen_layer::screen_layer_start,
+      screen_layer::screen_layer_stop,
+      screen_layer::screen_layer_open_project_page,
+      background_results::background_pending_results,
+      background_results::background_ack_result,
       realtime_create_ephemeral_token,
       gemini_live_create_token,
       settings::list_gemini_live_models,
@@ -249,6 +264,11 @@ mod assistant_pill;
 mod call_history;
 mod media;
 mod webview_health;
+mod screen_layer;
+mod background_results;
+mod voice_tools;
+mod background_tools;
+mod desktop_agent;
 
 use rmcp::{
   service::{RoleClient, RunningService},
@@ -322,8 +342,19 @@ async fn mcp_connect(
   cwd: Option<String>,
   env: Option<serde_json::Value>,
   transport: Option<String>,
+  headers: Option<serde_json::Value>,
+  auth: Option<String>,
+  fallback_command: Option<String>,
 ) -> Result<String, String> {
-  mcp::connect(&app, &MCP_CLIENTS, server_id, command, args, cwd, env, transport).await
+  mcp::connect(&app, &MCP_CLIENTS, server_id, command, args, cwd, env, transport, headers, auth, fallback_command).await
+}
+
+/// Screen context item for the start of a voice turn, or null when the screen
+/// has not changed since the last one (or windows-commander is not connected,
+/// or screen context is off). `reset` is set by a new session.
+#[tauri::command]
+async fn assistant_screen_context(reset: Option<bool>) -> Result<Option<String>, String> {
+  Ok(screen_layer::turn_context(&MCP_CLIENTS, reset.unwrap_or(false)).await)
 }
 
 #[tauri::command]
@@ -1064,6 +1095,20 @@ async fn realtime_build_tools() -> Result<serde_json::Value, String> {
       }))
     })
     .collect();
+  // The voice profile: only the screen tools of windows-commander, unless the
+  // user chose "all" (voice_tools.rs). Chat is not affected.
+  let profile = voice_tools::profile_from_settings();
+  let mut flat = voice_tools::filter_tools(flat, &screen_layer::wc_server_id(), profile);
+  // Slow calls go to the background and collect their own tickets
+  // (background_tools.rs), so the model gets no ticket collector to misuse.
+  flat.retain(|t| !t.get("name").and_then(|n| n.as_str()).map(|n| n.ends_with(&format!("__{}", background_tools::TICKET_RESULT_TOOL))).unwrap_or(false));
+  // Multi-step desktop work goes to an agent with every tool
+  // (desktop_agent.rs); pointless without any MCP server connected.
+  if desktop_agent::config_from_settings().enabled && !map.is_empty() {
+    flat.push(desktop_agent::tool_definition());
+  }
+  let names: Vec<&str> = flat.iter().filter_map(|t| t.get("name").and_then(|n| n.as_str())).collect();
+  log::info!("voice session tools ({:?} profile, {}): {}", profile, names.len(), names.join(", "));
   Ok(serde_json::Value::Array(flat))
 }
 
@@ -1082,15 +1127,50 @@ async fn realtime_build_tools() -> Result<serde_json::Value, String> {
 /// `images` rather than inside `output`; see `mcp::split_tool_images`. The voice
 /// clients send them on as images in the next message.
 #[tauri::command]
-async fn realtime_call_tool(name: String, args_json: Option<String>) -> Result<RealtimeToolOutput, String> {
+async fn realtime_call_tool(app: tauri::AppHandle, name: String, args_json: Option<String>) -> Result<RealtimeToolOutput, String> {
   let args: serde_json::Value = args_json
     .filter(|s| !s.trim().is_empty())
     .and_then(|s| serde_json::from_str(&s).ok())
     .unwrap_or_else(|| serde_json::json!({}));
+  if name == desktop_agent::TOOL_NAME {
+    let task = args.get("task").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let ctx = screen_layer::current_context_text(&MCP_CLIENTS).await;
+    let work = desktop_agent::run(app.clone(), &MCP_CLIENTS, task, ctx);
+    return Ok(match background_tools::call_or_background(&app, &MCP_CLIENTS, "app".into(), desktop_agent::TOOL_NAME.into(), &args, work).await {
+      background_tools::Outcome::Done(Ok(res)) => RealtimeToolOutput::text(serde_json::json!({ "tool": desktop_agent::TOOL_NAME, "result": res })),
+      background_tools::Outcome::Done(Err(e)) => RealtimeToolOutput::text(serde_json::json!({ "tool": desktop_agent::TOOL_NAME, "error": e })),
+      background_tools::Outcome::Background(v) => RealtimeToolOutput::text(v),
+    });
+  }
+  let wc = screen_layer::wc_server_id();
+  if !voice_tools::allowed(&name, &wc, voice_tools::profile_from_settings()) {
+    return Ok(RealtimeToolOutput::text(serde_json::json!({ "error": format!("{name} is not available in voice sessions") })));
+  }
   let Some((server_id, tool_name)) = mcp::parse_mcp_fn_call_name(&name) else {
     return Ok(RealtimeToolOutput::text(serde_json::json!({ "error": format!("unknown tool: {name}") })));
   };
-  match mcp::call_tool(&MCP_CLIENTS, &server_id, &tool_name, args).await {
+  if tool_name == background_tools::TICKET_RESULT_TOOL {
+    return Ok(RealtimeToolOutput::text(serde_json::json!({ "error": "Not needed in a voice call: a result that takes longer arrives in the conversation by itself." })));
+  }
+  // The call runs as a task; past BACKGROUND_AFTER it carries on in the
+  // background and its result is delivered when it lands (background_tools.rs).
+  let work = {
+    let (server_id, tool_name, args, is_pointer) = (server_id.clone(), tool_name.clone(), args.clone(), server_id == wc && tool_name == "get_pointer_context");
+    async move {
+      let mut res = mcp::call_tool(&MCP_CLIENTS, &server_id, &tool_name, args).await?;
+      // A position sentence, and the real element for WebView2 apps whose
+      // hit test stops at the window (voice_tools.rs).
+      if is_pointer {
+        voice_tools::enrich_pointer_result(&MCP_CLIENTS, &server_id, &mut res).await;
+      }
+      Ok(res)
+    }
+  };
+  let done = match background_tools::call_or_background(&app, &MCP_CLIENTS, server_id.clone(), tool_name.clone(), &args, work).await {
+    background_tools::Outcome::Done(r) => r,
+    background_tools::Outcome::Background(v) => return Ok(RealtimeToolOutput::text(v)),
+  };
+  match done {
     Ok(res) => {
       let (res, images) = mcp::split_tool_images(res);
       Ok(RealtimeToolOutput {

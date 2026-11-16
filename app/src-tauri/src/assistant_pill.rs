@@ -62,11 +62,12 @@ fn now_ms() -> i64 {
 /// under the cursor, matching the busy indicator so both follow the user across
 /// a multi-monitor desktop.
 ///
-/// When the busy indicator is already occupying that corner the call pill stacks
-/// above it rather than covering it - a slow quick prompt and a live call are
-/// both things the user needs to see.
+/// The call pill owns the corner; the busy indicator stacks above it while a
+/// call is up (busy.rs). Before, the call pill moved up only if the busy pill
+/// was already showing, so a busy pill that appeared during a call - a Claude
+/// Code question asked in that call - landed right behind it.
 #[cfg(target_os = "windows")]
-fn position_window(app: &tauri::AppHandle, win: &tauri::WebviewWindow) {
+fn position_window(_app: &tauri::AppHandle, win: &tauri::WebviewWindow) {
   use windows::Win32::Foundation::POINT;
   use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
@@ -81,21 +82,8 @@ fn position_window(app: &tauri::AppHandle, win: &tauri::WebviewWindow) {
     }
     let (_l, _t, right, bottom) = crate::quick_actions::work_area_for_point(pt);
     const MARGIN: i32 = 16;
-    let busy_visible = app
-      .get_webview_window(crate::busy::BUSY_WINDOW_LABEL)
-      .and_then(|w| w.is_visible().ok())
-      .unwrap_or(false);
-    let busy_offset = if busy_visible {
-      app
-        .get_webview_window(crate::busy::BUSY_WINDOW_LABEL)
-        .and_then(|w| w.outer_size().ok())
-        .map(|s| s.height as i32 + MARGIN)
-        .unwrap_or(0)
-    } else {
-      0
-    };
     let x = right - size.width as i32 - MARGIN;
-    let y = bottom - size.height as i32 - MARGIN - busy_offset;
+    let y = bottom - size.height as i32 - MARGIN;
     let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
   }
 }
@@ -154,8 +142,11 @@ pub fn assistant_pill_set(
       position_window(&app, &win);
       let _ = win.show();
       let _ = win.set_always_on_top(true);
+      crate::busy::raise_topmost(&win);
     }
   }
+  // Move a showing busy pill above the call pill, or back into the corner.
+  crate::busy::reposition(&app);
   publish(&app, &next);
   Ok(())
 }

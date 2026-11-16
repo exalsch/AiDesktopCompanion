@@ -9,6 +9,134 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
+### The floating pills no longer stay invisible
+
+kind: fix
+
+The Assistant call pill and the progress indicator could stop appearing: the
+call ran, but no pill showed. The windows were shown in the right place, but
+the webview inside them had decided they were covered by other windows and
+did not draw. It happened after hibernation and also on a normal start, with
+a maximized browser behind the pill. The app now switches that check off and
+puts the pills on top every time they appear.
+
+### Call costs use current prices and cover Gemini Live
+
+kind: fix
+
+The cost estimate of a voice call now uses the prices published in November
+2026. Calls on Gemini Live (gemini-3.8-live, gemini-3.1-flash-live and
+gemini-2.5-flash native audio) now show a cost instead of "unpriced".
+OpenAI's gpt-realtime-2 models are priced at the higher text output rate, the
+older gpt-realtime-mini is no longer charged at the full model's rate, and
+screenshots sent into a call now count towards the cost. The figure stays an
+estimate; hover it to see the token counts and when the prices were checked.
+
+### The voice assistant can click, type and hand bigger jobs to a desktop agent
+
+kind: feat
+
+In a voice call the assistant can now do simple things itself: "open this
+one" clicks what is under your mouse, "type ... here" types into the field
+that has the focus, "undo that" presses the shortcut. Anything with several
+steps ("switch Outlook to the month view and go to next month") goes to a
+desktop agent: your chat model with every MCP tool, which works through the
+steps, asks on screen before anything that sends or deletes, and reports
+back. Before it sends, deletes or submits anything, the assistant asks you
+first. "Draft" or "write" a message means the text goes into the box and
+stays there until you say "send". Each step shows in the call transcript.
+
+The assistant also keeps to the language of the call. A short "what?" that
+the speech recognition heard as "¿Qué?" got an answer in Spanish; now it is
+taken as misheard and answered in the language you have been speaking.
+
+Choose under Assistant > Screen presence: "Screen and simple
+actions" (new default), "Screen only" or "All tools", and switch the desktop
+agent on or off or give it its own model.
+
+### Slow tools no longer hold a voice call
+
+kind: fix
+
+A tool that takes longer than a few seconds (an MCP server that asks another
+agent, searches, or runs a job) now carries on in the background. The
+assistant says it is running and you can keep talking; when the result comes,
+the assistant tells you. If you have already hung up, a desktop notification
+shows the result and the next call picks it up. Before, the call waited for
+the tool, and a slow answer (over three minutes for a "do I need to prepare"
+check) could arrive after the call ended and was lost. Fast tools answer in
+the same turn as before.
+
+The result is spoken in the language you speak (German or English) rather
+than in whatever language the voice model picks; Gemini answered in Spanish,
+Italian and once in Chinese. While the tool works, its progress pill sits
+above the call pill instead of behind it, and its result shows as a line in
+the call transcript.
+
+### The voice assistant looks before it answers and shows you what it did
+
+kind: fix
+
+In a voice call the assistant used to say it had checked your calendar when it
+had not, guess where your mouse was, and ask Claude Code about the event on
+your screen, which Claude Code cannot see. Now:
+
+- It reads the screen first. "This event", "what am I hovering" and "where is
+  my cursor" go to the pointer and focus tools, and the answer starts with the
+  name it read. In the new Outlook, whose calendar the usual hit test cannot
+  see into, the app finds the event under the mouse itself.
+- It does not claim a check it did not make, names the tools it really used
+  when you ask, looks again when you correct it, and says so when it has no
+  tool for something.
+- A call gets only the screen tools of windows-commander (context, pointer,
+  focus, find, OCR, screenshot and the on-screen arrows). Mouse, keyboard,
+  PowerShell and files stay with chat. Switch back under Assistant > Screen
+  presence > Voice tools.
+- Every tool call shows as a line in the live transcript, briefly on the call
+  pill, and in the saved call history and its copied text.
+
+### The voice assistant knows what is on your screen and can point at it
+
+kind: feat
+
+With windows-commander connected and MCP tools on, each turn of a voice call
+now starts with a few lines about your screen: the app and window in front,
+its web address, the focused control, what is under the mouse and where you
+were just before. "What does this button do?" or "reply to this mail" now
+mean something to the assistant. The lines are text only, sent again only
+when something changed, and windows on windows-commander's block list
+(password managers, private browsing) show as "details withheld".
+
+The assistant is also told it can show you things: it draws an arrow or a
+frame on your screen and clears it when you move on. Switch the screen lines
+off under Assistant > Screen presence.
+
+### The app keeps one shared windows-commander running for every client
+
+kind: feat
+
+At start-up the app now checks for the shared windows-commander instance and
+starts it in the background when it is not running, without a console
+window. This app, Claude Code and any other MCP client then share one activity
+timeline and one set of on-screen arrows. Quitting the app leaves it running, because the
+others still use it; Settings > MCP Servers > Screen layer shows whether it
+runs, its version and address, and has a button to stop it. windows-commander
+is a separate open-source MCP server; the same card links to its GitHub page
+for download and setup.
+
+Your existing windows-commander server entry moves to the shared instance
+automatically. Its address and access token are read when it connects and are
+never stored in the settings file. When the shared instance cannot be reached,
+the entry falls back to starting windows-commander itself, as before.
+
+### HTTP MCP servers can send their own headers
+
+kind: feat
+
+An HTTP server in Settings > MCP Servers now has a list of headers to send
+with every request, for servers that need an API key or a bearer token. The
+values are hidden until you choose to show them.
+
 ### Two more accurate Parakeet models for local speech-to-text
 
 kind: feat
