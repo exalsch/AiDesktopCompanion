@@ -9,6 +9,18 @@ section of `CLAUDE.md`.
 
 ## Unreleased
 
+### Call costs use current prices and cover Gemini Live
+
+kind: fix
+
+The cost estimate of a voice call now uses the prices published in November
+2026. Calls on Gemini Live (gemini-3.8-live, gemini-3.1-flash-live and
+gemini-2.5-flash native audio) now show a cost instead of "unpriced".
+OpenAI's gpt-realtime-2 models are priced at the higher text output rate, the
+older gpt-realtime-mini is no longer charged at the full model's rate, and
+screenshots sent into a call now count towards the cost. The figure stays an
+estimate; hover it to see the token counts and when the prices were checked.
+
 ### The voice assistant can click, type and hand bigger jobs to a desktop agent
 
 kind: feat

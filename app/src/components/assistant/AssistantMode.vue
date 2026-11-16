@@ -65,9 +65,12 @@ const usageTooltip = computed(() => {
     `Audio out ${rounded(u.audioOut)}`,
     `Text in ${rounded(u.textIn)} (+${rounded(u.textInCached)} cached)`,
     `Text out ${rounded(u.textOut)}`,
+    ...(u.imageIn ? [`Images in ${rounded(u.imageIn)}`] : []),
     `${u.responses} responses`,
     '',
-    `Estimate only, from rates checked ${(realtime as any).usage?.ratesChecked}. Tokens are exact.`,
+    usageCost.value
+      ? `Estimate only, from rates checked ${(realtime as any).usage?.ratesChecked}. Tokens are exact.`
+      : `No price known for ${session.model}, so no cost is shown. Tokens are exact.`,
   ].join('\n')
 })
 
